@@ -19,6 +19,6 @@ If both bits 3 and 4 are set, both modes are enabled at the same time.
 
 If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display.
 
-You can use the individually selectable FG+BG mode in 5 color mode if you don't need the extra colors. It is more compatible with PM graphics than the 16 color mode is since 16 color mode uses the PM graphics color registers as part of the new available colors. The collision detection in 16 color mode is also a somewhat unfamiliar due to the PM color usage.
+You can use the individually selectable FG+BG mode in 5 color mode if you don't need the extra colors. It is more compatible with PM graphics than the 16 color mode is since 16 color mode uses the PM graphics color registers as part of the new available colors. The collision detection in 16 color mode is also a somewhat different due to the PM color usage.
 
 The screen device S: is not familiar with GR 1 and 2 containing 40 bytes per line, so use of it will work strangely. Also, the GR mode 0 4-line text box at the bottom will overwrite the bottom of the GR 1 and 2 display due to the upper part of the screen requiring twice as much memory for character data. It is recommended to POKE directly to screen memory when using double-byte GR 1 and 2. If you do plan to use this in BASIC programs, there are ways to repoint the text box at the bottom to another area of memory so programs work as before.
