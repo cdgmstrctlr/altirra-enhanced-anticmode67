@@ -15,7 +15,7 @@ GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers P
 
 GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers PM0-BAK, using colors 8-15 display 6 chroma values higher.
 
-If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time.
+If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time for colors 8-15.
 
 If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display.
 
