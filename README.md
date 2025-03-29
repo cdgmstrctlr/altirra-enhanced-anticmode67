@@ -9,13 +9,13 @@ By default, even when this feature is enabled in the emulator configuration, it 
 
 CHACTL bit 3: Enable double-byte mode if bit is set to 1. ANTIC reads two bytes per character. Allows all 256 characters to be displayed at the same time (128 + inverse) in these text modes.
 
-CHACTL bit 4: Send GTIA 16 colors instead of 5 if bit 4 is set to 1. (enable virtual AN3-AN4 ANTIC -> GTIA lines.)
+CHACTL bit 4: Send GTIA 16 colors instead of 5 if bit 4 is set to 1. (enable virtual AN3-AN4 ANTIC -> GTIA signal lines.)
 
-GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers PM0-BAK, colors 8-15 display 6 luminance levels brighter.
+GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers PM0-BAK, using colors 8-15 display 6 luminance levels brighter.
 
-GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers PM0-BAK, colors 8-15 display 6 chroma values higher.
+GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers PM0-BAK, using colors 8-15 display 6 chroma values higher.
 
-If both bits 3 and 4 are set, both modes are enabled at the same time.
+If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time.
 
 If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display.
 
