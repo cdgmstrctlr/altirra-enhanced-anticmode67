@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+	<channel>
+		<title>Altirra update feed (test channel)</title>
+		<link>https://forums.atariage.com/topic/358862-altirra-420-released/</link>
+		<description>Automatic update notifications for test versions of the Altirra emulator, used by the Check for Updates feature in the program.</description>
+		<item>
+			<title>Altirra 4.30-test1 (4.30.101.16275; win7; sse2)</title>
+			<description>
+				<ul>
+<li>Cassette: Added Vorbis decoding support.</li>
+<li>Cassette: Added support for paired .data.cas+.audio.ogg files for more compact tape storage.</li>
+<li>Debugger: Added keyboard shortcuts to memory window.</li>
+<li>Printer: ATASCII special characters are now converted to Unicode equivalents.</li>
+<li>Tape Editor: Added Select All (Ctrl+A) and Deselect (Ctrl+Shift+A).</li>
+<li>VFS: Improved handling of Unicode filenames within .zip archives.</li>
+				</ul>
+			</description>
+   			<link>https://forums.atariage.com/topic/358862-altirra-420-released/</link>
+			<pubDate>
+				now
+			</pubDate>
+			<category>release</category>
+		</item>
+	</channel>
+</rss>
