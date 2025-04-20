@@ -11,9 +11,9 @@ If this feature is disabled (or for that matter, not being actively used by a pr
 
 By default, even when this feature is enabled in the emulator configuration, it is not turned on until the enable bits are set in the ANTIC and GTIA registers CHACTL and GRACTL or their corresponding shadow registers by a program using it.
 
-CHACTL bit 3: Enable double-byte mode if bit is set to 1. ANTIC reads two bytes per character. Allows all 256 characters to be displayed at the same time (128 + inverse) in these text modes.
+CHACTL bit 3: Enable double-byte mode if this bit is set to 1. ANTIC then reads two bytes per character. This allows all 256 characters to be displayed at the same time (128 + inverse) in these text modes.
 
-CHACTL bit 4: Send GTIA 16 colors instead of 5 if bit 4 is set to 1. (enable virtual AN3-AN5 ANTIC -> GTIA signal lines.)
+CHACTL bit 4: Send GTIA 16 colors instead of 5 if this bit 4 is set to 1. (enable virtual AN3-AN4 ANTIC -> GTIA signal lines.)
 
 GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers PM0-BAK, using colors 8-14 display 6 luminance levels brighter.
 
@@ -21,7 +21,7 @@ GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers
 
 If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time for colors 8-14.
 
-If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display.
+If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display since ANTIC will only be sending data on the virtual AN0-AN3.
 
 The layout of the characters in double-byte mode is even offset bytes (low byte) in screen memory select the character glyph, odd bytes (high bytes) are the control bytes. Bits 0-3 select the foreground color for the character, and bits 4-7 select the background color for the character. If enhanced color mode is not enabled, only bits 0-1 and bits 4-5 of the control bytes are used, providing selection of 4 colors plus the background color.
 
