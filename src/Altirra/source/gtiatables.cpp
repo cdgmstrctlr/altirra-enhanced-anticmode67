@@ -246,7 +246,7 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },	// pri 5
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },	// pri 6
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },	// pri 7
-		{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x10, 0x20, 0x40, 0x80, 0x0d, 0x0e, 0x0f, 0x00 }	// pri 8
+		{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x20, 0x40, 0x80, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x00 }	// pri 8
 	};
 	
 	// kColorBlack is used to tell the priority builder to leave the existing value in place from the existing table generator since I haven't worked out the "conflict" modes yet.
@@ -254,23 +254,27 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 	// Depending on the PRIOR mode, players may be in front of the playfield, or certain groups of playfields may be in front of players.
 	// The color selectors in the control byte are modified by the bitmap pixel in the character. So a FG selector of 0 becomes 1 for an on bit, FG 1 becomes 2, etc.
 	// For the background color selector, the character bitmap for that row is inverted, and the same modification is applied.
-	// FG 0xF wraps around to 8, causing the quirk of both selector 7 and 15 displaying with PM3.
+	// FG 0xF wraps around to 8, causing the quirk of both selector 7 and 15 displaying with PM3. This was arbitrary when I was copy-pasting my custom expansion table in antic.cpp.
 	// Here is an example priority table generated for PRIOR=1 for my new color modes with no PM graphics in view: (first row is the FG/BG color selector, second is the resulting color register)
 	//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
-	// 08 04 05 06 07 00 01 02 03 24 25 26 27 22 23 28
+	// 08 04 05 06 07 02 03 24 25 26 27 20 21 22 23 28
 	// The color registers are 53266+the above offset (so a color selector 0 uses register 53274, or BAK).
-	// The OR with 0x20 (32) tells the renderer to apply a chroma/luma shift to the color register in the lower 4 bits (see ATGTIARenderer::RenderLores).
+	// The OR with 0x20 (32) tells the renderer to apply a chroma/luma shift to the color register (see ATGTIARenderer::RenderLores).
 	static const uint8 mode67CRemap[9][20] =
 	{
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
-		{ kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorBAK },
-		{ kColorP0, kColorP1, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorP2, kColorP3, kColorBAK },
+		// |----        players 0-3        ----|  |----       playfields 0-14                                                                                                                                                                          ----|
+		{ kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorBAK },		// 1
+		// |- players 0-1 -|  |----                      playerfields 0-14                                                                                                                                                         ----|  |-- players 2-3 -|
+		{ kColorP0, kColorP1, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorP2, kColorP3, kColorBAK },		// 2
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
-		{ kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorP0, kColorP1, kColorP2, kColorP3, kColorBAK },
+		// |----                              playefields 0-14                                                                                                                                                 ----|  |----        players 0-3         ----|
+		{ kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorP0, kColorP1, kColorP2, kColorP3, kColorBAK },		// 4
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
-		{ kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0, kColorP1, kColorP2, kColorP3, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorBAK }
+		// |----                               playfields 0-7                                      ----|  |----        players 0-3         ----|  |----                                   playfields 8-14                                              ----|
+		{ kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorP0, kColorP1, kColorP2, kColorP3, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorBAK }		// 8
 	};
 
 	for (int j = 0; j < 9; j++)		// pri 1, 2, 4, & 8 TODO: everything else that isn't copied from the previously mentioned. The pri bit 4 (PRIOR value 16) table entries are handled by the missile 5th player renderer
