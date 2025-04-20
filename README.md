@@ -76,3 +76,7 @@ Here is a table of color selectors in the control byte (values in upper and lowe
 The "illegal" conflicting PRIOR modes are not implemented yet for enhanced color mode, nor is PRIOR 0 fully implemented. In the conflict mode instances PRIOR falls back to the standard 5 color priority mode combinations. For PRIOR 0, PRIOR 1 is used instead. PRIOR values 1, 2, 4 and 8, 16, and 32 are fully implemented, and if using the standard 5 color mode instead of enhanced color, PRIOR works the same as a standard GTIA chip. Combining PRIOR values 16 and 32 (and GTIA enable) works as before since they don't apply to the playfield/PM graphics priorities.
 
 Also there may be an issue with the save/load state of CHACTL and GRACTL, so saving the machine state may reset the new bits in these two registers when starting a machine from a state restore.
+
+
+### OTHER CHANGES
+The Disk Explorer utility built into Altirra has been modified in this release. I could never get it to display the special characters in my Atari files correctly, so I modified the mappings it was using for the Unicode character set. I also switched the font to Source Code Pro since it look a little more Atari-like when set to bold. If it is not installed, my understanding is Windows will use an alternate font with a similar look.
