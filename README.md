@@ -33,24 +33,22 @@ Here is an example Atari BASIC program that displays 15 individually colored bac
 
 ```
 10 GRAPHICS 18:POKE 755,26:POKE 53277,8
-15 FOR I=704 TO 712:READ C:POKE I,C:NEXT I
-20 SC=PEEK(88)+256*PEEK(89)
-30 FOR I=0 TO 8:READ CC,C:POKE SC+I*2,CC:POKE SC+1+I*2,C*16+(I<>0)*12:NEXT I
-40 FOR I=0 TO 8:READ CC,C:POKE SC+40+I*2,CC:POKE SC+41+I*2,C*16+7-(CC=120)*6:NEXT I
+20 FOR I=704 TO 712:READ C:POKE I,C:NEXT I
+30 SC=PEEK(88)+256*PEEK(89)
+40 FOR I=0 TO 8:READ CC,C:POKE SC+I*2,CC:POKE SC+1+I*2,C*16+(I<>0)*11-(CC=120)*10:NEXT I
+50 FOR I=0 TO 8:READ CC,C:POKE SC+40+I*2,CC:POKE SC+41+I*2,C*16+5:NEXT I
 100 GOTO 100
-1000 DATA 54,98,180,14,146,68,242,226,0
-1010 DATA 144,12,17,1,18,2,19,3,20,4,21,5,22,6,23,7,16,0
-1020 DATA 24,8,25,9,33,10,34,11,120,0,120,0,35,12,36,13,37,14
+1000 DATA 48,180,98,14,146,68,242,226,0
+1010 DATA 144,11,17,1,18,2,19,3,120,0,120,0,20,4,21,5,16,0
+1020 DATA 22,6,23,7,24,8,25,9,33,10,34,11,35,12,36,13,37,14
 ```
 
 The data statement at line 1000 specifies the color register values for 704 - 712.\
 The data statements at line 1010 and 1020 specify the character and control byte upper nybble for each character to change the background color for that character. The lower nybble of the control byte is set by the loop.
 
-Note the way to select color register PF0 as the background is to use an inverse character or define a custom character with a solid background. The "foreground" color in such cases is selected by the background nybble in the control byte. This is demonstrated above by the first two bytes in the line 1010 DATA statement: 144 is an inverse "0" and the FOR loop leaves the foreground color at 0 for that one column while putting the 12 in the background which causes the inverse "0" to appear using color 12.
+Note the way to select color register PF0 as the background is to use an inverse character or define a custom character with a solid background. The "foreground" color in such cases is selected by the background nybble in the control byte. This is demonstrated above by the first two bytes in the line 1010 DATA statement: 144 is an inverse "0" and the FOR loop leaves the foreground color at 0 for that one column while putting the 11 in the background which causes the inverse "0" to appear using color 11. The red "x"'s indicate there is no color selector for directly using registers PM0 and PM1 - PM0 and PM1 are now always chroma/luma shifted on the playfield to distinguish them from their sprites, so you must adjust the values in these registers accordlingly for the automatic shift.
 
-Astute readers will notice here is a quirk in that selecting color 15 reselects color register PM3. This is due to there only being 15 color values + a background available in the ANTIC pixel expansion tables. I would like color 15 do something special, perhaps invert the enhanced color selection bits in GRACTL: Luma shift mode becomes chroma shift mode for that character, and vice-versa. But I have to figure out a new way to encode the expansion and merge tables to do it.
-
-Another possible future change is to have color selection values 4 and 5 always use chroma/luma shift mode. Currently, they map directly to color registers PM0 and PM1. It might be beneficial to always use the alternate color values since there are no chroma/luma shift selectors assigned to those registers. This would create a distinction between player-missle colors and the playfield when a character is using the PM0 and PM1 colors.
+Astute readers will notice here is a quirk in that selecting color 15 reselects color register BAK and leaves the character invisible against the screen background. This is due to there only being 15 color values + the screen background available in the ANTIC pixel expansion tables. I would like color 15 do something special (other than provide a way to display invisible characters), perhaps invert the enhanced color selection bits in GRACTL: Luma shift mode becomes chroma shift mode for that character, and vice-versa. But I have to figure out a new way to encode the expansion and merge tables to do it.
 
 Here is a table of color selectors in the control byte (values in upper and lower nybble for FG/BG work the same, except for value 0x00) and how they map to the color registers:
 ```
@@ -58,18 +56,18 @@ Here is a table of color selectors in the control byte (values in upper and lowe
  1: PF1
  2: PF2
  3: PF3
- 4: PM0
- 5: PM1
- 6: PM2
- 7: PM3
- 8: PF0 with chroma/luma shift.
- 9: PF1 with chroma/luma shift.
-10: PF2 with chroma/luma shift.
-11: PF3 with chroma/luma shift.
+ 4: PM2
+ 5: PM3
+ 6: PF0 with chroma/luma shift.
+ 7: PF1 with chroma/luma shift.
+ 8: PF2 with chroma/luma shift.
+ 9: PF3 with chroma/luma shift.
+10: PM0 with chroma/luma shift.
+11: PM1 with chroma/luma shift.
 12: PM2 with chroma/luma shift.
 13: PM3 with chroma/luma shift.
 14: BAK with chroma/luma shift.
-15: PM3
+15: BAK
 ```
 
 ### KNOWN ISSUES
