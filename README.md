@@ -15,11 +15,11 @@ CHACTL bit 3: Enable double-byte mode if this bit is set to 1. ANTIC then reads 
 
 CHACTL bit 4: Send GTIA 16 colors instead of 5 if this bit 4 is set to 1. (enable virtual AN3-AN4 ANTIC -> GTIA signal lines.)
 
-GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers PM0-BAK, using colors 8-14 display 6 luminance levels brighter.
+GRACTL bit 3: Enable 8 color + luma shift mode - FG and BG use color registers PF0-BAK+PM2&3, using colors 6-14 displays PM0-BAK 6 luminance levels brighter.
 
-GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers PM0-BAK, using colors 8-14 display 6 chroma values higher.
+GRACTL bit 4: Enable 8 color + chroma shift mode - FG and BG use color registers PF0-BAK+PM2&3, using colors 6-14 displays PM0-BAK 6 chroma values higher.
 
-If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time for colors 8-14.
+If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time for colors 6-14.
 
 If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display since ANTIC will only be sending data on the virtual AN0-AN3.
 
