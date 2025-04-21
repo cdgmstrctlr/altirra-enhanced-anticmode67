@@ -31,14 +31,16 @@ The screen device S: is not familiar with GR 1 and 2 containing 40 bytes per lin
 
 It should be possible to set CHACTL and GRACTL in a display list interrupt and have both "classic" modes 6/7 and enhanced modes 6/7 stacked vertically on the display at the same time if desired.
 
-Here is an example Atari BASIC program that displays 15 individually colored background squares (character values are spaces) plus the screen background color for a total 16 colors using luma shift for the 7 additional colors. It also displays the color selector value in hex as the foreground character in each square.
+Here is an example Atari BASIC program that displays 15 individually colored background squares (character values are spaces) plus the screen background color for a total 16 colors using luma shift for the 7 additional colors. It also displays the color selector value in hex as the foreground character in each square and shows 5 player solid bars alongside the playfield graphics.
 
 ```
-10 GRAPHICS 18:POKE 755,26:POKE 53277,8
+10 GRAPHICS 18:POKE 755,26:POKE 53277,8:POKE 623,17
 20 FOR I=704 TO 712:READ C:POKE I,C:NEXT I
 30 SC=PEEK(88)+256*PEEK(89)
 40 FOR I=0 TO 8:READ CC,C:POKE SC+I*2,CC:POKE SC+1+I*2,C*16+(I<>0)*11-(CC=120)*10:NEXT I
 50 FOR I=0 TO 8:READ CC,C:POKE SC+40+I*2,CC:POKE SC+41+I*2,C*16+5:NEXT I
+60 FOR I=0 TO 3:POKE 53248+I,120+I*8:POKE 53261+I,255:NEXT I
+70 POKE 53265,255:FOR I=0 TO 3:POKE 53252+I,152+I*2:NEXT I
 100 GOTO 100
 1000 DATA 48,180,98,14,146,68,242,226,0
 1010 DATA 144,11,17,1,18,2,19,3,120,0,120,0,20,4,21,5,16,0
@@ -73,7 +75,7 @@ Here is a table of color selectors in the control byte (values in upper and lowe
 ```
 
 ### KNOWN ISSUES
-The "illegal" conflicting PRIOR modes are not implemented yet for enhanced color mode, nor is PRIOR 0 fully implemented. In the conflict mode instances PRIOR falls back to the standard 5 color priority mode combinations. For PRIOR 0, PRIOR 1 is used instead. PRIOR values 1, 2, 4 and 8, 16, and 32 are fully implemented, and if using the standard 5 color mode instead of enhanced color, PRIOR works the same as a standard GTIA chip. Combining PRIOR values 16 and 32 (and GTIA enable) works as before since they don't apply to the playfield/PM graphics priorities.
+The "illegal" conflicting PRIOR modes are not implemented yet for enhanced color mode, nor is PRIOR 0 fully implemented. In the conflict mode instances PRIOR falls back to the standard 5 color priority mode combinations. For PRIOR 0, PRIOR 1 is used instead. PRIOR values 1, 2, 4 and 8, 16, and 32 are fully implemented, and if using the standard 5 color mode instead of enhanced color, PRIOR works the same as a standard GTIA chip. Combining PRIOR values 16 and 32 (and GTIA enable) works as before since they don't apply to the playfield/PM graphics priorities. One other issue is when GRACTL bits 3 or 4 are set, player 5 (when PRIOR is enabling 5 player mode) has priority over everything, including players 1-4. I need to investigate whether this is a fixable bug or if it is due to the nature of my overloading the priority table with colors that overlap the player/missiles.
 
 Also there may be an issue with the save/load state of CHACTL and GRACTL, so saving the machine state may reset the new bits in these two registers when starting a machine from a state restore.
 
