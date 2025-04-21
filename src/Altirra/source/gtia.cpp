@@ -581,7 +581,7 @@ uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst
 	const uint8 *VDRESTRICT stateTransitions = kSpriteStateTransitions[mSizeMode];
 	uint8 detect = 0;
 
-	// CMC if mask is 0 (which it should never be under normal mode) overwrite dst w/ the chroma-luma shifted version of PF3 (which happens to be the same value as PF23)
+	// CMC if mask is 0 (which it should never be under normal mode) overwrite dst w/ PF1 so player color matches outside of the enhanced mode display list
 	if (mask != 0)
 	{
 		do {
@@ -601,7 +601,7 @@ uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst
 		do {
 			if ((sint8)shifter < 0) {
 				detect |= *dst;
-				*dst = PF23;
+				*dst = PF1;		// CMC for player 5, PF1 (0x01) is PF3 in enhanced color mode
 			}
 
 			++dst;
@@ -1281,7 +1281,7 @@ void ATGTIAEmulator::DumpStatus() {
 	for(int i=0; i<4; ++i) {
 		ATConsolePrintf("Missile %d: color = %02X, pos = %02X, size=%d, data = %02X\n"
 			, i
-			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]
+			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]	// CMC TODO this likely needs to check something to look at correct color register
 			, mSpritePos[i+4]
 			, mSprites[i+4].mState.mSizeMode
 			, mSprites[i+4].mState.mDataLatch >> 6
