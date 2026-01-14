@@ -344,7 +344,7 @@ krpdel_table:
 .endif
 
 	; 9. set screen margins
-	mva		#2 lmargn
+	mva		#0 lmargn
 	mva		#39 rmargn
 	
 	;set PAL/NTSC flag (XL/XE only)
