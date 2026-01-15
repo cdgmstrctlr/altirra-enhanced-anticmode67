@@ -5,33 +5,33 @@ A modification to the Altirra Atari 8-bit emulator to include support for double
 Refer to the Altirra build instructions.
 
 ### USAGE
-Go to System -> Configure System... -> Computer -> System and enable the "Modes 6/7 Double Byte Enhancement". This works in any of the system emulation modes (400, 800, XL, XE, etc). It is not implemented under VBXE, however you can still use VBXE without needing to disable the enhanced mode 6/7 feature in the system settings.
+Go to System -> Configure System... -> Computer -> System and enable the "Modes 6/7 Double Byte Enhancement". This works in any of the system emulation modes (400, 800, XL, XE, etc). It is not implemented under VBXE; however, you can still use VBXE without needing to disable the enhanced mode 6/7 feature in the system settings.
 
-If this feature is disabled (or for that matter, not being actively used by a program) then performance of the emulator should be indistinguishable from the official builds. Most of the new code relies on alternate look-up tables which get switched in when the associated hardware registers are set to turn it on.
+If this feature is disabled (or, for that matter, not being actively used by a program), then performance of the emulator should be indistinguishable from the official builds. Most of the new code relies on alternate lookup tables that are switched in when the associated hardware registers are set to enable it. Conditionals were avoided as much as possible to avoid instruction cache flushing.
 
-By default, even when this feature is enabled in the emulator configuration, it is not turned on until the enable bits are set in the ANTIC and GTIA registers CHACTL and GRACTL or their corresponding shadow registers by a program using it.
+By default, even when this feature is enabled in the emulator configuration, it is not activated until the enable bits are set in the ANTIC and GTIA registers CHACTL and GRACTL, or their corresponding shadow registers, by a program using it.
 
-CHACTL bit 3: Enable double-byte mode if this bit is set to 1. ANTIC then reads two bytes per character. This allows all 256 characters to be displayed at the same time (128 + inverse) in these text modes.
+CHACTL bit 3: Enables double-byte mode when this bit is set to 1. ANTIC then reads two bytes per character. This allows all 256 characters to be displayed at the same time (128 + inverse) in these text modes.
 
-CHACTL bit 4: Send GTIA 16 colors instead of 5 if this bit 4 is set to 1. (enable virtual AN3-AN4 ANTIC -> GTIA signal lines.)
+CHACTL bit 4: Sends GTIA 16 colors instead of 5 when this bit 4 is set to 1. (Enables virtual AN3-AN4 ANTIC -> GTIA signal lines.)
 
-GRACTL bit 3: Enable 7 color + 9 color luma shift mode - FG and BG use color registers PF0-BAK+PM2&3, using colors 6-14 displays PM0-BAK 6 luminance levels brighter.
+GRACTL bit 3: Enables 7 color + 9 color luma shift mode - FG and BG use color registers PF0-BAK + PM 2 & 3, using colors 6-14 displays PM0-BAK 6 luminance levels brighter.
 
-GRACTL bit 4: Enable 7 color + 9 color chroma shift mode - FG and BG use color registers PF0-BAK+PM2&3, using colors 6-14 displays PM0-BAK 6 chroma values higher.
+GRACTL bit 4: Enables 7 color + 9 color chroma shift mode - FG and BG use color registers PF0-BAK + PM 2 & 3, using colors 6-14 displays PM0-BAK 6 chroma values higher.
 
-If both bits 3 and 4 are set, both luma and chroma modes are enabled at the same time for colors 6-14.
+If both bits 3 and 4 are set, both luma and chroma modes are enabled simultaneously for colors 6-14.
 
-If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display since ANTIC will only be sending data on the virtual AN0-AN3.
+If you set either bits 3 or 4 in GRACTL but fail to set bit 3 in CHACTL, you will not get the additional colors for the character display, since ANTIC will only be sending data on the virtual AN0-AN3.
 
-The layout of the characters in double-byte mode is even offset bytes (low byte) in screen memory select the character glyph, odd bytes (high bytes) are the control bytes. Bits 0-3 select the foreground color for the character, and bits 4-7 select the background color for the character. If enhanced color mode is not enabled, only bits 0-1 and bits 4-5 of the control bytes are used, providing selection of 4 colors plus the background color.
+The layout of the characters in double-byte mode is as follows: Even offset bytes (low bytes) in screen memory select the character glyph, and odd bytes (high bytes) are the control bytes. Bits 0-3 select the character's foreground color, and bits 4-7 select the character's background color. If enhanced color mode is not enabled, only bits 0-1 and bits 4-5 of the control bytes are used, providing individual selection of the classic 4 colors + screen background color for the foreground and background of each character on screen. Since those bits are ignored by ANTIC when in classic 5 color mode, they can be used by programs for game logic, etc.
 
-You can use the individually selectable FG+BG mode in 5 color mode described above if you don't need the extra colors. It is more compatible with PM graphics than the 16 color mode is since 16 color mode uses the PM graphics color registers as part of the new available colors. The collision detection in 16 color mode is also a somewhat different due to the PM color usage.
+You can use the individually selectable FG+BG mode in 5 color mode described above if you don't need the extra colors. It is more compatible with PM graphics than the 16 color mode is since 16 color mode uses the PM graphics color registers as part of the new available colors. Collision detection in 16 color mode is also a somewhat different due to the PM color usage.
 
-The screen device S: is not familiar with GR 1 and 2 containing 40 bytes per line, so use of it will work strangely. Also, the GR mode 0 4-line text box at the bottom will overwrite the bottom of the GR 1 and 2 display due to the upper part of the screen requiring twice as much memory for character data. It is recommended to POKE directly to screen memory when using double-byte GR 1 and 2. If you do plan to use this in BASIC programs, there are ways to repoint the text box at the bottom to another area of memory so programs work as before.
+The screen device S: is not familiar with graphics modes 1 and 2 containing 40 bytes per line, so use of it will not work as expected. Additionally, the GR mode 0 4-line text box at the bottom will overwrite the bottom of the GR 1 and 2 display due to the upper part of the screen requiring twice as much memory for character data. It is recommended to POKE directly to screen memory when using double-byte GR 1 and 2. If you do plan to use this in BASIC programs, there are ways to repoint the text box at the bottom to another area of memory so programs work as before.
 
 It should be possible to set CHACTL and GRACTL in a display list interrupt and have both "classic" modes 6/7 and enhanced modes 6/7 stacked vertically on the display at the same time if desired.
 
-Here is an example Atari BASIC program that displays 15 individually colored background squares (character values are spaces) plus the screen background color for a total 16 colors using luma shift for the 7 additional colors. It also displays the color selector value in hex as the foreground character in each square and shows 5 player solid bars alongside the playfield graphics.
+Here is an example Atari BASIC program that displays 15 individually colored background squares (character values are spaces), plus the screen background color, for a total of 16 colors using luma shift for the seven additional colors. It also displays the color selector value in hex as the foreground character in each square and shows five player solid bars alongside the playfield graphics.
 
 ```
 10 GRAPHICS 18:POKE 755,26:POKE 53277,8:POKE 623,17
