@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <?xml-stylesheet type="text/xsl" href="index.xsl" ?>
-<topic title="Custom device specification, v0.5">
+<topic title="Custom device specification, v0.6">
   <toc/>
   <h2>Basic device description structure</h2>
   <p>
@@ -215,6 +215,13 @@
     segment.
   </p>
   <p>
+    <span class="req">v0.7+</span>
+    If <tt>init_pattern_word</tt> is used instead of <tt>init_pattern</tt>, then
+    the initialization pattern is specified as 16-bit words instead of bytes.
+    The values may either be signed or unsigned. Each 16-bit value is stored in
+    6502 little-endian order, LSB first.
+  </p>
+  <p>
     If no source or initialization data is given, the segment memory is zeroed.
   </p>
   <h3>Persistence</h3>
@@ -293,32 +300,62 @@
     mappings.
   </p>
   <p>
-    name (required): The name of the memory layer, as it appears in the
+    <tt>name</tt> (required): The name of the memory layer, as it appears in the
     debugger's <tt>.map</tt> command. This name is only shown in the debugger
     and need not be unique, though recommended.
   </p>
   <p>
-    address (required): The 16-bit base address of the memory layer's access
+    <tt>address</tt> (required): The 16-bit base address of the memory layer's access
     window. This determines the base address of the memory layer as seen by
     the 6502 or ANTIC. This must be aligned to a page boundary, e.g. <tt>$4000</tt>
     or <tt>$D100</tt>.
   </p>
   <p>
-    size (required): The size of the memory layer access window, in bytes.
+    <tt>size</tt> (required): The size of the memory layer access window, in bytes.
     This must be a multiple of 256 for page alignment, and the resulting address
     region must fit within the 64K address space. Note that this is the size
     of the access window and not the backing memory, which may be much bigger
     than the backing memory to support bank switching.
   </p>
   <p>
-    cart-mode (optional): Enables automatic cartridge behavior for this
+    <tt>cart-mode</tt> (optional): Enables automatic cartridge behavior for this
     memory layer. See <i>cartridge-enabled layers</i> below for more info.
   </p>
   <p>
-    auto_pbi (optional): Enables automatic Parallel Bus Interface (PBI) behavior
+    <tt>auto_pbi</tt> (optional): Enables automatic Parallel Bus Interface (PBI) behavior
     for this memory layer. See <i>PBI-enabled layers</i> below for more info.
   </p>
   <p>
+    <span class="req">v0.6+</span> <tt>auto_enable</tt> (optional): Enables automatic control of a layer with various modes:
+  </p>
+  <div style="margin-left: 2em;">
+    <dl class="scripting-ref">
+      <dt>"pbi"</dt>
+      <dd>
+        Only enable this memory layer when the Parallel Bus Interface (PBI) device
+        is selected. See <i>PBI-enabled layers</i> below for more info. This is a
+        synonym for <tt>"auto_pbi": "true"</tt>.
+      </dd>
+
+      <dt>"osrom"</dt>
+      <dd>
+        Only enable this memory layer when the system OS ROM is enabled.
+      </dd>
+
+      <dt>"basicrom"</dt>
+      <dd>
+        Only enable this memory layer when the system internal BASIC ROM is enabled. This
+        is not influenced by BASIC cartridges.
+      </dd>
+
+      <dt>"selftestrom"</dt>
+      <dd>
+        Only enable this memory layer when the system Self-Test ROM is enabled.
+      </dd>
+    </dl>
+  </div>
+  <p>
+    <span class="req">v0.5+</span>
     priority (optional): Sets the relative priority of this layer to resolve
     conflicts when this memory layer overlaps with another memory layer. The
     prioritization is as follows:
@@ -657,6 +694,10 @@
     from a device segment, while <tt>write</tt> has the computer writing to a device segment. <tt>segment</tt>
     specifies the segment name, while <tt>offset</tt> and <tt>length</tt> specify the starting offset
     in the segment and the transfer length. The transfer range must fit within the segment.
+  </p>
+  <p>
+    <span class="req">v0.7+</span> <tt>auto_transfer</tt> may also directly specify a byte array to send.
+    For instance, a status command can simply use <tt>auto_transfer: [0, 0, 240, 0]</tt>.
   </p>
   <p>
     <tt>script</tt> is the most flexible option as it runs a script to drive the SIO transaction. The
@@ -1166,6 +1207,83 @@
     on the fly only when it is needed.
   </p>
   
+  <h2>Sound playback</h2>
+  <p>
+    Pre-defined sound clips can be played back from a custom device through the
+    <tt>Sound</tt> and <tt>SoundParam</tt> objects. This allows a custom device to play
+    representative device sounds during its operation.
+  </p>
+  
+  <h3>Providing sound samples</h3>
+  <p>
+    A <tt>Sound</tt> object provides the sound sample used for playback, initialized
+    from an audio file. Supported formats include uncompressed WAV, FLAC, and Ogg
+    Vorbis.
+  </p>
+  <p>
+    Sound samples are always mono. Stereo files are downmixed to mono before use.
+  </p>
+  
+  <h3>Playing sounds</h3>
+  <p>
+    The <tt>play()</tt> method on a sound is used to play the sound. A <tt>SoundParam</tt>
+    object is required to provide the playback parameters, including volume, panning,
+    playback rate, and whether the sound should loop. By default, non-looping (one shot)
+    sounds will play once and then automatically stop, while looping sounds will continue
+    indefinitely. The <tt>stop_all()</tt> method will stop a sound instance in progress.
+  </p>
+  <p>
+    Only one instance of a sound can be playing at a time. Playing a new sound instance
+    will automatically stop a previous instance already in progress.
+  </p>
+  <p>
+    When a sound is played, the sound parameters are captured into the sound instance when
+    it is created. The <tt>SoundParam</tt> object can then be changed for the next <tt>play()</tt>
+    call without affecting currently playing sound instances, but there is no way to change
+    parameters on a currently playing sound instance.
+  </p>
+  
+  <h3>Volume control</h3>
+  <p>
+    Sounds can be attenuated below full volume by changing the volume setting on a <tt>SoundParam</tt>
+    object. The volume ranges from 0-1, where 0.0 is silent, 0.5 is half amplitude (quarter power),
+    and 1.0 is full volume.
+  </p>
+  
+  <h3>Panning</h3>
+  <p>
+    Panning a sound changes the relative left and right playback volumes to change the sound's
+    2D position in stereo. A sound can be hard-panned left or right, or panned to an intermediate
+    position.
+  </p>
+  <p>
+    The panning law used is equal power, where the same total output power is maintained as the
+    volume levels are split between the left and right channels. Since not all sounds are panned,
+    the default center panning position results in full volume to both left and right channels,
+    and panning hard left or right results in the sound being amplified by 3dB if played at
+    full volume (1.0). Thus, panned sounds should generally have their volume lowered to compensate.
+  </p>
+  
+  <h3>Playback rate</h3>
+  <p>
+    Changing the playback rate of a sound results in it being resampled. This plays the sound sample
+    back faster or slower than usual. A playback rate above 1.0 causes the sound to be played back
+    faster, resulting in a higher pitch and shorter duration. A value below 1.0 slows down the sound
+    for a lower pitch and longer duration.
+  </p>
+  <p>
+    There is currently no support for changing the playback duration of a sound without changing
+    its pitch, or equivalently pitch without changing duration. This requires a pitch/time stretching
+    algorithm such as PSOLA.
+  </p>
+  
+  <h3>Timing</h3>
+  <p>
+    Sound samples are resampled as necessary and mixed at output rate, which on most systems will be
+    48KHz. However, play and stop event processing and mixing is performed synchronous to simulation
+    timing, so played sounds are subject to both pausing and warp speed.
+  </p>
+  
   <h2>Scripting</h2>
   <p>
     Custom device behaviors are driven through scripts. These are small fragments
@@ -1658,6 +1776,43 @@
   </p>
   <pre>  Thread.sleep(100);</pre>
 
+  <h3>Method restrictions</h3>
+  <p>
+    Some methods have restrictions as to where they can be called:
+  </p>
+  <dl>
+    <dt>Asynchronous methods</dt>
+    <dd>
+      Asynchronous methods can only be called in a <i>yielding</i> context,
+      where pausing execution to wait for an external event or time delay is
+      allowed. <tt>Thread.sleep()</tt> is an example of such a method. Attempting
+      to use such a method in a non-yielding context will result in a compile-time error.
+    </dd>
+    <dd>
+      Typically, the solution to needing to call an asynchronous method from
+      within a non-yielding context is to start the asynchronous process in
+      a separate thread.
+    </dd>
+
+    <dt>SIO methods</dt>
+    <dd>
+      SIO command handlers run in a special hybrid context that can be either
+      yielding or non-yielding depending on how the SIO command is being
+      processed. For this reason, regular asynchronous methods are not allowed
+      and the <tt>$sio</tt> object has a special <tt>delay()</tt> method for
+      use in SIO command handlers. These calls can also only be used in SIO
+      command handlers.
+    </dd>
+
+    <dt>Unsafe methods <span class="req">v0.7+</span></dt>
+    <dd>
+      Methods indicated as <i>unsafe</i> are more highly restricted as they can
+      affect the emulator itself or modify files outside of the emulator. These
+      sensitive operations are only allowed if the custom device is added with
+      an additional option to enable unsafe operations.
+    </dd>
+  </dl>
+ 
   <h3>Threading</h3>
   <p>
     Script threads can be created to emulate parallel processes. A thread
@@ -2108,21 +2263,36 @@
   };]]></pre>
   <h2>Changes</h2>
   <dl>
-    <dt>v0.5</dt>
+    <dt><span class="req">v0.7</span> (Altirra 4.40-test11)</dt>
+    <dd>
+      <ul>
+        <li>Added <tt>init_pattern_word</tt> parameter to segments.</li>
+        <li>Added sound playback support.</li>
+        <li>Added support for <tt>unsafe</tt> methods.</li>
+        <li>Added emulator UI command support.</li>
+       </ul>
+    </dd>
+    <dt><span class="req">v0.6</span> (Altirra 4.40-test7)</dt>
+    <dd>
+      <ul>
+        <li>Added <tt>auto_enable</tt> member to memory layers.</li>
+      </ul>
+    </dd>
+    <dt><span class="req">v0.5</span></dt>
     <dd>
       <ul>
         <li>Added <tt>priority</tt> member to memory layers.</li>
       </ul>
     </dd>
     
-    <dt>v0.4</dt>
+    <dt><span class="req">v0.4</span></dt>
     <dd>
       <ul>
         <li>Added <tt>Image</tt> and <tt>VideoOutput</tt> classes.</li>
       </ul>
     </dd>
 
-    <dt>v0.3</dt>
+    <dt><span class="req">v0.3</span></dt>
     <dd>
       <ul>
         <li>JSON format replaced with common script-based format.</li>
@@ -2130,7 +2300,7 @@
       </ul>
     </dd>
 
-    <dt>v0.2</dt>
+    <dt><span class="req">v0.2</span></dt>
     <dd>
       <ul>
         <li><tt>cctl_mode</tt> can now be <tt>auto</tt>.</li>

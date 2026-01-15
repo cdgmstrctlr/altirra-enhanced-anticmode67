@@ -205,7 +205,8 @@ enum class ATVMFunctionFlags : uint32 {
 	AsyncSIO = 2,
 	AsyncRawSIO = 4,
 	AsyncAll = 0xFF,
-	Static = 0x100
+	Static = 0x100,
+	Unsafe = 0x200
 };
 
 inline ATVMFunctionFlags operator&(ATVMFunctionFlags x, ATVMFunctionFlags y) { return (ATVMFunctionFlags)((uint32)x & (uint32)y); }

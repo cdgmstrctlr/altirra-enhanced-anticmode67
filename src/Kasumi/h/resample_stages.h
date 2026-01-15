@@ -38,19 +38,6 @@ protected:
 class IVDResamplerStage {
 public:
 	virtual ~IVDResamplerStage() {}
-
-#if 0
-	void *operator new(size_t n, VDSteppedAllocator& a) {
-		return a.allocate(n);
-	}
-
-	void operator delete(void *p, VDSteppedAllocator& a) {
-	}
-
-private:
-	// these should NEVER be called
-	void operator delete(void *p) {}
-#endif
 };
 
 class IVDResamplerSeparableRowStage2 {
@@ -75,6 +62,14 @@ public:
 void VDResamplerGenerateTable(sint32 *dst, const IVDResamplerFilter& filter);
 void VDResamplerGenerateTableF(float *dst, const IVDResamplerFilter& filter);
 void VDResamplerGenerateTable2(sint32 *dst, const IVDResamplerFilter& filter, sint32 count, sint32 u, sint32 dudx);
+
+// Swizzle coefficient table for efficient SSE2 processing by converting coefficients
+// from 32-bit (18.14) to 16-bit (2.14) and repeating pairs once. This converts
+// [A, B] in 32-bit to [A, B, A, B] in 16-bit.
 void VDResamplerSwizzleTable(sint32 *dst, unsigned pairs);
+
+// Returns true if all 18.14 encoded coefficients are within 0..1 (0..16384 in fixed
+// point). This can enable additional optimizations.
+bool VDResamplerFilterHasNoOvershoot(const sint32 *filter, size_t n);
 
 #endif

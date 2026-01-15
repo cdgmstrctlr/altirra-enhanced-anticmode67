@@ -101,10 +101,8 @@ void ATDevicePrinterBase::Shutdown() {
 		mpCIOMgr = nullptr;
 	}
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 
 	if (mpScheduler) {
 		mpScheduler->UnsetEvent(mpEventContinuePrinting);
@@ -164,8 +162,19 @@ void ATDevicePrinterBase::InitCIO(IATDeviceCIOManager *mgr) {
 	mpCIOMgr->AddCIODevice(this);
 }
 
-void ATDevicePrinterBase::GetCIODevices(char *buf, size_t len) const {
-	vdstrlcpy(buf, "P", len);
+void ATDevicePrinterBase::GetCIODevices(IATDeviceCIODeviceList& deviceList) const {
+	uint32 unitMask = 0;
+
+	for(int unit = 1; unit <= 9; ++unit) {
+		if (IsSupportedDeviceId(0x40 + unit - 1))
+			unitMask |= 1 << unit;
+	}
+
+	// if P1: through P9: are all supported, assume all printer units
+	if (unitMask == 0b0'1111111110)
+		unitMask = ~UINT32_C(0);
+
+	deviceList.AddDevice('P', unitMask);
 }
 
 sint32 ATDevicePrinterBase::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {
@@ -238,7 +247,7 @@ void ATDevicePrinterBase::OnCIOAbortAsync() {
 
 void ATDevicePrinterBase::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDevicePrinterBase::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -260,13 +269,13 @@ IATDeviceSIO::CmdResponse ATDevicePrinterBase::OnSerialBeginCommand(const ATDevi
 
 		const uint8 len = GetWidthForOrientation(cmd.mAUX[0]);
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->ReceiveData(0, len, true);
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->ReceiveData(0, len, true);
 
 		if (!mbAccurateTimingEnabled) {
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->EndCommand();
 		}
 
 		return kCmdResponse_Start;
@@ -275,7 +284,7 @@ IATDeviceSIO::CmdResponse ATDevicePrinterBase::OnSerialBeginCommand(const ATDevi
 
 		GetStatusFrame(statusData);
 
-		mpSIOMgr->HandleCommand(statusData, 4, true);
+		mpSIOInterface->HandleCommand(statusData, 4, true);
 		return kCmdResponse_Start;
 	}
 
@@ -313,8 +322,13 @@ void ATDevicePrinterBase::OnScheduledEvent(uint32 id) {
 }
 
 void ATDevicePrinterBase::BeginGraphics() {
+	mpOutput = nullptr;
+
 	if (!mpPrinterGraphicalOutput) {
-		mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(GetGraphicsSpec());
+		ATDeviceInfo info;
+		GetDeviceInfo(info);
+
+		mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(GetPrinterOutputName().c_str(), GetGraphicsSpec());
 
 		OnCreatedGraphicalOutput();
 	}
@@ -341,11 +355,6 @@ void ATDevicePrinterBase::GetStatusFrame(uint8 frame[4]) {
 	frame[3] = 0;
 
 	GetStatusFrameInternal(frame);
-}
-
-bool ATDevicePrinterBase::IsSupportedDeviceId(uint8 id) const {
-	// The 820 only responds to P1:, and we follow that for the generic SIO printer.
-	return id == 0x40;
 }
 
 int ATDevicePrinterBase::FlushCIOBuffer(bool sideways) {
@@ -396,18 +405,39 @@ void ATDevicePrinterBase::HandleFrame(const uint8 *data, uint32 len, bool fromCI
 	memcpy(buf, src, len);
 	buf[len] = 0x9B;
 	
+	HandleFrameInternal(mLastOrientationByte, buf, len, mpPrinterGraphicalOutput && mbGraphicsEnabled);
+	FlushRenderedLines(fromCIO);
+}
+
+VDStringW ATDevicePrinterBase::GetPrinterOutputName() {
+	ATDeviceInfo info;
+	GetDeviceInfo(info);
+
+	VDStringW name(info.mpDef->mpName);
+
+	uint8 deviceId = 0x48;		// P9:
+
+	while(deviceId >= 0x40 && !IsSupportedDeviceId(deviceId))
+		--deviceId;
+
+	if (deviceId >= 0x40)
+		name.append_sprintf(L" (P%c:)", L'1' + (deviceId - 0x40));
+
+	return name;
+}
+
+
+IATPrinterOutput *ATDevicePrinterBase::GetTextOutput() {
 	auto *printer = mParallelBus.GetChild<IATPrinterOutput>();
 	if (!printer) {
-		if (!mpOutput)
-			mpOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+		if (!mpOutput) {
+			mpOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput(GetPrinterOutputName().c_str());
+		}
 
 		printer = mpOutput;
-		if (!printer)
-			return;
 	}
 
-	HandleFrameInternal(*printer, mLastOrientationByte, buf, len, mpPrinterGraphicalOutput && mbGraphicsEnabled);
-	FlushRenderedLines(fromCIO);
+	return printer;
 }
 
 ATDevicePrinterBase::RenderedLine *ATDevicePrinterBase::BeginRenderLine(uint32 width) {
@@ -654,8 +684,8 @@ void ATDevicePrinterBase::CompletePrinting() {
 	VDASSERT(!mpEventContinuePrinting);
 
 	if (!mbPrintingFromCIO) {
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->EndCommand();
 	}
 
 	mRenderedLinesQueued = 0;
@@ -710,8 +740,8 @@ bool ATDevicePrinter::SetSettings(const ATPropertySet& settings) {
 }
 
 bool ATDevicePrinter::IsSupportedDeviceId(uint8 id) const {
-	// support P1: through P6:
-	return id >= 0x40 && id <= 0x45;
+	// The 820 only responds to P1:, and we follow that for the generic SIO printer.
+	return id == 0x40;
 }
 
 bool ATDevicePrinter::IsSupportedOrientation(uint8 aux1) const {
@@ -726,9 +756,13 @@ uint8 ATDevicePrinter::GetWidthForOrientation(uint8 aux1) const {
 void ATDevicePrinter::GetStatusFrameInternal(uint8 frame[4]) {
 }
 
-void ATDevicePrinter::HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
+void ATDevicePrinter::HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
 	if (len > 40)
 		VDRaiseInternalFailure();
+
+	IATPrinterOutput *output = GetTextOutput();
+	if (!output)
+		return;
 
 	// look for an EOL, and if there is one, truncate at that point and set eol flag
 	bool eol = false;
@@ -741,7 +775,7 @@ void ATDevicePrinter::HandleFrameInternal(IATPrinterOutput& output, uint8 orient
 		}
 	}
 
-	if (!output.WantUnicode()) {
+	if (!output->WantUnicode()) {
 		if (mTranslationMode == ATPrinterPortTranslationMode::AtasciiToUtf8) {
 			uint8 dstbuf[160];
 			uint8 *dst = dstbuf;
@@ -759,7 +793,7 @@ void ATDevicePrinter::HandleFrameInternal(IATPrinterOutput& output, uint8 orient
 				}
 			}
 
-			output.WriteRaw(dstbuf, (size_t)(dst - dstbuf));
+			output->WriteRaw(dstbuf, (size_t)(dst - dstbuf));
 		} else {
 			if (mTranslationMode == ATPrinterPortTranslationMode::Default) {
 				for(uint32 i = 0; i < len; ++i)
@@ -769,7 +803,7 @@ void ATDevicePrinter::HandleFrameInternal(IATPrinterOutput& output, uint8 orient
 					buf[len - 1] = 0x0D;
 			}
 
-			output.WriteRaw(buf, len);
+			output->WriteRaw(buf, len);
 		}
 		return;
 	}
@@ -792,7 +826,7 @@ void ATDevicePrinter::HandleFrameInternal(IATPrinterOutput& output, uint8 orient
 		unibuf[ulen++] = (wchar_t)c;
 	}
 
-	output.WriteUnicode(unibuf, ulen);
+	output->WriteUnicode(unibuf, ulen);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -832,7 +866,7 @@ ATPrinterGraphicsSpec ATDevicePrinter820::GetGraphicsSpec() const {
 
 bool ATDevicePrinter820::IsSupportedDeviceId(uint8 id) const {
 	// support P1: only
-	return id >= 0x40 && id <= 0x45;
+	return id == 0x40;
 }
 
 bool ATDevicePrinter820::IsSupportedOrientation(uint8 aux1) const {
@@ -858,7 +892,7 @@ void ATDevicePrinter820::GetStatusFrameInternal(uint8 frame[4]) {
 	frame[3] = 0;
 }
 
-void ATDevicePrinter820::HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
+void ATDevicePrinter820::HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
 	// check for sideways
 	const bool sideways = (orientation == 0x53);
 	if (sideways) {
@@ -915,8 +949,12 @@ void ATDevicePrinter820::HandleFrameInternal(IATPrinterOutput& output, uint8 ori
 		return;
 	}
 
-	if (!output.WantUnicode()) {
-		output.WriteRaw(buf, len);
+	IATPrinterOutput *output = GetTextOutput();
+	if (!output)
+		return;
+
+	if (!output->WantUnicode()) {
+		output->WriteRaw(buf, len);
 		return;
 	}
 
@@ -950,7 +988,7 @@ void ATDevicePrinter820::HandleFrameInternal(IATPrinterOutput& output, uint8 ori
 		}
 	}
 
-	output.WriteUnicode(unibuf, len);
+	output->WriteUnicode(unibuf, len);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1026,7 +1064,7 @@ void ATDevicePrinter1025::GetStatusFrameInternal(uint8 frame[4]) {
 	ResetState();
 }
 
-void ATDevicePrinter1025::HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
+void ATDevicePrinter1025::HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
 	// normal: mask off bit 7, and convert 00-1F/60/7B/7D-7F to space
 	// european: just mask off bit 7
 	//
@@ -1054,7 +1092,7 @@ void ATDevicePrinter1025::HandleFrameInternal(IATPrinterOutput& output, uint8 or
 		// check for EOL
 		if (c == 0x9B) {
 			// flush line buffer
-			FlushLine(output, graphics);
+			FlushLine(graphics);
 
 			// ignore remainder of data frame
 			break;
@@ -1146,11 +1184,11 @@ void ATDevicePrinter1025::HandleFrameInternal(IATPrinterOutput& output, uint8 or
 		mRawLineBuffer[mColumn] = c;
 		mUnicodeLineBuffer[mColumn] = kATATASCIITables.mATASCIIToUnicode[1][c];
 		if (++mColumn >= mLineLength)
-			FlushLine(output, graphics);
+			FlushLine(graphics);
 	}
 }
 
-void ATDevicePrinter1025::FlushLine(IATPrinterOutput& output, bool graphics) {
+void ATDevicePrinter1025::FlushLine(bool graphics) {
 	if (graphics) {
 		float xStartMM = 6.31359720f;
 		float xStepMM = 0.21192742f;
@@ -1223,10 +1261,14 @@ void ATDevicePrinter1025::FlushLine(IATPrinterOutput& output, bool graphics) {
 		mRawLineBuffer[mColumn] = 0x9B;
 		mUnicodeLineBuffer[mColumn] = L'\n';
 
-		if (output.WantUnicode())
-			output.WriteUnicode(mUnicodeLineBuffer, mColumn + 1);
-		else
-			output.WriteRaw(mRawLineBuffer, mColumn + 1);
+		IATPrinterOutput *output = GetTextOutput();
+
+		if (output) {
+			if (output->WantUnicode())
+				output->WriteUnicode(mUnicodeLineBuffer, mColumn + 1);
+			else
+				output->WriteRaw(mRawLineBuffer, mColumn + 1);
+		}
 	}
 
 	mColumn = 0;
@@ -1337,7 +1379,7 @@ void ATDevicePrinter1029::GetStatusFrameInternal(uint8 frame[4]) {
 	ResetState();
 }
 
-void ATDevicePrinter1029::HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
+void ATDevicePrinter1029::HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
 	// normal: mask off bit 7, and convert 00-1F/60/7B/7D-7F to space
 	// european: just mask off bit 7
 	//
@@ -1376,12 +1418,12 @@ void ATDevicePrinter1029::HandleFrameInternal(IATPrinterOutput& output, uint8 or
 			mDotBuffer[mDotColumn] = pat;
 
 			if (++mDotColumn >= 480)
-				FlushLine(output, graphics);
+				FlushLine(graphics);
 		} else {
 			// check for EOL
 			if (c == 0x9B) {
 				// flush line buffer
-				FlushLine(output, graphics);
+				FlushLine(graphics);
 
 				// clear escape mode in case we processed Esc+EOL
 				mEscapeState = EscapeState::None;
@@ -1491,7 +1533,7 @@ void ATDevicePrinter1029::HandleFrameInternal(IATPrinterOutput& output, uint8 or
 			uint32 columnsNeeded = mbElongated ? 10 : 5;
 
 			if (mDotColumn + columnsNeeded > 480)
-				FlushLine(output, graphics);
+				FlushLine(graphics);
 
 			// We are now guaranteed to have room in the line buffer. Add the character
 			// to the text buffer if we're doing text printing; we estimate the text
@@ -1533,12 +1575,12 @@ void ATDevicePrinter1029::HandleFrameInternal(IATPrinterOutput& output, uint8 or
 			mDotColumn += mbElongated ? 2 : 1;
 
 			if (mDotColumn >= 480)
-				FlushLine(output, graphics);
+				FlushLine(graphics);
 		}
 	}
 }
 
-void ATDevicePrinter1029::FlushLine(IATPrinterOutput& output, bool graphics) {
+void ATDevicePrinter1029::FlushLine(bool graphics) {
 	if (graphics) {
 		// The 1029 prints at 50 characters/second and 10 characters/inch, so the ratio is
 		// 0.2 seconds/inch.
@@ -1631,10 +1673,13 @@ void ATDevicePrinter1029::FlushLine(IATPrinterOutput& output, bool graphics) {
 		mRawLineBuffer[textColumns] = 0x9B;
 		mUnicodeLineBuffer[textColumns] = L'\n';
 
-		if (output.WantUnicode())
-			output.WriteUnicode(mUnicodeLineBuffer, textColumns + 1);
-		else
-			output.WriteRaw(mRawLineBuffer, textColumns + 1);
+		IATPrinterOutput *output = GetTextOutput();
+		if (output) {
+			if (output->WantUnicode())
+				output->WriteUnicode(mUnicodeLineBuffer, textColumns + 1);
+			else
+				output->WriteRaw(mRawLineBuffer, textColumns + 1);
+		}
 	}
 
 	mDotColumn = 0;
@@ -1699,7 +1744,7 @@ void ATDevicePrinter825::Init() {
 	spec.mVerticalDotPitchMM = 0.403175f;	// 0.0159" vertical pitch (guess)
 	spec.mbBit0Top = true;
 	spec.mNumPins = 9;
-	mpGraphicsOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(spec);
+	mpGraphicsOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(g_ATDeviceDefPrinter825.mpName, spec);
 }
 
 void ATDevicePrinter825::Shutdown() {

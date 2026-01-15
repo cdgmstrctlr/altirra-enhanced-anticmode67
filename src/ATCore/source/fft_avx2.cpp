@@ -346,8 +346,11 @@ void ATFFT_DIT_R2C_AVX2(float *dst0, const float *src0, const float *w, int N) {
 	for(int i=16; i<N/2; i += 16) {
 		__m256 rl = _mm256_load_ps(&src[i]);
 		__m256 il = _mm256_load_ps(&src[i+8]);
-		__m256 rh = _mm256_castsi256_ps(_mm256_insert_epi32(_mm256_load_si256((const __m256i *)&src[N-i-15]), *(int *)&src[N-i], 7));
-		__m256 ih = _mm256_castsi256_ps(_mm256_insert_epi32(_mm256_load_si256((const __m256i *)&src[N-i-7]), *(int *)&src[N-i+8], 7));
+
+		const int rh7 = *(int *)&src[N-i];
+		const int ih7 = *(int *)&src[N-i+8];
+		__m256 rh = _mm256_castsi256_ps(_mm256_insert_epi32(_mm256_load_si256((const __m256i *)&src[N-i-15]), rh7, 7));
+		__m256 ih = _mm256_castsi256_ps(_mm256_insert_epi32(_mm256_load_si256((const __m256i *)&src[N-i-7]), ih7, 7));
 
 		// reverse high vector
 		rh = _mm256_shuffle_ps(rh, rh, _MM_SHUFFLE(0, 1, 2, 3));

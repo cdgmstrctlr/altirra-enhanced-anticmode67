@@ -33,29 +33,6 @@ int VDCountBits(uint32 v) {
 	return (v * 0x01010101) >> 24;
 }
 
-#ifndef VD_COMPILER_MSVC_VC8_OR_LATER
-
-	int VDFindLowestSetBit(uint32 v) {
-		for(int i=0; i<32; ++i) {
-			if (v & 1)
-				return i;
-			v >>= 1;
-		}
-
-		return 32;
-	}
-
-	int VDFindHighestSetBit(uint32 v) {
-		for(int i=31; i>=0; --i) {
-			if ((sint32)v < 0)
-				return i;
-			v += v;
-		}
-		return -1;
-	}
-
-#endif
-
 uint32 VDCeilToPow2(uint32 v) {
 	v += v;
 	--v;

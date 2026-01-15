@@ -64,7 +64,7 @@
 	#define AT_TEST_ASSERT_STRINGIFY1(x) #x
 
 	#define AT_TEST_ASSERT(condition) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("%s", "Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " #condition); volatile int _x = 0; (void)_x; } else ((void)0)
-	#define AT_TEST_ASSERTF(condition, msg, ...) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " msg, __VA_ARGS__); volatile int _x = 0; (void)_x; } else ((void)0)
+	#define AT_TEST_ASSERTF(condition, msg, ...) if (!(condition)) { ATTestShouldBreak() ? __debugbreak() : throw ATTestAssertionException("Test assertion failed at line " AT_TEST_ASSERT_STRINGIFY(__LINE__) ": " msg __VA_OPT__(,) __VA_ARGS__); volatile int _x = 0; (void)_x; } else ((void)0)
 
 	#define AT_TEST_NONFATAL_ASSERT(condition) \
 		if (!(condition)) { \

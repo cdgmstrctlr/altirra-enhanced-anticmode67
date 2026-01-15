@@ -247,6 +247,45 @@ inline vdsafedelete_t& operator,(vdsafedelete_t& x, T *(&p)[N]) {
 
 ///////////////////////////////////////////////////////////////////////////
 
+template<typename EF>
+class vdscopeexit {
+public:
+	template<typename Fn>
+	explicit vdscopeexit(Fn&& fn)
+		: mExitFn(std::forward<Fn>(fn))
+	{
+	}
+
+	vdscopeexit(vdscopeexit&& other)
+		noexcept(std::is_nothrow_move_constructible_v<EF>)
+		: mExitFn(std::move(other.mExitFn))
+		, mbActive(other.mbActive)
+	{
+		other.mbActive = false;
+	}
+
+	vdscopeexit(const vdscopeexit&) = delete;
+
+	~vdscopeexit() noexcept {
+		if (mbActive)
+			mExitFn();
+	}
+
+	vdscopeexit& operator=(const vdscopeexit&) = delete;
+
+	void release() {
+		mbActive = false;
+	}
+
+private:
+	EF mExitFn;
+	bool mbActive = true;
+};
+
+template<typename EF> vdscopeexit(EF) -> vdscopeexit<EF>;
+
+///////////////////////////////////////////////////////////////////////////
+
 #pragma warning(pop)
 
 #endif

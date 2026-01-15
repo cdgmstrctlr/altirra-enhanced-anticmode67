@@ -71,7 +71,7 @@ public:
 	bool	Init();
 	void	Shutdown();
 
-	void	SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook);
+	void	SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent, uintptr)>& profileHook);
 
 	void	RemoteCall(void (*function)(void *), void *data);
 
@@ -143,7 +143,7 @@ private:
 	VDSignal			mStarted;
 	VDCriticalSection	mMutex;
 
-	vdfunction<void(IVDVideoDisplay::ProfileEvent)> mpProfileHook;
+	vdfunction<void(IVDVideoDisplay::ProfileEvent, uintptr)> mpProfileHook;
 
 	struct MonitorHDRInfo {
 		float mSDRLevel = 200;

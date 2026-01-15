@@ -26,14 +26,35 @@
 
 class ATPrinterOutputManager;
 
+class ATPrinterOutputBase : public virtual IVDRefUnknown {
+public:
+	ATPrinterOutputBase(ATPrinterOutputManager& parent, const wchar_t *name)
+		: mParent(parent), mName(name)
+	{
+	}
+
+	virtual ~ATPrinterOutputBase() = default;
+
+	int AddRef() override;
+	int Release() override;
+	void *AsInterface(uint32 id) override;
+
+	const wchar_t *GetName() const;
+
+protected:
+	ATPrinterOutputManager& mParent;
+	VDStringW mName;
+	VDAtomicInt mRefCount{0};
+};
+
 // Printer output interface for text output. This gets presented in the
 // printer view as a text edit widget.
 //
-class ATPrinterOutput final : public IATPrinterOutput {
+class ATPrinterOutput final : public ATPrinterOutputBase, public IATPrinterOutput {
 	ATPrinterOutput(const ATPrinterOutput&) = delete;
 	ATPrinterOutput& operator=(const ATPrinterOutput&) = delete;
 public:
-	ATPrinterOutput(ATPrinterOutputManager& parent);
+	ATPrinterOutput(ATPrinterOutputManager& parent, const wchar_t *name);
 	~ATPrinterOutput();
 
 	void SetOnInvalidation(vdfunction<void()> fn);
@@ -45,8 +66,6 @@ public:
 	void Clear();
 
 public:
-	int AddRef() override;
-	int Release() override;
 	void *AsInterface(uint32 id) override;
 
 	bool WantUnicode() const override;
@@ -62,19 +81,28 @@ private:
 	bool mbInvalidated = false;
 
 	vdfunction<void()> mpOnInvalidationFn;
-
-	VDAtomicInt mRefCount{0};
-	ATPrinterOutputManager& mParent;
 };
 
 // Printer output handler for graphical output, produced by dot matrix patterns.
 // This gets presented in the printer view as a rasterized image.
 //
-class ATPrinterGraphicalOutput final : public IATPrinterGraphicalOutput {
+// The paper coordinate system is top-down with (0,0) at the top left of the
+// paper and all coordinates in millimeters. The paper width is specified when
+// the output is opened and the paper height dynamically extends as content
+// is printed.
+//
+// There are two kinds of entities that can be present in the output. One is
+// dots or filled discs, and the other is vectors. A vector is a line segment
+// with a width the same as the dot diameter, capped by two dots at the
+// end points. Dots are internally organized by horizontal lines corresponding
+// to sweeps of the print head, and are culled accordingly; vectors are
+// free-form and extracted by bounding rects.
+//
+class ATPrinterGraphicalOutput final : public ATPrinterOutputBase, public IATPrinterGraphicalOutput {
 	ATPrinterGraphicalOutput(const ATPrinterGraphicalOutput&) = delete;
 	ATPrinterGraphicalOutput& operator=(const ATPrinterGraphicalOutput&) = delete;
 public:
-	ATPrinterGraphicalOutput(ATPrinterOutputManager& parent, const ATPrinterGraphicsSpec& spec);
+	ATPrinterGraphicalOutput(ATPrinterOutputManager& parent, const wchar_t *name, const ATPrinterGraphicsSpec& spec);
 	~ATPrinterGraphicalOutput();
 
 	const ATPrinterGraphicsSpec& GetGraphicsSpec() const;
@@ -97,8 +125,9 @@ public:
 	bool PreCull(CullInfo& cullInfo, const vdrect32f& r) const;
 
 	struct RenderDot {
-		float mX;
-		float mY;
+		float mX = 0;
+		float mY = 0;
+		uint32 mLinearColor = 0;
 	};
 
 	// Extract dots from a line within the pre-cull rect. The top of the rectangle must be at or below
@@ -114,8 +143,9 @@ public:
 	// the top height of the last rectangle.
 	bool ExtractNextLine(vdfastvector<RenderColumn>& renderColumns, float& renderY, CullInfo& cullInfo, const vdrect32f& r) const;
 
+	// Vector line. This is always oriented top-down (y2 > y1).
 	struct RenderVector {
-		uint32 mColorIndex = 0;
+		uint32 mLinearColor = 0;
 		float mX1 = 0;
 		float mY1 = 0;
 		float mX2 = 0;
@@ -127,15 +157,14 @@ public:
 	void ExtractVectors(vdfastvector<RenderVector>& renderVectors, const vdrect32f& r);
 
 public:
-	int AddRef() override;
-	int Release() override;
 	void *AsInterface(uint32 id) override;
 
 	void SetOnClear(vdfunction<void()> fn) override;
-
+	
 	void FeedPaper(float distanceMM) override;
 	void Print(float x, uint32 dots) override;
-	void AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 colorIndex) override;
+	void AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 color) override;
+	uint32 ConvertColor(uint32 srgb) const override;
 
 private:
 	struct Line {
@@ -178,6 +207,7 @@ private:
 		void Init(const vdrect32f& r, float dotRadius);
 		void Translate(float dx, float dy);
 		bool Intersects(const Vector& v) const;
+		bool IntersectsPrecise(const Vector& v) const;
 
 	private:
 		float mXC = 0;
@@ -223,13 +253,11 @@ private:
 	bool mbInvalidatedAll = false;
 	vdrect32f mInvalidationRect;
 	vdfunction<void()> mpOnInvalidationFn;
+	vdfunction<void(uint32, uint32)> mpOnPenChangedFn;
 
 	vdfunction<void()> mpOnClear;
 
 	const ATPrinterGraphicsSpec mGraphicsSpec;
-
-	VDAtomicInt mRefCount{0};
-	ATPrinterOutputManager& mParent;
 };
 
 class ATPrinterOutputManager final : public vdrefcounted<IATPrinterOutputManager> {
@@ -251,12 +279,11 @@ public:
 	ATNotifyList<const vdfunction<void(ATPrinterGraphicalOutput&)> *> OnRemovingGraphicalOutput;
 
 public:
-	vdrefptr<IATPrinterOutput> CreatePrinterOutput() override;
-	vdrefptr<IATPrinterGraphicalOutput> CreatePrinterGraphicalOutput(const ATPrinterGraphicsSpec& spec) override;
+	vdrefptr<IATPrinterOutput> CreatePrinterOutput(const wchar_t *name) override;
+	vdrefptr<IATPrinterGraphicalOutput> CreatePrinterGraphicalOutput(const wchar_t *name, const ATPrinterGraphicsSpec& spec) override;
 
 public:
-	void OnDestroyingOutput(ATPrinterOutput& output);
-	void OnDestroyingOutput(ATPrinterGraphicalOutput& output);
+	void OnDestroyingOutput(ATPrinterOutputBase& output);
 
 private:
 	vdfastvector<ATPrinterOutput *> mOutputs;

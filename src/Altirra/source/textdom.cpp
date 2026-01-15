@@ -795,7 +795,7 @@ void Document::Insert(const Iterator& it, const wchar_t *text, size_t len, Itera
 	text = s;
 	
 	// generate new paragraphs
-	while(s = wmemchr(text, L'\n', len)) {
+	while((s = wmemchr(text, L'\n', len))) {
 		++s;
 
 		Paragraph *p = new Paragraph;

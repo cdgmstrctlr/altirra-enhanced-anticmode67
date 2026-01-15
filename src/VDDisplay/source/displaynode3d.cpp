@@ -24,6 +24,7 @@
 #include <vd2/Tessa/Context.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/internal/bloom.h>
+#include <vd2/VDDisplay/internal/customeffectd3d11.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 #include "bicubic.h"
 #include "displaynode3d.h"
@@ -72,56 +73,125 @@ void VDDisplayMeshBuilder3D::SetFragmentProgram(VDTData fpdata) {
 	SetFragmentProgram(mpDctx->InitFP(fpdata));
 }
 
-void VDDisplayMeshBuilder3D::SetVPConstData(const void *src, size_t len) {
-	VDASSERT(!mpCmd->mVPConstCount);
+void VDDisplayMeshBuilder3D::SetVsConstBufferCount(uint32 count) {
+	VDASSERT(!mpCmd->mVsConstantBufferCount);
+
+	mpCmd->mVsConstantBufferCount = count;
+	mpCmd->mVsConstantBufferStart = (sint32)mpPool->mpConstantBuffers.size();
+
+	if (count)
+		mpPool->mpConstantBuffers.resize(mpPool->mpConstantBuffers.size() + count, nullptr);
+}
+
+void VDDisplayMeshBuilder3D::SetVPConstData(const void *src, size_t len, bool dynamic, uint32 slot) {
 	VDASSERT(!(len & 15));
 
-	mpCmd->mVPConstCount = len >> 4;
-	mpCmd->mVPConstOffset = (uint32)mpPool->mConstData.size();
+	if (!len) {
+		mpCmd->mVsConstantBufferStart = 0;
+	} else {
+		if (!mpCmd->mVsConstantBufferCount)
+			SetVsConstBufferCount(slot + 1);
 
-	if (len) {
-		mpPool->mConstData.resize(mpCmd->mVPConstOffset + len, 0);
-		memcpy(&*(mpPool->mConstData.end() - len), src, len);
+		vdrefptr<IVDTConstantBuffer> cb = mpDctx->mpContext->CreateConstantBuffer(len, dynamic ? nullptr : src);
+		if (!cb) {
+			mpPool->mbError = true;
+		} else {
+			VDASSERT(!mpPool->mpConstantBuffers[mpCmd->mVsConstantBufferStart + slot]);
+			mpPool->mpConstantBuffers[mpCmd->mVsConstantBufferStart + slot] = cb.release();
+		}
 	}
 }
 
 void VDDisplayMeshBuilder3D::SetVPConstDataReuse() {
-	mpCmd->mVPConstCount = 0;
-	mpCmd->mVPConstOffset = 1;
+	mpCmd->mVsConstantBufferStart = -1;
 }
 
-void VDDisplayMeshBuilder3D::SetFPConstData(const void *src, size_t len) {
-	VDASSERT(!mpCmd->mFPConstCount);
+void VDDisplayMeshBuilder3D::UpdateVPConstData(const void *src, uint32 slot) {
+	if (!mpCmd->mVsConstantBufferCount) {
+		VDFAIL("No VS constant buffer bound.");
+		return;
+	}
+
+	VDASSERT(slot < mpCmd->mVsConstantBufferCount);
+
+	IVDTConstantBuffer *cb = mpPool->mpConstantBuffers[mpCmd->mVsConstantBufferStart + slot];
+
+	if (cb)
+		cb->Load(src);
+}
+
+void VDDisplayMeshBuilder3D::SetPsConstBufferCount(uint32 count) {
+	VDASSERT(!mpCmd->mPsConstantBufferCount);
+
+	mpCmd->mPsConstantBufferCount = count;
+	mpCmd->mPsConstantBufferStart = (sint32)mpPool->mpConstantBuffers.size();
+
+	if (count)
+		mpPool->mpConstantBuffers.resize(mpPool->mpConstantBuffers.size() + count, nullptr);
+}
+
+void VDDisplayMeshBuilder3D::SetFPConstData(const void *src, size_t len, bool dynamic, uint32 slot) {
 	VDASSERT(!(len & 15));
 
-	mpCmd->mFPConstCount = len >> 4;
-	mpCmd->mFPConstOffset = (uint32)mpPool->mConstData.size();
+	if (!len) {
+		mpCmd->mPsConstantBufferStart = 0;
+	} else {
+		if (!mpCmd->mPsConstantBufferCount)
+			SetPsConstBufferCount(slot + 1);
 
-	if (len) {
-		mpPool->mConstData.resize(mpCmd->mFPConstOffset + len, 0);
-		memcpy(&*(mpPool->mConstData.end() - len), src, len);
+		vdrefptr<IVDTConstantBuffer> cb = mpDctx->mpContext->CreateConstantBuffer(len, dynamic ? nullptr : src);
+		if (!cb) {
+			mpPool->mbError = true;
+		} else {
+			VDASSERT(!mpPool->mpConstantBuffers[mpCmd->mPsConstantBufferStart + slot]);
+			mpPool->mpConstantBuffers[mpCmd->mPsConstantBufferStart + slot] = cb.release();
+		}
 	}
 }
 
 void VDDisplayMeshBuilder3D::SetFPConstDataReuse() {
-	mpCmd->mFPConstCount = 0;
-	mpCmd->mFPConstOffset = 1;
+	mpCmd->mPsConstantBufferStart = -1;
+}
+
+void VDDisplayMeshBuilder3D::UpdateFPConstData(const void *src, uint32 slot) {
+	if (!mpCmd->mPsConstantBufferCount) {
+		VDFAIL("No PS constant buffer bound.");
+		return;
+	}
+
+	VDASSERT(slot < mpCmd->mPsConstantBufferCount);
+
+	IVDTConstantBuffer *cb = mpPool->mpConstantBuffers[mpCmd->mPsConstantBufferStart + slot];
+
+	if (cb)
+		cb->Load(src);
 }
 
 void *VDDisplayMeshBuilder3D::InitVertices(size_t vertexSize, uint32 vertexCount, VDDVertexTransformer vertexTransformer) {
-	VDASSERT(!mpCmd->mVertexSourceOffset);
-	VDASSERT(!mpCmd->mVertexCount);
+	VDASSERT(vertexTransformer);
 	VDASSERT(vertexCount);
 	VDASSERT(!(vertexSize & 3));
 
-	mpCmd->mVertexSourceOffset = (uint32)mpPool->mVertexData.size();
-	mpCmd->mVertexSourceLen = vertexCount * vertexSize;
-	mpCmd->mVertexCount = vertexCount;
-	mpCmd->mVertexSize = vertexSize;
+	// we can overwrite the vertices if the size has not changed
 	mpCmd->mVertexTransformer = vertexTransformer;
+	mpCmd->mVertexCachedGeneration = 0;
 
-	mpPool->mVertexData.resize(mpCmd->mVertexSourceOffset + mpCmd->mVertexSourceLen);
-	return &*(mpPool->mVertexData.end() - mpCmd->mVertexSourceLen);
+	if (mpCmd->mVertexSourceLen) {
+		// updating in place
+		VDASSERT(mpCmd->mVertexCount == vertexCount);
+		VDASSERT(mpCmd->mVertexSize == vertexSize);
+
+		return &mpPool->mVertexData[mpCmd->mVertexSourceOffset];
+	} else {
+		// allocating new
+		mpCmd->mVertexSourceOffset = (uint32)mpPool->mVertexData.size();
+		mpCmd->mVertexSourceLen = vertexCount * vertexSize;
+		mpCmd->mVertexCount = vertexCount;
+		mpCmd->mVertexSize = vertexSize;
+
+		mpPool->mVertexData.resize(mpCmd->mVertexSourceOffset + mpCmd->mVertexSourceLen);
+		return &*(mpPool->mVertexData.end() - mpCmd->mVertexSourceLen);
+	}
 }
 
 void VDDisplayMeshBuilder3D::SetVertices(const void *data, size_t vertexSize, size_t vertexCount, VDDVertexTransformer vertexTransformer) {
@@ -133,6 +203,7 @@ void VDDisplayMeshBuilder3D::SetTopology(const uint16 *indices, uint32 numTriang
 
 	mpCmd->mIndexSourceCount = numTriangles * 3;
 	mpCmd->mIndexSourceOffset = (uint32)mpPool->mIndexData.size();
+	mpCmd->mIndexCachedGeneration = 0;
 
 	mpPool->mIndexData.resize(mpCmd->mIndexSourceOffset + mpCmd->mIndexSourceCount);
 	memcpy(&*(mpPool->mIndexData.end() - mpCmd->mIndexSourceCount), indices, sizeof(uint16) * mpCmd->mIndexSourceCount);
@@ -249,15 +320,15 @@ void VDDisplayMeshBuilder3D::SetBlendState(IVDTBlendState *blendState) {
 }
 
 void VDDisplayMeshBuilder3D::SetRenderView(VDDPoolRenderViewId id) {
-	mpCmd->mRenderView = id;
+	mpCmd->mRenderViewId = id;
 }
 
 VDDPoolRenderViewId VDDisplayMeshBuilder3D::SetRenderView(const VDDRenderView& renderView) {
 	VDASSERT(renderView.mViewport.mX >= 0);
 	VDASSERT(renderView.mViewport.mY >= 0);
 
-	mpCmd->mRenderView = mpPool->RegisterRenderView(renderView);
-	return mpCmd->mRenderView;
+	mpCmd->mRenderViewId = mpPool->RegisterRenderView(renderView);
+	return mpCmd->mRenderViewId;
 }
 
 VDDPoolRenderViewId VDDisplayMeshBuilder3D::SetRenderView(VDDPoolTextureIndex texture, uint32 mipLevel, bool bypassConversion) {
@@ -324,21 +395,25 @@ void VDDisplayDispatchBuilder3D::SetComputeProgram(VDTData fpdata) {
 }
 
 void VDDisplayDispatchBuilder3D::SetCPConstData(const void *src, size_t len) {
-	VDASSERT(!mpCmd->mCPConstCount);
 	VDASSERT(!(len & 15));
 
-	mpCmd->mCPConstCount = len >> 4;
-	mpCmd->mCPConstOffset = (uint32)mpPool->mConstData.size();
+	mpCmd->mCsConstantBufferIndex = 0;
 
-	if (len) {
-		mpPool->mConstData.resize(mpCmd->mCPConstOffset + len, 0);
-		memcpy(&*(mpPool->mConstData.end() - len), src, len);
+	if (src) {
+		vdrefptr<IVDTConstantBuffer> cb = mpDctx->mpContext->CreateConstantBuffer(len, src);
+		if (!cb) {
+			mpPool->mbError = true;
+		} else {
+			mpPool->mpConstantBuffers.push_back(cb);
+			cb.release();
+
+			mpCmd->mCsConstantBufferIndex = (sint32)mpPool->mpConstantBuffers.size();
+		}
 	}
 }
 
 void VDDisplayDispatchBuilder3D::SetCPConstDataReuse() {
-	mpCmd->mCPConstCount = 0;
-	mpCmd->mCPConstOffset = 1;
+	mpCmd->mCsConstantBufferIndex = -1;
 }
 
 void VDDisplayDispatchBuilder3D::InitTextures(uint32 numTextures) {
@@ -452,6 +527,11 @@ void VDDisplayCommandList3D::Clear() {
 		mpUAVs.pop_back();
 	}
 
+	while(!mpConstantBuffers.empty()) {
+		vdsaferelease <<= mpConstantBuffers.back();
+		mpConstantBuffers.pop_back();
+	}
+
 	mbError = false;
 }
 
@@ -533,7 +613,11 @@ VDDisplayDispatchBuilder3D VDDisplayCommandList3D::AddDispatch(VDDisplayNodeCont
 	return VDDisplayDispatchBuilder3D(dctx, *this, cmd.mDispatchCommand, VDDPoolCommandIndex(mMeshes.size() - 1));
 }
 
-void VDDisplayCommandList3D::UpdateDispatchConstants(VDDPoolCommandIndex index, const void *data, size_t len) {
+VDDisplayMeshBuilder3D VDDisplayCommandList3D::UpdateMesh(VDDisplayNodeContext3D& dctx, VDDPoolCommandIndex index) {
+	return VDDisplayMeshBuilder3D(dctx, *this, mMeshes[(uint32)index].mMeshCommand, index);
+}
+
+void VDDisplayCommandList3D::UpdateDispatchConstants(VDDPoolCommandIndex index, const void *data) {
 	auto& cmd = mMeshes[index];
 
 	if (!cmd.mbIsCompute) {
@@ -541,30 +625,13 @@ void VDDisplayCommandList3D::UpdateDispatchConstants(VDDPoolCommandIndex index, 
 		return;
 	}
 
-	if (len != cmd.mDispatchCommand.mCPConstCount * 16) {
-		VDFAIL("Constant size mismatch with command");
+
+	if (cmd.mDispatchCommand.mCsConstantBufferIndex <= 0) {
+		VDFAIL("UpdateDispatchConstants() called on command that does not own a constant buffer");
 		return;
 	}
 
-	if (len)
-		memcpy(&mConstData[cmd.mDispatchCommand.mCPConstOffset], data, len);
-}
-
-void VDDisplayCommandList3D::ReadDispatchConstants(VDDPoolCommandIndex index, void *data, size_t len) const {
-	auto& cmd = mMeshes[index];
-
-	if (!cmd.mbIsCompute) {
-		VDFAIL("ReadDispatchConstants() called on non-dispatch command");
-		return;
-	}
-
-	if (len != cmd.mDispatchCommand.mCPConstCount * 16) {
-		VDFAIL("Constant size mismatch with command");
-		return;
-	}
-
-	if (len)
-		memcpy(data, &mConstData[cmd.mDispatchCommand.mCPConstOffset], len);
+	mpConstantBuffers[cmd.mDispatchCommand.mCsConstantBufferIndex - 1]->Load(data);
 }
 
 void VDDisplayCommandList3D::UpdateDispatchUAV(VDDPoolCommandIndex index, uint32 viewIndex, IVDTUnorderedAccessView *view) {
@@ -598,6 +665,8 @@ void VDDisplayCommandList3D::ExecuteAll(IVDTContext& ctx, VDDisplayNodeContext3D
 }
 
 void VDDisplayCommandList3D::Execute(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, VDDPoolCommandIndex start, uint32 count) {
+	VDASSERT(start <= mMeshes.size() && mMeshes.size() - start >= count);
+
 	VDDisplayCommand3D *VDRESTRICT commands = &mMeshes[(uint32)start];
 
 	if (mVertexData.size() != mVertexTransformedData.size())
@@ -615,9 +684,11 @@ void VDDisplayCommandList3D::Execute(IVDTContext& ctx, VDDisplayNodeContext3D& d
 			ctx.SetRenderTarget(0, nullptr, false);
 			ctx.CsSetProgram(dispatchCmd.mpCP);
 
-			if (dispatchCmd.mCPConstCount) {
-				ctx.CsSetConstCount(dispatchCmd.mCPConstCount);
-				ctx.CsSetConstF(0, dispatchCmd.mCPConstCount, (const float *)&mConstData[dispatchCmd.mCPConstOffset]);
+			if (dispatchCmd.mCsConstantBufferIndex >= 0) {
+				if (dispatchCmd.mCsConstantBufferIndex > 0)
+					ctx.CsSetConstantBuffer(0, mpConstantBuffers[dispatchCmd.mCsConstantBufferIndex - 1]);
+				else
+					ctx.CsSetConstantBuffer(0, nullptr);
 			}
 
 			if (dispatchCmd.mSamplerCount)
@@ -646,8 +717,8 @@ void VDDisplayCommandList3D::Execute(IVDTContext& ctx, VDDisplayNodeContext3D& d
 		} else {
 			VDDisplayMeshCommand3D& meshCmd = commands->mMeshCommand;
 
-			if (meshCmd.mRenderView != VDDPoolRenderViewId(0)) {
-				const auto& rv = mRenderViews[(uint32)meshCmd.mRenderView - 1];
+			if (meshCmd.mRenderViewId != VDDPoolRenderViewId(0)) {
+				const auto& rv = mRenderViews[(uint32)meshCmd.mRenderViewId - 1];
 
 				dctx.ApplyRenderView(rv);
 			}
@@ -660,18 +731,18 @@ void VDDisplayCommandList3D::Execute(IVDTContext& ctx, VDDisplayNodeContext3D& d
 			ctx.SetFragmentProgram(meshCmd.mpFP);
 			ctx.SetBlendState(meshCmd.mpBlendState);
 
-			if (meshCmd.mVPConstCount) {
-				ctx.SetVertexProgramConstCount(meshCmd.mVPConstCount);
+			if (meshCmd.mVsConstantBufferStart >= 0) {
+				for(uint32 i = 0; i < meshCmd.mVsConstantBufferCount; ++i)
+					ctx.VsSetConstantBuffer(i, mpConstantBuffers[meshCmd.mVsConstantBufferStart + i]);
 
-				if (meshCmd.mVPConstCount)
-					ctx.SetVertexProgramConstF(1, meshCmd.mVPConstCount, (const float *)&mConstData[meshCmd.mVPConstOffset]);
+				ctx.VsClearConstantBuffersStartingAt(meshCmd.mVsConstantBufferCount);
 			}
 
-			if (meshCmd.mFPConstCount) {
-				ctx.SetFragmentProgramConstCount(meshCmd.mFPConstCount);
+			if (meshCmd.mPsConstantBufferStart >= 0) {
+				for(uint32 i = 0; i < meshCmd.mPsConstantBufferCount; ++i)
+					ctx.PsSetConstantBuffer(i, mpConstantBuffers[meshCmd.mPsConstantBufferStart + i]);
 
-				if (meshCmd.mFPConstCount)
-					ctx.SetFragmentProgramConstF(0, meshCmd.mFPConstCount, (const float *)&mConstData[meshCmd.mFPConstOffset]);
+				ctx.PsClearConstantBuffersStartingAt(meshCmd.mPsConstantBufferCount);
 			}
 
 			if (meshCmd.mSamplerCount)
@@ -700,6 +771,7 @@ void VDDisplayCommandList3D::Execute(IVDTContext& ctx, VDDisplayNodeContext3D& d
 				vdfloat2 scale = vxt.mSize * invVp;
 				vdfloat2 offset = vdfloat2{-1, 1} - vdfloat2{-scale.x, scale.y} + invVp*vdfloat2{2,-2}*vxt.mOffset;
 
+				VDASSERT(meshCmd.mVertexTransformer);
 				meshCmd.mVertexTransformer(
 					&mVertexTransformedData[meshCmd.mVertexSourceOffset],
 					&mVertexData[meshCmd.mVertexSourceOffset],
@@ -940,7 +1012,16 @@ void VDDisplayNodeContext3D::ClearTrace() {
 }
 
 VDDRenderView VDDisplayNodeContext3D::CaptureRenderView() const {
-	return VDDRenderView { mpContext->GetRenderTarget(0), mpContext->GetRenderTargetBypass(0), mpContext->GetViewport() };
+	const VDTViewport& vp = mpContext->GetViewport();
+	return VDDRenderView {
+		mpContext->GetRenderTarget(0),
+		mpContext->GetRenderTargetBypass(0),
+		vp,
+		VDDisplaySoftViewport {
+			.mSize = vdfloat2 { (float)vp.mWidth, (float)vp.mHeight },
+			.mOffset = vdfloat2 { 0.0f, 0.0f }
+		}
+	};
 }
 
 void VDDisplayNodeContext3D::ApplyRenderView(const VDDRenderView& targetView) {
@@ -1107,59 +1188,63 @@ bool VDDisplayImageSourceNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& 
 	if (texWidth > caps.mMaxTextureWidth || texHeight > caps.mMaxTextureHeight)
 		return false;
 
-	mbTextureInited = false;
+	VDTFormat texFormat {};
 
 	switch(format) {
 		case nsVDPixmap::kPixFormat_RGB565:
 		case nsVDPixmap::kPixFormat_XRGB1555:{
-			VDTFormat rgb16Format = (format == nsVDPixmap::kPixFormat_RGB565) ? kVDTF_B5G6R5 : kVDTF_B5G5R5A1;
-
-			if (ctx.IsFormatSupportedTexture2D(rgb16Format)) {
-				if (ctx.CreateTexture2D(texWidth, texHeight, rgb16Format, 1, VDTUsage::Shader, NULL, &mpImageTex)) {
-					mMapping.Init(w, h, texWidth, texHeight);
-					return true;
-				}
-			}
+			texFormat = (format == nsVDPixmap::kPixFormat_RGB565) ? kVDTF_B5G6R5 : kVDTF_B5G5R5A1;
 			break;
 		}
 
 		case nsVDPixmap::kPixFormat_XRGB8888:
-			if (ctx.CreateTexture2D(texWidth, texHeight, dctx.mBGRAFormat, 1, VDTUsage::Shader, NULL, &mpImageTex)) {
-				mMapping.Init(w, h, texWidth, texHeight);
-				return true;
-			}
+			texFormat = dctx.mBGRAFormat;
 			break;
 
 		case nsVDPixmap::kPixFormat_Y8_FR:
-			if (ctx.IsFormatSupportedTexture2D(kVDTF_L8)) {
-				if (ctx.CreateTexture2D(texWidth, texHeight, kVDTF_L8, 1, VDTUsage::Shader, NULL, &mpImageTex)) {
-					mMapping.Init(w, h, texWidth, texHeight);
-					return true;
-				}
-			}
+			texFormat = kVDTF_L8;
 			break;
 		
 		default:
 			return false;
 	}
 
-	Shutdown();
-	return false;
+	if (!ctx.IsFormatSupportedTexture2D(texFormat))
+		return false;
+
+	SetQueueLength(&ctx, 0);
+
+	mTexWidth = texWidth;
+	mTexHeight = texHeight;
+	mTexFormat = texFormat;
+
+	if (!SetQueueLength(&ctx, 1))
+		return false;
+
+	mMapping.Init(w, h, texWidth, texHeight);
+	return true;
 }
 
 void VDDisplayImageSourceNode3D::Shutdown() {
-	vdsaferelease <<= mpImageTex;
+	SetQueueLength(nullptr, 0);
 }
 
 void VDDisplayImageSourceNode3D::Load(const VDPixmap& px) {
-	VDTLockData2D lockData;
+	if (mpImageTexs.empty())
+		return;
 	
+	// load tail texture
+	IVDTTexture2D *const tex = mpImageTexs.back();
+	const bool needTexInit = mTextureInitsPending > 0;
+
+	VDTLockData2D lockData;
 	vdrect32 r(0, 0, std::min<sint32>(px.w, mMapping.mTexWidth), std::min<sint32>(px.h, mMapping.mTexHeight));
-	if (!mpImageTex->Lock(0, mbTextureInited ? &r : nullptr, !mbTextureInited || ((uint32)r.right == mMapping.mTexWidth && (uint32)r.bottom == mMapping.mTexHeight), lockData))
+	if (!tex->Lock(0, !needTexInit ? &r : nullptr, needTexInit || ((uint32)r.right == mMapping.mTexWidth && (uint32)r.bottom == mMapping.mTexHeight), lockData))
 		return;
 
-	if (!mbTextureInited) {
-		mbTextureInited = true;
+	if (needTexInit) {
+		--mTextureInitsPending;
+
 		VDMemset32Rect(lockData.mpData, lockData.mPitch, 0, mMapping.mTexWidth, mMapping.mTexHeight);
 	}
 
@@ -1172,7 +1257,36 @@ void VDDisplayImageSourceNode3D::Load(const VDPixmap& px) {
 
 	VDPixmapBlt(dstpx, px);
 
-	mpImageTex->Unlock(0);
+	tex->Unlock(0);
+}
+
+bool VDDisplayImageSourceNode3D::SetQueueLength(IVDTContext *ctx, uint32 len) {
+	while(mpImageTexs.size() > len) {
+		vdsaferelease <<= mpImageTexs.back();
+		mpImageTexs.pop_back();
+
+		if (mTextureInitsPending)
+			--mTextureInitsPending;
+	}
+
+	while(mpImageTexs.size() < len) {
+		if (!ctx)
+			return false;
+
+		vdrefptr<IVDTTexture2D> newTex;
+		if (!ctx->CreateTexture2D(mTexWidth, mTexHeight, mTexFormat, 1, VDTUsage::Shader, NULL, ~newTex))
+			return false;
+
+		mpImageTexs.push_back(newTex);
+		newTex.release();
+	}
+
+	return true;
+}
+
+void VDDisplayImageSourceNode3D::AdvanceQueue() {
+	// rotate new texture down to front
+	std::rotate(mpImageTexs.begin(), mpImageTexs.end() - 1, mpImageTexs.end());
 }
 
 VDDisplaySourceTexMapping VDDisplayImageSourceNode3D::GetTextureMapping() const {
@@ -1180,14 +1294,27 @@ VDDisplaySourceTexMapping VDDisplayImageSourceNode3D::GetTextureMapping() const 
 }
 
 IVDTTexture2D *VDDisplayImageSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
-	return mpImageTex;
+	if (mpImageTexs.empty())
+		return nullptr;
+
+	return mpImageTexs[0];
+}
+
+IVDTTexture2D *VDDisplayImageSourceNode3D::GetResultTexture(uint32 pastIndex) const {
+	size_t numTextures = mpImageTexs.size();
+	if (!numTextures)
+		return nullptr;
+
+	if (mTextureInitsPending >= numTextures)
+		return mpImageTexs[0];
+
+	return mpImageTexs[std::min<size_t>(pastIndex, (numTextures - 1) - mTextureInitsPending)];
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
 VDDisplayBufferSourceNode3D::VDDisplayBufferSourceNode3D()
-	: mpRTT(NULL)
-	, mpChildNode(NULL)
+	: mpChildNode(NULL)
 {
 }
 
@@ -1223,23 +1350,11 @@ bool VDDisplayBufferSourceNode3D::InitWithFormat(IVDTContext& ctx, VDDisplayNode
 		return false;
 	}
 
-	if (mpRTT) {
-		VDTTextureDesc desc;
+	mRTTWidth = texWidth;
+	mRTTHeight = texHeight;
+	mRTTFormat = format;
 
-		mpRTT->GetDesc(desc);
-
-		if (desc.mWidth != texWidth || desc.mHeight != texHeight) {
-			mpRTT->Release();
-			mpRTT = NULL;
-		}
-	}
-
-	if (!mpRTT) {
-		if (!ctx.CreateTexture2D(texWidth, texHeight, format, 1, VDTUsage::Render | VDTUsage::Shader, NULL, &mpRTT)) {
-			Shutdown();
-			return false;
-		}
-	}
+	SetQueueLength(&ctx, 1);
 
 	// If the output rect is at or left/above the origin, we don't need to translate; otherwise,
 	// shift left/up to optimize texture space. Always translate by integral pixels.
@@ -1259,7 +1374,48 @@ bool VDDisplayBufferSourceNode3D::InitWithFormat(IVDTContext& ctx, VDDisplayNode
 }
 
 void VDDisplayBufferSourceNode3D::Shutdown() {
-	vdsaferelease <<= mpRTT, mpChildNode;
+	while(!mpRTTs.empty()) {
+		vdsaferelease <<= mpRTTs.back();
+		mpRTTs.pop_back();
+	}
+
+	vdsaferelease <<= mpChildNode;
+}
+
+bool VDDisplayBufferSourceNode3D::SetQueueLength(IVDTContext *ctx, uint32 len) {
+	while(mpRTTs.size() > len) {
+		vdsaferelease <<= mpRTTs.back();
+		mpRTTs.pop_back();
+	}
+
+	mpRTTs.resize(len, nullptr);
+
+	for(IVDTTexture2D*& rtt : mpRTTs) {
+		if (rtt) {
+			VDTTextureDesc desc;
+
+			rtt->GetDesc(desc);
+
+			if (desc.mWidth != mRTTWidth || desc.mHeight != mRTTHeight)
+				vdsaferelease <<= rtt;
+		}
+
+		if (!rtt) {
+			if (!ctx->CreateTexture2D(mRTTWidth, mRTTHeight, mRTTFormat, 1, VDTUsage::Render | VDTUsage::Shader, NULL, &rtt)) {
+				Shutdown();
+				return false;
+			}
+		}
+	}
+
+	return true;
+}
+
+void VDDisplayBufferSourceNode3D::AdvanceQueue() {
+	if (!mRTTIndex)
+		mRTTIndex = (uint32)mpRTTs.size();
+
+	--mRTTIndex;
 }
 
 VDDisplaySourceTexMapping VDDisplayBufferSourceNode3D::GetTextureMapping() const {
@@ -1267,10 +1423,14 @@ VDDisplaySourceTexMapping VDDisplayBufferSourceNode3D::GetTextureMapping() const
 }
 
 IVDTTexture2D *VDDisplayBufferSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
-	if (!mpRTT)
-		return NULL;
+	if (mpRTTs.empty())
+		return nullptr;
 
-	IVDTSurface *rttsurf = mpRTT->GetLevelSurface(0);
+	IVDTTexture2D *rtt = mpRTTs[mRTTIndex];
+	if (!rtt)
+		return nullptr;
+
+	IVDTSurface *rttsurf = rtt->GetLevelSurface(0);
 
 	VDTSurfaceDesc rttsurfdesc;
 	rttsurf->GetDesc(rttsurfdesc);
@@ -1292,7 +1452,15 @@ IVDTTexture2D *VDDisplayBufferSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNode
 	};
 
 	mpChildNode->Draw(ctx, dctx, renderView);
-	return mpRTT;
+	return rtt;
+}
+
+IVDTTexture2D *VDDisplayBufferSourceNode3D::GetResultTexture(uint32 pastIndex) const {
+	uint32 numTextures = (uint32)mpRTTs.size();
+	if (!numTextures)
+		return nullptr;
+
+	return mpRTTs[(pastIndex + mRTTIndex) % numTextures];
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2234,48 +2402,92 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		v1 /= (float)mMapping.mTexHeight;
 	}
 
-	static constexpr VDTDataView kFPSources[] = {
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Linear),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Gamma),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_SRGB),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_Gamma22),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_GammaCC),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Linear),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Gamma),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_SRGB),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_Gamma22),
-		VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_GammaCC),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Linear),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Gamma),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_SRGB),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_Gamma22),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_GammaCC),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Linear),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Gamma),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_SRGB),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_Gamma22),
-		VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_GammaCC),
+	static constexpr VDTDataView kFPSources[2][2][8] = {
+		{
+			{
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Linear),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Gamma),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_GammaCC),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_GammaCC),
+			},
+			{
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Linear),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Gamma),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_GammaCC),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_GammaCC),
+			},
+		},
+		{
+			{
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Linear),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Gamma),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_GammaCC),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_GammaCC),
+			},
+			{
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Linear),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Gamma),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_GammaCC),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_CC_SRGB),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_CC_Gamma22),
+				VDTDataView(g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_GammaCC),
+			}
+		}
 	};
 
-	uint32 fpMode
-		= (sharpBilinear ? 10 : 0)
-		+ (mParams.mScanlineIntensity > 0 ? 5 : 0)
-		+ (mParams.mbRenderLinear
-			? mParams.mColorCorrectionMatrix[0][0] != 0
-				? 3
-				: 2
-			: mParams.mColorCorrectionMatrix[0][0] != 0
-				? 4
-				: mParams.mGamma != 1.0f
-					? 1
-					: 0
-			);
+	// compute fragment program variant
+	const uint32 fpVariantSharp = sharpBilinear ? 1 : 0;
+	const uint32 fpVariantScanlines = scanlines ? 1 : 0;
+	uint32 fpVariantIndex = 0;
+	const bool useDotMask = mParams.mScreenMaskParams.mType != VDDScreenMaskType::None;
+
+	if (mParams.mbRenderLinear) {
+		// When rendering linear, we must always have color correction enabled.
+		// If no color correction is specified, we still must run a pass to
+		// convert from sRGB to linear.
+		if (mParams.mColorCorrectionMatrix[0][0] != 0)
+			fpVariantIndex = 3;
+		else
+			fpVariantIndex = 2;
+
+		if (useDotMask)
+			fpVariantIndex += 3;
+	} else {
+		// When rendering gamma, we have three tiers of shaders: full color
+		// correction, gamma correction, and direct.
+		//
+		// Dot mask rendering requires color correction, so if we don't have
+		// color correction enabled, it needs to be forced on.
+
+		if (useDotMask)
+			fpVariantIndex = 7;
+		else if (mParams.mColorCorrectionMatrix[0][0] != 0)
+			fpVariantIndex = 4;
+		else if (mParams.mGamma != 1.0f)
+			fpVariantIndex = 1;
+		else
+			fpVariantIndex = 0;
+	}
 
 	mb.SetVertexProgram(VDTDataView(g_VDDispVP_ScreenFX));
-	mb.SetFragmentProgram(kFPSources[fpMode]);
+	mb.SetFragmentProgram(kFPSources[fpVariantSharp][fpVariantScanlines][fpVariantIndex]);
 
 	float gamma = mParams.mGamma;
-	bool gammaHasSrgb = mParams.mColorCorrectionMatrix[0][0] != 0;
+	bool gammaHasSrgb = mParams.mColorCorrectionMatrix[0][0] != 0 || useDotMask;
 
 	vdsaferelease <<= mpGammaRampTex;
 
@@ -2310,11 +2522,12 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		scanlineMaskTexH = VDCeilToPow2(scanlineMaskTexH);
 	}
 
-	vdblock<uint32> imageMask(scanlineMaskTexH);
-	VDDisplayCreateScanlineMaskTexture(imageMask.data(), sizeof(imageMask[0]), mParams.mSrcH, scanlineMaskH, mParams.mDstY - mParams.mClipDstY, mParams.mDstH, scanlineMaskTexH, mParams.mScanlineIntensity, mParams.mbRenderLinear);
+	const float maskVScale = (float)mParams.mDstH / (float)scanlineMaskTexH;
+	const float maskVBase = (mParams.mDstY - mParams.mClipDstY) / (float)scanlineMaskTexH;
 
-	mScanlineMaskVScale = (float)mParams.mDstH / (float)scanlineMaskTexH;
-	mScanlineMaskVBase = (mParams.mDstY - mParams.mClipDstY) / (float)scanlineMaskTexH;
+	vdblock<uint32> imageMask(scanlineMaskTexH);
+	std::fill(imageMask.begin(), imageMask.end(), 0);
+	VDDisplayCreateScanlineMaskTexture(imageMask.data(), sizeof(imageMask[0]), mParams.mSrcH, scanlineMaskH, mParams.mDstY - mParams.mClipDstY, mParams.mDstH, scanlineMaskTexH, mParams.mScanlineIntensity, mParams.mbRenderLinear);
 
 	VDTInitData2D initDataScanlineMask { imageMask.data(), sizeof(imageMask[0]) };
 	if (!ctx.CreateTexture2D(1, scanlineMaskTexH, dctx.mBGRAFormat, 1, VDTUsage::Shader, &initDataScanlineMask, &mpScanlineMaskTex)) {
@@ -2322,16 +2535,95 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		return false;
 	}
 
+	// init dot mask
+	uint32 dotMaskW = std::max<uint32>(1, mParams.mClipDstW);
+	uint32 dotMaskH = std::max<uint32>(1, mParams.mClipDstH);
+	uint32 dotMaskTexW = dotMaskW;
+	uint32 dotMaskTexH = dotMaskH;
+
+	// If the device doesn't support pow2, round up the texture size. We'll only
+	// use the top part.
+	if (!ctx.GetDeviceCaps().mbNonPow2) {
+		dotMaskTexW = VDCeilToPow2(dotMaskTexW);
+		dotMaskTexH = VDCeilToPow2(dotMaskTexH);
+	}
+
+	const float maskHScale = (float)mParams.mDstW / (float)dotMaskTexW;
+	const float maskHBase = (mParams.mDstX - mParams.mClipDstX) / (float)dotMaskTexW;
+
+	if (useDotMask) {
+		if (mParams.mScreenMaskParams.mType == VDDScreenMaskType::DotTriad) {
+			vdblock<uint32> imageDotMask(dotMaskTexW * dotMaskTexH);
+			std::fill(imageDotMask.begin(), imageDotMask.end(), 0);
+
+			VDDisplayTriadDotMaskParams dotMaskParams(mParams.mScreenMaskParams, mParams.mDstW, (float)mParams.mSrcW);
+
+			VDDisplayCreateTriadDotMaskTexture(
+				imageDotMask.data(),
+				sizeof(imageDotMask[0]) * dotMaskTexW,
+				dotMaskW,
+				dotMaskH,
+				mParams.mDstX - mParams.mClipDstX,
+				-(mParams.mDstY - mParams.mClipDstY),
+				mParams.mDstW,
+				mParams.mDstH,
+				dotMaskParams);
+
+			VDTInitData2D initDataDotMask { imageDotMask.data(), (ptrdiff_t)(sizeof(imageDotMask[0]) * dotMaskTexW) };
+			if (!ctx.CreateTexture2D(dotMaskTexW, dotMaskTexH, dctx.mBGRAFormat, 1, VDTUsage::Shader, &initDataDotMask, &mpDotMaskTex)) {
+				Shutdown();
+				return false;
+			}
+		} else if (mParams.mScreenMaskParams.mType == VDDScreenMaskType::SlotMask) {
+			vdblock<uint32> imageDotMask(dotMaskTexW * dotMaskTexH);
+			std::fill(imageDotMask.begin(), imageDotMask.end(), 0);
+
+			VDDisplaySlotMaskParams slotMaskParams(mParams.mScreenMaskParams, mParams.mDstW, (float)mParams.mSrcW);
+
+			VDDisplayCreateSlotMaskTexture(
+				imageDotMask.data(),
+				sizeof(imageDotMask[0]) * dotMaskTexW,
+				dotMaskW,
+				dotMaskH,
+				mParams.mDstX - mParams.mClipDstX,
+				-(mParams.mDstY - mParams.mClipDstY),
+				mParams.mDstW,
+				mParams.mDstH,
+				slotMaskParams);
+
+			VDTInitData2D initDataDotMask { imageDotMask.data(), (ptrdiff_t)(sizeof(imageDotMask[0]) * dotMaskTexW) };
+			if (!ctx.CreateTexture2D(dotMaskTexW, dotMaskTexH, dctx.mBGRAFormat, 1, VDTUsage::Shader, &initDataDotMask, &mpDotMaskTex)) {
+				Shutdown();
+				return false;
+			}
+		} else {
+			vdblock<uint32> imageDotMask(dotMaskTexW);
+			std::fill(imageDotMask.begin(), imageDotMask.end(), 0);
+
+			VDDisplayApertureGrilleParams dotMaskParams(mParams.mScreenMaskParams, mParams.mDstW, (float)mParams.mSrcW);
+
+			VDDisplayCreateApertureGrilleTexture(imageDotMask.data(), dotMaskW, mParams.mDstX - mParams.mClipDstX, dotMaskParams);
+
+			VDTInitData2D initDataDotMask { imageDotMask.data(), (ptrdiff_t)(sizeof(imageDotMask[0]) * dotMaskTexW) };
+			if (!ctx.CreateTexture2D(dotMaskTexW, 1, dctx.mBGRAFormat, 1, VDTUsage::Shader, &initDataDotMask, &mpDotMaskTex)) {
+				Shutdown();
+				return false;
+			}
+		}
+	}
+
+	// set up mesh draw
 	const bool useDistortion = mParams.mDistortionX > 0;
 
-	mb.InitSamplers({
-		// source
-		mParams.mbLinear ? dctx.mpSSBilinear : dctx.mpSSPoint,
-		mParams.mDistortionX > 0 ? dctx.mpSSBilinear : dctx.mpSSPoint,
-		dctx.mpSSBilinear
-	});
+	mb.InitSamplers(mpDotMaskTex ? 4 : 3);
+	mb.SetSampler(0, mParams.mbLinear ? dctx.mpSSBilinear : dctx.mpSSPoint);
+	mb.SetSampler(1, mParams.mDistortionX > 0 ? dctx.mpSSBilinear : dctx.mpSSPoint);
+	mb.SetSampler(2, dctx.mpSSBilinear);
 
-	const float ccOverride = mParams.mColorCorrectionMatrix[0][0] == 0 && mParams.mbRenderLinear ? 1.0f : 0.0f;
+	if (mpDotMaskTex)
+		mb.SetSampler(3, dctx.mpSSPoint);
+
+	const float ccOverride = mParams.mColorCorrectionMatrix[0][0] == 0 && (mParams.mbRenderLinear || useDotMask) ? 1.0f : 0.0f;
 
 	VDDisplayDistortionMapping distortionMapping;
 	distortionMapping.Init(mParams.mDistortionX, mParams.mDistortionYRatio, (float)mParams.mDstW / (float)mParams.mDstH);
@@ -2351,13 +2643,13 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 		distortionMapping.mScaleX,
 		distortionMapping.mScaleY,
 		distortionMapping.mSqRadius,
-		mScanlineMaskVBase,
+		0,
 
 		// sharp bilinear texel addressing info 
 		sharpBilinear ? mMapping.mTexelSize.x : mMapping.mUVSize.x,
 		sharpBilinear ? mMapping.mTexelSize.y : mMapping.mUVSize.y,
 		mParams.mScanlineIntensity > 0 ? sharpBilinear ? 0.25f : 0.25f / (float)mMapping.mTexHeight : 0.0f,
-		mScanlineMaskVScale,
+		0,
 
 		// color correction matrix
 		(mParams.mColorCorrectionMatrix[0][0] + ccOverride) * ccScale,
@@ -2379,10 +2671,10 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 	mb.SetFPConstData(params);
 	
 	float vsParams[16] = {
-		mScanlineMaskVScale,
-		mScanlineMaskVBase,
-		0,
-		0,
+		maskHScale,
+		maskVScale,
+		maskVBase,
+		maskHBase,
 
 		1.0f,
 		useDistortion ? -0.5f : 0.0f,
@@ -2409,7 +2701,13 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 	mb.SetRenderView(mOutputViewId);
 
 	mSourceTextureIndex = mMeshPool.RegisterTexture(nullptr);
-	mb.InitTextures({ mSourceTextureIndex, mMeshPool.RegisterTexture(mpScanlineMaskTex), mMeshPool.RegisterTexture(mpGammaRampTex) });
+	mb.InitTextures(mpDotMaskTex ? 4 : 3);
+	mb.SetTexture(0, mSourceTextureIndex);
+	mb.SetTexture(1, mMeshPool.RegisterTexture(mpScanlineMaskTex));
+	mb.SetTexture(2, mMeshPool.RegisterTexture(mpGammaRampTex));
+
+	if (mpDotMaskTex)
+		mb.SetTexture(3, mMeshPool.RegisterTexture(mpDotMaskTex));
 
 	if (useDistortion) {
 		vdblock<VDDisplayVertex2T3D> vdat((kTessellation+1)*(kTessellation+1));
@@ -2480,7 +2778,7 @@ bool VDDisplayScreenFXNode3D::Init(IVDTContext& ctx, VDDisplayNodeContext3D& dct
 }
 
 void VDDisplayScreenFXNode3D::Shutdown() {
-	vdsaferelease <<= mpSourceNode, mpGammaRampTex, mpScanlineMaskTex;
+	vdsaferelease <<= mpSourceNode, mpGammaRampTex, mpScanlineMaskTex, mpDotMaskTex;
 }
 
 void VDDisplayScreenFXNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
@@ -2595,11 +2893,11 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 
 	mMapping = source->GetTextureMapping();
 
-	// Compute source UV for clipped source rect.
 	const uint32 w = params.mClipW;
 	const uint32 h = params.mClipH;
+	const vdfloat2 clipDstSize { (float)w, (float)h };
 
-	// Clip source rect.
+	// Compute source UV for clipped source rect.
 	const float srcu  = (params.mClipX - params.mDstX) / params.mDstW * mMapping.mUVSize.x + mMapping.mUVOffset.x;
 	const float srcv  = (params.mClipY - params.mDstY) / params.mDstH * mMapping.mUVSize.y + mMapping.mUVOffset.y;
 	const float srcdu =  params.mClipW                 / params.mDstW * mMapping.mUVSize.x;
@@ -2650,16 +2948,19 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 	const uint32 blurW2 = mbPrescale2x ? blurW1 * (factor1/factor2) : blurW1;
 	const uint32 blurH2 = mbPrescale2x ? blurH1 * (factor1/factor2) : blurH1;
 
-	mBlurW = blurW1;
-	mBlurH = blurH1;
-	mBlurW2 = blurW2;
-	mBlurH2 = blurH2;
+	const vdfloat2 blurSize1 { (float)blurW1, (float)blurH1 };
+	const vdfloat2 blurSize2 { (float)blurW2, (float)blurH2 };
 
 	const auto& caps = ctx.GetDeviceCaps();
 	uint32 texw1 = caps.mbNonPow2 ? blurW1 : VDCeilToPow2(blurW1);
 	uint32 texh1 = caps.mbNonPow2 ? blurH1 : VDCeilToPow2(blurH1);
 	uint32 texw2 = caps.mbNonPow2 ? blurW2 : VDCeilToPow2(blurW2);
 	uint32 texh2 = caps.mbNonPow2 ? blurH2 : VDCeilToPow2(blurH2);
+
+	const vdfloat2 texSize1 { (float)texw1, (float)texh1 };
+	const vdfloat2 texSize2 { (float)texw2, (float)texh2 };
+
+	const vdfloat2 srcTexSize { (float)mMapping.mTexWidth, (float)mMapping.mTexHeight };
 
 	struct Blit {
 		constexpr static Blit From2UVOffsetSize(const vdfloat2& uvoffset1, const vdfloat2& uvsize1, const vdfloat2& uvoffset2, const vdfloat2& uvsize2) {
@@ -2703,50 +3004,60 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 	const float blurHeightScale = 1.5f / std::min<float>(7.0f, mainBlurRadius);
 
 	const float wf = expf(-7.5f * (1.5f / 7.0f));
-	const float w0 = std::max<float>(0, expf(-7.0f * blurHeightScale) - wf);
-	const float w1 = std::max<float>(0, expf(-6.0f * blurHeightScale) - wf);
-	const float w2 = std::max<float>(0, expf(-5.0f * blurHeightScale) - wf);
-	const float w3 = std::max<float>(0, expf(-4.0f * blurHeightScale) - wf);
-	const float w4 = std::max<float>(0, expf(-3.0f * blurHeightScale) - wf);
-	const float w5 = std::max<float>(0, expf(-2.0f * blurHeightScale) - wf);
-	const float w6 = std::max<float>(0, expf(-1.0f * blurHeightScale) - wf);
-	const float wscale = 1.0f / (w6 + 2*(w5+w4+w3+w2+w1));
+
+	float weights[7] {};
+
+	for(int i=0; i<7; ++i)
+		weights[i] = std::max<float>(0, expf((float)(-1 - i) * blurHeightScale) - wf);
+
+	const float wscale = 0.5f / std::accumulate(weights + 1, std::end(weights), weights[0] * 0.5f);
 
 	// fill out constant buffers
-	float vpConstants1[12] {};
-	float vpConstants2[12] {};
-	float vpConstants3[12] {};
-	float fpConstants[8] {};
+	struct {
+		vdfloat4 vpBloomViewport;
+		vdfloat2 vpBloomUVOffset;
+		vdfloat2 vpBloomBlurOffsets1;
+		vdfloat2 vpBloomBlurOffsets2[2];
+	} vpConstants1 {}, vpConstants2 {}, vpConstants3 {};
 
-	vpConstants1[0] = prescaleOffset / (float)mMapping.mTexWidth;
-	vpConstants1[1] = prescaleOffset / (float)mMapping.mTexHeight;
+	vpConstants1.vpBloomUVOffset = prescaleOffset / srcTexSize;
+	vpConstants2.vpBloomUVOffset = prescaleOffset / texSize2;
 
-	vpConstants2[0] = prescaleOffset / (float)texw2;
-	vpConstants2[1] = prescaleOffset / (float)texh2;
+	const float filterOffset0 = 1.0f + weights[2] / std::max<float>(weights[1] + weights[2], 1e-10f);
+	const float filterOffset1 = 3.0f + weights[4] / std::max<float>(weights[3] + weights[4], 1e-10f);
+	const float filterOffset2 = 5.0f + weights[6] / std::max<float>(weights[5] + weights[6], 1e-10f);
 
-	const float blurUStep = 1.0f / (float)texw1;
-	const float blurVStep = 1.0f / (float)texh1;
-	const float filterOffset0 = 1.0f + w4 / std::max<float>(w4 + w5, 1e-10f);
-	const float filterOffset1 = 3.0f + w2 / std::max<float>(w2 + w3, 1e-10f);
-	const float filterOffset2 = 5.0f + w0 / std::max<float>(w0 + w1, 1e-10f);
+	const vdfloat2 blurStep = 1.0f / texSize1;
+	vpConstants2.vpBloomBlurOffsets1    = blurStep * vdfloat2 { filterOffset0, 0 };
+	vpConstants2.vpBloomBlurOffsets2[0] = blurStep * vdfloat2 { filterOffset1, 0 };
+	vpConstants2.vpBloomBlurOffsets2[1] = blurStep * vdfloat2 { filterOffset2, 0 };
 
-	vpConstants2[2] = filterOffset0 * blurUStep;
-	vpConstants2[4] = filterOffset1 * blurUStep;
-	vpConstants2[6] = filterOffset2 * blurUStep;
+	vpConstants3.vpBloomBlurOffsets1    = blurStep * vdfloat2 { 0, filterOffset0 };
+	vpConstants3.vpBloomBlurOffsets2[0] = blurStep * vdfloat2 { 0, filterOffset1 };
+	vpConstants3.vpBloomBlurOffsets2[1] = blurStep * vdfloat2 { 0, filterOffset2 };
+	
+	struct {
+		vdfloat4 fpBloomWeights;
+		vdfloat2 fpBloomThresholds;
+		vdfloat2 fpBloomScales;
+	} fpConstants {};
 
-	vpConstants3[3] = filterOffset0 * blurVStep;
-	vpConstants3[5] = filterOffset1 * blurVStep;
-	vpConstants3[7] = filterOffset2 * blurVStep;
+	fpConstants.fpBloomWeights = vdfloat4 {
+		weights[0] * wscale,
+		(weights[1] + weights[2]) * wscale,
+		(weights[3] + weights[4]) * wscale,
+		(weights[5] + weights[6]) * wscale
+	};
 
-	fpConstants[0] = w6 * wscale;
-	fpConstants[1] = (w5+w4) * wscale;
-	fpConstants[2] = (w3+w2) * wscale;
-	fpConstants[3] = (w1+w0) * wscale;
+	fpConstants.fpBloomThresholds = vdfloat2 {
+		1.0f + mParams.mThreshold,
+		-mParams.mThreshold
+	};
 
-	fpConstants[4] = 1.0f + mParams.mThreshold;
-	fpConstants[5] = -mParams.mThreshold;
-	fpConstants[6] = mParams.mDirectIntensity;
-	fpConstants[7] = mParams.mIndirectIntensity;
+	fpConstants.fpBloomScales = vdfloat2 {
+		mParams.mDirectIntensity,
+		mParams.mIndirectIntensity
+	};
 
 	////////////////////////////////
 
@@ -2755,6 +3066,8 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 	const auto rttFormat = mParams.mbRenderLinear ? dctx.mHDRFormat : dctx.mBGRASRGBFormat;
 	VDDPoolTextureIndex rtt1 = mMeshPool.AddTempTexture(ctx, texw1, texh1, rttFormat, 1);
 	VDDPoolTextureIndex rtt2 = mMeshPool.AddTempTexture(ctx, texw1, texh1, rttFormat, 1);
+
+	mCommandIndexStart = mMeshPool.GetNextCommandIndex();
 
 	// prescale pass: source -> prescale RTT or RTT 1
 	VDDPoolTextureIndex curTexture = mSourceTextureIndex;
@@ -2772,13 +3085,10 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 	else
 		curTexture = rtt1;
 
-	mb.SetRenderView(curTexture, 0, false, VDTViewport { 0, 0, mBlurW2, mBlurH2, 0.0f, 1.0f });
+	mb.SetRenderView(curTexture, 0, false, VDTViewport::CreateTopLeft(blurW2, blurH2));
 	mb.SetOffsetQuad2T(
 		vdfloat2 { srcu, srcv },
-		vdfloat2 {
-			(float)(blurW2 * factor2) / (float)mMapping.mTexWidth,
-			(float)(blurH2 * factor2) / (float)mMapping.mTexHeight,
-		},
+		(blurSize2 * factor2) / srcTexSize,
 		vdfloat2 { 0, 0 },
 		vdfloat2 { 0, 0 }
 	);
@@ -2790,36 +3100,37 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 		mb.SetFPConstDataReuse();
 		mb.SetVertexProgram(VDTDataView(g_VDDispVP_Bloom1));
 		mb.SetFragmentProgram(VDTDataView(g_VDDispFP_Bloom1A));
-		mb.SetQuad2T(vdfloat2 { (float)blurW2 / (float)texw2, (float)blurH2 / (float)texh2 }, {});
+		mb.SetQuad2T(blurSize2 / texSize2, {});
 		mb.InitTextures({curTexture});
-		mb.SetRenderView(rtt1, 0, false, VDTViewport { 0, 0, mBlurW, mBlurH, 0.0f, 1.0f });
+		mb.SetRenderView(rtt1, 0, false, VDTViewport::CreateTopLeft(blurW1, blurH1));
 		curTexture = rtt1;
 	}
 
 	// horizontal blur pass: RTT 1 -> RTT 2
+	mCommandIndexDown = mMeshPool.GetNextCommandIndex();
 	mb = mMeshPool.AddMesh(dctx);
 	mb.InitSamplers({dctx.mpSSBilinear});
 	mb.SetVertexProgram(VDTDataView(g_VDDispVP_Bloom2));
 	mb.SetFragmentProgram(VDTDataView(g_VDDispFP_Bloom2));
 	mb.SetVPConstData(vpConstants2);
 	mb.SetFPConstDataReuse();
-	mb.SetQuad2T(vdfloat2 { (float)blurW1 / (float)texw1, (float)blurH1 / (float)texh1 }, {});
+	mb.SetQuad2T(blurSize1 / texSize1, {});
 	mb.InitTextures({rtt1});
-	mb.SetRenderView(rtt2, 0, false, VDTViewport { 0, 0, mBlurW, mBlurH, 0.0f, 1.0f });
+	mb.SetRenderView(rtt2, 0, false, VDTViewport::CreateTopLeft(blurW1, blurH1));
 	
 	// vertical blur pass: RTT 2 -> RTT 1
+	mCommandIndexUp = mMeshPool.GetNextCommandIndex();
 	mb = mMeshPool.AddMesh(dctx);
 	mb.SetVertexProgram(VDTDataView(g_VDDispVP_Bloom2));
 	mb.SetFragmentProgram(VDTDataView(g_VDDispFP_Bloom2));
 	mb.SetVPConstData(vpConstants3);
 	mb.SetFPConstDataReuse();
 	mb.InitTextures({rtt2});
-	mb.SetRenderView(rtt1, 0, false, VDTViewport { 0, 0, mBlurW, mBlurH, 0.0f, 1.0f });
-	mb.SetQuad2T(
-		vdfloat2 { (float)blurW1 / (float)texw1, (float)blurH1 / (float)texh1 }, {}
-	);
+	mb.SetRenderView(rtt1, 0, false, VDTViewport::CreateTopLeft(blurW1, blurH1));
+	mb.SetQuad2T(blurSize1 / texSize1, {});
 
 	// final pass: RTT 1 -> dest
+	mCommandIndexFinal = mMeshPool.GetNextCommandIndex();
 	mb = mMeshPool.AddMesh(dctx);
 		
 	mb.InitSamplers({dctx.mpSSBilinear, dctx.mpSSPoint});
@@ -2832,10 +3143,7 @@ bool VDDisplayBloomNode3D::InitV1(IVDTContext& ctx, VDDisplayNodeContext3D& dctx
 		vdfloat2 { srcu, srcv },
 		vdfloat2 { srcdu, srcdv },
 		vdfloat2 { 0, 0 },
-		vdfloat2 {
-			((float)w / (float)factor1) / (float)texw1,
-			((float)h / (float)factor1) / (float)texh1
-		}
+		clipDstSize / (texSize1 * (float)factor1)
 	);
 
 	mOutputViewId = mMeshPool.RegisterRenderView(VDDRenderView{});
@@ -3062,6 +3370,8 @@ bool VDDisplayBloomNode3D::RemakeV2(IVDTContext& ctx, VDDisplayNodeContext3D& dc
 		vdfloat4 fpBloomV2BlendFactors;
 		vdfloat4 fpBloomV2Shoulder;
 		vdfloat4 fpBloomV2Thresholds;
+		vdfloat4 fpBloomV2BaseUVStep;
+		vdfloat4 fpBloomV2BaseWeights;
 	};
 
 	VpBloomV2 vpcf {};
@@ -3082,6 +3392,8 @@ bool VDDisplayBloomNode3D::RemakeV2(IVDTContext& ctx, VDDisplayNodeContext3D& dc
 	};
 	fpcf.fpBloomV2Shoulder = renderParams.mShoulder;
 	fpcf.fpBloomV2Thresholds = renderParams.mThresholds;
+	fpcf.fpBloomV2BaseUVStep = vdfloat4 { renderParams.mBaseUVStepScale / (float)mMapping.mTexWidth, renderParams.mBaseUVStepScale / (float)mMapping.mTexHeight, 0.0f, 0.0f };
+	fpcf.fpBloomV2BaseWeights = renderParams.mBaseWeights;
 
 	auto mb = mMeshPool.AddMesh(dctx);
 	mCommandIndexFinal = mb.GetCommandIndex();
@@ -3150,4 +3462,145 @@ void VDDisplayBloomNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, 
 		VDTAutoScope scope(ctx, "Final");
 		mMeshPool.Execute(ctx, dctx, mCommandIndexFinal, 1);
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplayCustomEffectPipelineNode3D::VDDisplayCustomEffectPipelineNode3D(IVDDisplayCustomEffectD3D11& customEffect, VDDisplayQueuedSourceNode3D& src, const vdint2& viewportSize)
+	: mpCustomEffect(&customEffect)
+	, mpSrcNode(&src)
+	, mViewportSize(viewportSize)
+{
+	mpInputSrcTextures.resize(mpCustomEffect->GetMaxPrevFrames() + 1);
+}
+
+VDDisplayCustomEffectPipelineNode3D::~VDDisplayCustomEffectPipelineNode3D() {
+}
+
+void VDDisplayCustomEffectPipelineNode3D::AdvanceQueue() {
+	mbAdvanceQueue = true;
+}
+
+void VDDisplayCustomEffectPipelineNode3D::PreRun() {
+	mpCustomEffect->PreRun();
+}
+
+void VDDisplayCustomEffectPipelineNode3D::Run(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
+	VDASSERT(!mpInputSrcTextures.empty());
+
+	if (mbAdvanceQueue) {
+		mbAdvanceQueue = false;
+
+		mpSrcNode->AdvanceQueue();
+		mpCustomEffect->IncrementFrame();
+	}
+
+	mpSrcNode->Draw(ctx, dctx);
+
+	for(size_t i = 0, n = mpInputSrcTextures.size(); i < n; ++i)
+		mpInputSrcTextures[i] = mpSrcNode->GetResultTexture(i);
+
+	const auto& srcMapping = mpSrcNode->GetTextureMapping();
+
+	mpCustomEffect->Run(
+		mpInputSrcTextures.data(),
+		vdint2 { (sint32)srcMapping.mTexWidth, (sint32)srcMapping.mTexHeight },
+		vdint2 { VDRoundToInt32(srcMapping.mTexelSize.x), VDRoundToInt32(srcMapping.mTexelSize.y) },
+		mViewportSize
+	);
+}
+
+void VDDisplayCustomEffectPipelineNode3D::RunFinal(const VDDRenderView& renderView) {
+	mpCustomEffect->RunFinal(
+		renderView,
+		vdrect32f(0.0f, 0.0f, (float)mViewportSize.x, (float)mViewportSize.y),
+		mViewportSize
+	);
+}
+
+void VDDisplayCustomEffectPipelineNode3D::PostRun() {
+	mpCustomEffect->PostRun();
+}
+
+VDDisplaySourceTexMapping VDDisplayCustomEffectPipelineNode3D::GetFinalResultMapping() const {
+	const auto& srcMapping = mpSrcNode->GetTextureMapping();
+
+	return mpCustomEffect->ComputeFinalOutputMapping(
+		vdint2 {
+			(sint32)srcMapping.mTexelSize.x,
+			(sint32)srcMapping.mTexelSize.y,
+		},
+		mViewportSize
+	);
+}
+
+IVDTTexture2D *VDDisplayCustomEffectPipelineNode3D::GetFinalTexture() const {
+	return mpCustomEffect->GetFinalOutput();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplayCustomEffectSourceNode3D::VDDisplayCustomEffectSourceNode3D(VDDisplayCustomEffectPipelineNode3D& src)
+	: mpSource(&src)
+{
+}
+
+VDDisplayCustomEffectSourceNode3D::~VDDisplayCustomEffectSourceNode3D() {
+}
+
+VDDisplaySourceTexMapping VDDisplayCustomEffectSourceNode3D::GetTextureMapping() const {
+	return mpSource->GetFinalResultMapping();
+}
+
+IVDTTexture2D *VDDisplayCustomEffectSourceNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) {
+	mpSource->PreRun();
+	mpSource->Run(ctx, dctx);
+	mpSource->PostRun();
+
+	return mpSource->GetFinalTexture();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplayCustomEffectNode3D::VDDisplayCustomEffectNode3D(
+	VDDisplayCustomEffectPipelineNode3D& src,
+	uint32 clipdstw,
+	uint32 clipdsth,
+	float dstxf,
+	float dstyf,
+	float dstwf,
+	float dsthf
+)
+	: mpSource(&src)
+	, mDstX(dstxf)
+	, mDstY(dstyf)
+	, mDstW(dstwf)
+	, mDstH(dsthf)
+{
+	// Since we're replacing the final blit due to an explicit output size, center
+	// the draw regardless of the determined video frame. The frame is pixel snapped
+	// to avoid bad artifacts if point sampling is offset by 0.5px.
+	const auto mapping = src.GetFinalResultMapping();
+	const float finalW = mapping.mTexelSize.x;
+	const float finalH = mapping.mTexelSize.y;
+
+	mDstX = VDRoundFast(mDstX + (mDstW - finalW) * 0.5f);
+	mDstY = VDRoundFast(mDstY + (mDstH - finalH) * 0.5f);
+	mDstW = finalW;
+	mDstH = finalH;
+}
+
+VDDisplayCustomEffectNode3D::~VDDisplayCustomEffectNode3D() {
+}
+
+void VDDisplayCustomEffectNode3D::Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) {
+	VDDRenderView newRenderView(renderView);
+
+	newRenderView.mSoftViewport.mOffset += vdfloat2 { mDstX, mDstY };
+	newRenderView.mSoftViewport.mSize = vdfloat2 { mDstW, mDstH };
+
+	mpSource->PreRun();
+	mpSource->Run(ctx, dctx);
+	mpSource->RunFinal(newRenderView);
+	mpSource->PostRun();
 }

@@ -34,6 +34,7 @@
 #pragma warning(pop)
 #endif
 
+#include <vd2/system/binary.h>
 #include <vd2/system/filesys.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/text.h>
@@ -779,9 +780,7 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 
 				if (pSHBrowseForFolderW && pSHGetPathFromIDListW) {
 					if (wchar_t *pszBuffer = (wchar_t *)pMalloc->Alloc(MAX_PATH * sizeof(wchar_t))) {
-						BROWSEINFOW bi;
-						LPITEMIDLIST pidlBrowse;
-
+						BROWSEINFOW bi {};
 						bi.hwndOwner		= (HWND)ctxParent;
 						bi.pidlRoot			= NULL;
 						bi.pszDisplayName	= pszBuffer;
@@ -789,7 +788,7 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 						bi.ulFlags			= BIF_EDITBOX | /*BIF_NEWDIALOGSTYLE |*/ BIF_RETURNONLYFSDIRS | BIF_VALIDATE;
 						bi.lpfn				= NULL;
 
-						if (pidlBrowse = pSHBrowseForFolderW(&bi)) {
+						if (LPITEMIDLIST pidlBrowse = pSHBrowseForFolderW(&bi)) {
 							if (pSHGetPathFromIDListW(pidlBrowse, pszBuffer)) {
 								wcscpy(fsent.szFile, pszBuffer);
 								bSuccess = true;
@@ -812,4 +811,96 @@ const VDStringW VDGetDirectory(long nKey, VDGUIHandle ctxParent, const wchar_t *
 		strDir = fsent.szFile;
 
 	return strDir;
+}
+
+sint32 VDUIShowColorPicker(VDGUIHandle parent, uint32 initialColor, vdspan<const uint32> fixedPalette, const char *customPaletteKey) {
+	COLORREF palette[16] {};
+	const size_t n = std::min<size_t>(fixedPalette.size(), 16);
+	size_t palLen = n;
+
+	for(size_t i = 0; i < n; ++i)
+		palette[i] = VDSwizzleU32(fixedPalette[i]) >> 8;
+
+	if (customPaletteKey && *customPaletteKey) {
+		VDRegistryAppKey key("Saved palettes", false);
+
+		VDStringW s;
+		if (key.getString(customPaletteKey, s)) {
+			VDStringRefW t(s);
+
+			while(t.size() >= 6 && palLen < 16) {
+				uint32 col = 0;
+				bool valid = true;
+
+				for(size_t i = 0; i < 6; ++i) {
+					uint32 v = ((uint32)t[i] & ~(uint32)0x20);
+
+					col <<= 4;
+
+					if (v >= 0x10 && v <= 0x1A) {
+						col += v - 0x10;
+					} else if (v >= 0x41 && v <= 0x46) {
+						col += v - 0x41 + 10;
+					} else {
+						valid = false;
+						break;
+					}
+				}
+
+				if (!valid)
+					break;
+
+				palette[palLen++] = VDSwizzleU32(col) >> 8;
+
+				t = t.subspan(6);
+				if (t.empty() || t[0] != ',')
+					break;
+
+				t = t.subspan(1);
+			}
+		}
+	}
+
+	CHOOSECOLORW ccw {};
+	ccw.lStructSize = sizeof ccw;
+	ccw.hwndOwner = (HWND)parent;
+	ccw.rgbResult = VDSwizzleU32(initialColor) >> 8;
+	ccw.lpCustColors = palette;
+	ccw.Flags = CC_ANYCOLOR | CC_FULLOPEN | CC_RGBINIT | CC_SOLIDCOLOR;
+	
+	if (!ChooseColor(&ccw))
+		return -1;
+
+	// check if the color is in the palette
+	size_t palIdx = std::find(palette, palette + palLen, ccw.rgbResult & 0xFFFFFF) - palette;
+
+	// do nothing if it's in the fixed palette
+	if (palIdx >= n) {
+		// if the color is in the custom palette, shift it to the front;
+		// otherwise, insert at the front
+		if (palIdx < 16) {
+			if (palIdx >= palLen)
+				++palLen;
+
+			std::copy_backward(palette + n, palette + palIdx, palette + palIdx + 1);
+		} else
+			std::copy_backward(palette + n, palette + 15, palette + 16);
+
+		palette[n] = ccw.rgbResult;
+
+		// store new palette
+		VDStringW s;
+
+		for(uint32 idx = n; idx < palLen; ++idx)
+			s.append_sprintf(L"%06X,", VDSwizzleU32(palette[idx]) >> 8);
+
+		if (!s.empty())
+			s.pop_back();
+
+		VDRegistryAppKey key("Saved palettes", true);
+
+		key.setString(customPaletteKey, s.c_str());
+	}
+
+	return VDSwizzleU32(ccw.rgbResult) >> 8;
 }

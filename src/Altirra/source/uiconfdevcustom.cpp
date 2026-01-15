@@ -19,6 +19,7 @@
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
 #include <at/atnativeui/uiproxies.h>
+#include "oshelper.h"
 #include "resource.h"
 
 class ATUIDialogDeviceCustom : public VDDialogFrameW32 {
@@ -33,7 +34,9 @@ protected:
 	ATPropertySet& mPropSet;
 	VDUIProxyEditControl mPathControl;
 	VDUIProxyButtonControl mHotReloadControl;
+	VDUIProxyButtonControl mAllowUnsafeView;
 	VDUIProxyButtonControl mBrowseControl;
+	VDUIProxySysLinkControl mHelpView;
 };
 
 ATUIDialogDeviceCustom::ATUIDialogDeviceCustom(ATPropertySet& props)
@@ -41,6 +44,11 @@ ATUIDialogDeviceCustom::ATUIDialogDeviceCustom(ATPropertySet& props)
 	, mPropSet(props)
 {
 	mBrowseControl.SetOnClicked([this] { OnBrowse(); });
+	mHelpView.SetOnClicked(
+		[this] {
+			ATShowHelp(GetWindowHandle(), L"customdev-intro.html");
+		}
+	);
 }
 
 bool ATUIDialogDeviceCustom::OnLoaded() {
@@ -49,9 +57,13 @@ bool ATUIDialogDeviceCustom::OnLoaded() {
 	AddProxy(&mPathControl, IDC_PATH);
 	AddProxy(&mBrowseControl, IDC_BROWSE);
 	AddProxy(&mHotReloadControl, IDC_HOTRELOAD);
+	AddProxy(&mAllowUnsafeView, IDC_ALLOWUNSAFE);
+	AddProxy(&mHelpView, IDC_HELP_DEVICE);
 
 	mResizer.Add(mPathControl.GetHandle(), mResizer.kTC);
 	mResizer.Add(mBrowseControl.GetHandle(), mResizer.kTR);
+	mResizer.Add(mHelpView.GetHandle(), mResizer.kTC);
+	mResizer.Add(mAllowUnsafeView.GetHandle(), mResizer.kTC);
 	mResizer.Add(IDOK, mResizer.kBR);
 	mResizer.Add(IDCANCEL, mResizer.kBR);
 
@@ -64,9 +76,11 @@ void ATUIDialogDeviceCustom::OnDataExchange(bool write) {
 
 		mPropSet.SetString("path", mPathControl.GetText().c_str());
 		mPropSet.SetBool("hotreload", mHotReloadControl.GetChecked());
+		mPropSet.SetBool("allowunsafe", mAllowUnsafeView.GetChecked());
 	} else {
 		mPathControl.SetText(mPropSet.GetString("path", L""));
 		mHotReloadControl.SetChecked(mPropSet.GetBool("hotreload", false));
+		mAllowUnsafeView.SetChecked(mPropSet.GetBool("allowunsafe", false));
 	}
 }
 

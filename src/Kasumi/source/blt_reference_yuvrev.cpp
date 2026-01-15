@@ -28,6 +28,10 @@
 	#include "blt_spanutils_x86.h"
 #endif
 
+#ifdef VD_CPU_ARM64
+	#include "blt_spanutils_arm64.h"
+#endif
+
 using namespace nsVDPixmapSpanUtils;
 
 namespace {
@@ -413,6 +417,11 @@ void VDCDECL VDPixmapBlt_YUVPlanar_encode_reference(const VDPixmap& dstbm, const
 		if (hfunc == horiz_expand2x_coaligned)
 			hfunc = horiz_expand2x_coaligned_ISSE;
 	}
+#endif
+
+#ifdef VD_CPU_ARM64
+	if (hfunc == horiz_compress2x_centered)
+		hfunc = horiz_compress2x_centered_NEON;
 #endif
 
 	const uint8 *src = (const uint8 *)srcbm.data;

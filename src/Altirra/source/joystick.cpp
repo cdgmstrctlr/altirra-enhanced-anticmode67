@@ -29,6 +29,7 @@
 #include <vd2/system/vdalloc.h>
 #include <vd2/system/w32assist.h>
 #include "joystick.h"
+#include "inputdefs.h"
 #include "inputmanager.h"
 
 #pragma comment(lib, "setupapi")
@@ -104,6 +105,11 @@ namespace {
 		}
 
 		SetupDiDestroyDeviceInfoList(hdi);
+
+		// Manually block VID_045E&PID_07A5 -- Microsoft Corp. Wireless Receiver 1461C. This is
+		// what the Xbox Wireless Controller shows up as, which does NOT follow the IG_ convention
+		// recommended by Microsoft for filtering out XInput devices.
+		devs.push_back(MAKELONG(0x045E, 0x07A5));
 	}
 
 	template<class T>
@@ -284,6 +290,7 @@ ATControllerXInput::ATControllerXInput(ATXInputBinding& xinput, uint32 xid, ATIn
 }
 
 ATControllerXInput::~ATControllerXInput() {
+	mpInputManager->UnregisterInputUnit(mUnit);
 }
 
 bool ATControllerXInput::Poll(bool& bigActivity) {

@@ -37,10 +37,10 @@ public:
 };
 
 vdrefptr<IATNetLookupResult> ATNetLookup(const wchar_t *hostname, const wchar_t *service);
-vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *service);
-vdrefptr<IATStreamSocket> ATNetConnect(const ATSocketAddress& address);
-vdrefptr<IATListenSocket> ATNetListen(const ATSocketAddress& address);
-vdrefptr<IATListenSocket> ATNetListen(ATSocketAddressType addressType, uint16 port);
+vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *service, bool dualStack = false);
+vdrefptr<IATStreamSocket> ATNetConnect(const ATSocketAddress& address, bool dualStack = false);
+vdrefptr<IATListenSocket> ATNetListen(const ATSocketAddress& address, bool dualStack = false);
+vdrefptr<IATListenSocket> ATNetListen(ATSocketAddressType addressType, uint16 port, bool dualStack = false);
 
 // Create a datagram socket for UDP traffic. Address must be an IPv4 or IPv6 socket,
 // though it can bind to 0:0 for unspecified port and 0:port for specified port on

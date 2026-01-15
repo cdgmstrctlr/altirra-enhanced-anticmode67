@@ -52,6 +52,8 @@ ATImageType ATGetImageTypeForFileExtension(const wchar_t *ext) {
 		{ L".com", kATImageType_Program },
 		{ L".bas", kATImageType_BasicProgram },
 		{ L".sap", kATImageType_SAP },
+		{ L".vgm", kATImageType_VGM },
+		{ L".vgz", kATImageType_VGM },
 	};
 
 	for(const auto& entry : kExtEntries) {
@@ -133,6 +135,10 @@ ATImageType ATDetectImageType(const wchar_t *imagePath, IVDRandomAccessStream& s
 	if (!memcmp(header, "SAP\r\n", 5) && (!vdwcsicmp(ext, L".sap") || !memcmp(header + 5, "AUTHOR ", 7)))
 		return kATImageType_SAP;
 
+	if (header[0] == 0x56 && header[1] == 0x67 && header[2] == 0x6d && header[3] == 0x20)
+		return kATImageType_VGM;
+
+	// try filename extension matching
 	if (!vdwcsicmp(ext, L".xex") || !vdwcsicmp(ext, L".obx") || !vdwcsicmp(ext, L".exe") || !vdwcsicmp(ext, L".com"))
 		return kATImageType_Program;
 
@@ -252,6 +258,8 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, ATVFSFil
 
 			if (!vdwcsicmp(ext, L".atz"))
 				newname += L".atr";
+			if (!vdwcsicmp(ext, L".vgz"))
+				newname += L".vgm";
 			else if (vdwcsicmp(ext, L".gz") != 0)
 				newname += L".dat";
 
@@ -367,6 +375,11 @@ bool ATImageLoadAuto(const wchar_t *origPath, const wchar_t *imagePath, ATVFSFil
 	} else if (loadType == kATImageType_SAP) {
 		vdrefptr<IATBlobImage> sapImage;
 		ATLoadBlobImage(kATImageType_SAP, stream, ~sapImage);
+
+		*ppImage = sapImage.release();
+	} else if (loadType == kATImageType_VGM) {
+		vdrefptr<IATBlobImage> sapImage;
+		ATLoadBlobImage(kATImageType_VGM, stream, ~sapImage);
 
 		*ppImage = sapImage.release();
 	} else if (loadType != kATImageType_SaveState2) {

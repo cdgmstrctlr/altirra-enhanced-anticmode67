@@ -5,8 +5,9 @@
   <h2>Setting up hardware emulation</h2>
   <p>
     Both the internal and cartridge varieties of the MyIDE interface are supported. To enable MyIDE
-    emulation, select System &gt; Hard disk... from the menu, and specify an image file to use for
-    the emulated hard drive in the MyIDE section.
+    emulation, select System &gt; Configure System... from the menu, and under Devices, add two devices
+    to the device tree: a MyIDE device, and a hard disk device attached to the MyIDE device. The hard
+    disk device configuration dialog will appear to create a new hard disk image or use an existing one.
   </p>
   <h3>Hard drive capacity</h3>
   <p>

@@ -60,6 +60,7 @@ private:
 	ATScheduler *mpScheduler = nullptr;
 	ATEvent *mpTransferEvent = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	bool mbRawActive = false;
 	uint32 mTransferIndex = 0;
 	uint32 mTransferLength = 0;
@@ -102,6 +103,8 @@ void ATDeviceTestSIOHighSpeed::Shutdown() {
 		mpScheduler = nullptr;
 	}
 
+	mpSIOInterface = nullptr;
+
 	if (mpSIOMgr) {
 		if (mbRawActive) {
 			mbRawActive = false;
@@ -109,7 +112,6 @@ void ATDeviceTestSIOHighSpeed::Shutdown() {
 			mpSIOMgr->RemoveRawDevice(this);
 		}
 
-		mpSIOMgr->RemoveDevice(this);
 		mpSIOMgr = nullptr;
 	}
 }
@@ -120,7 +122,7 @@ void ATDeviceTestSIOHighSpeed::InitScheduling(ATScheduler *sch, ATScheduler *slo
 
 void ATDeviceTestSIOHighSpeed::InitSIO(IATDeviceSIOManager *siomgr) {
 	mpSIOMgr = siomgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDeviceTestSIOHighSpeed::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -143,10 +145,10 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOHighSpeed::OnSerialBeginCommand(const A
 		mTransferLength = 128;
 		mTransferSector = sector;
 			
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->Delay(2000);
-		mpSIOMgr->InsertFence(0);
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->Delay(2000);
+		mpSIOInterface->InsertFence(0);
 
 		return kCmdResponse_Start;
 
@@ -154,10 +156,10 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOHighSpeed::OnSerialBeginCommand(const A
 		mTransferIndex = 0;
 		mTransferLength = 4;
 			
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->Delay(2000);
-		mpSIOMgr->InsertFence(0);
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->Delay(2000);
+		mpSIOInterface->InsertFence(0);
 
 		return kCmdResponse_Start;
 
@@ -172,10 +174,10 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOHighSpeed::OnSerialBeginCommand(const A
 		mTransferLength = len;
 		mTransferSector = 1;
 			
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->Delay(2000);
-		mpSIOMgr->InsertFence(0);
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->Delay(2000);
+		mpSIOInterface->InsertFence(0);
 
 		return kCmdResponse_Start;
 	}
@@ -255,7 +257,7 @@ void ATDeviceTestSIOHighSpeed::OnSendReady() {
 			mpSIOMgr->RemoveRawDevice(this);
 		}
 
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->EndCommand();
 	}
 }
 

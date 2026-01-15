@@ -50,10 +50,11 @@ struct VDDateInterval {
 	}
 
 	static constexpr VDDateInterval FromSeconds(float f) {
-		if (std::is_constant_evaluated())
+		if consteval {
 			return VDDateInterval{ (int64)(f < 0 ? f * kVDDateSecondsToTicks<float> - 0.5f : f * kVDDateSecondsToTicks<float> + 0.5f) };
-		else
+		} else {
 			return VDDateInterval{ (int64)llrintf(f * kVDDateSecondsToTicks<float>) };
+		}
 	}
 
 	constexpr float ToSeconds() const {

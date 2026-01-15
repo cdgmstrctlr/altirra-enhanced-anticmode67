@@ -133,15 +133,32 @@
 // very cheap because they are not polled until a valid SIO command frame
 // is transmitted.
 //
+//
+// Burst I/O
+// ---------
+// For cases where programs directly send commands over the SIO bus without
+// going through an acceleratable hook, the SIO manager also offers burst I/O
+// support. Burst I/O uses notifications from POKEY to increase the speed
+// of the transmission to nearly the limit that the receive IRQ or polling
+// routine can handle, based on when it clears the IRQ and reads bytes from
+// SERIN. This allows burst reception above 80Kbaud without risking overruns.
+//
+// For normal SIO devices, burst I/O is implemented automatically by the
+// SIO manager. The SIO interface has a burst cycle counter that can be used
+// to estimate equivalent non-burst timings to warp tracked processes. For
+// raw devices, burst I/O is implemented through OnSendReady().
+//
 
 #ifndef f_AT_ATCORE_DEVICESIO_H
 #define f_AT_ATCORE_DEVICESIO_H
 
+#include <vd2/system/refcount.h>
 #include <vd2/system/unknown.h>
 
 class IATDeviceSIO;
 class IATDeviceRawSIO;
 class IATObjectState;
+class IATDeviceSIOInterface;
 
 struct ATDeviceSIOCommand {
 	uint8 mDevice;
@@ -153,6 +170,9 @@ struct ATDeviceSIOCommand {
 
 	// True if the command was sent at standard 19200 baud rate.
 	bool mbStandardRate;
+
+	// True if the command line was deasserted before end of frame.
+	bool mbEarlyCmdDeassert;
 
 	// Number of type 3 polls that have taken place prior to this
 	// command.
@@ -170,9 +190,101 @@ class IATDeviceSIOManager {
 public:
 	static constexpr auto kTypeID = "IATDeviceSIOManager"_vdtypeid;
 
-	virtual void AddDevice(IATDeviceSIO *dev) = 0;
-	virtual void RemoveDevice(IATDeviceSIO *dev) = 0;
+	[[nodiscard]] virtual vdrefptr<IATDeviceSIOInterface> AddDevice(IATDeviceSIO *dev) = 0;
 
+	// Returns the high speed index (POKEY divisor) that should be used for high-speed
+	// transfers. This is used for devices that might not otherwise have an inherent high
+	// speed transfer rate. -1 means that standard speed should be used.
+	virtual sint32 GetHighSpeedIndex() const = 0;
+
+	// Gets the number of cycles per bit that POKEY is currently configured to receive at.
+	// Zero means that receive is disabled, such as if the serial clock is frozen. Note
+	// that this may be as large as several million cycles if POKEY is not actually
+	// being used to receive serial data.
+	virtual uint32 GetCyclesPerBitRecv() const = 0;
+
+	// Changes every time the serial input register in POKEY is reset.
+	virtual uint32 GetRecvResetCounter() const = 0;
+
+	// Gets the number of cycles per bit that is currently being output on the serial clock
+	// out line.
+	virtual uint32 GetCyclesPerBitSend() const = 0;
+
+	// Gets the number of cycles per bit that is currently being output on the bidirectional
+	// clock line.
+	virtual uint32 GetCyclesPerBitBiClock() const = 0;
+
+	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
+	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
+	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous = false, bool forceFramingError = false, bool simulateInput = true) = 0;
+	virtual void SetRawInput(bool input) = 0;
+
+	// Returns if the SIO command and motor lines are asserted. Both are active low,
+	// so true (asserted) means low and active, and false (negated) means high and not active.
+	virtual bool IsSIOCommandAsserted() const = 0;
+	virtual bool IsSIOMotorAsserted() const = 0;
+
+	// Returns true if the SIO ready line is asserted (high), which means that the computer
+	// is turned on.
+	virtual bool IsSIOReadyAsserted() const = 0;
+	
+	// Returns true if POKEY is in force break status and holding the SIO data out line down.
+	virtual bool IsSIOForceBreakAsserted() const = 0;
+
+	// Control SIO interrupt and proceed lines. These lines are normally high and active
+	// low if any device is pulling them low.
+	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) = 0;
+	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) = 0;
+
+	// Enable serial output clock changes for a specific raw SIO device.
+	virtual void SetBiClockNotifyEnabled(IATDeviceRawSIO *dev, bool enabled) = 0;
+
+	// Set an external clock signal to be fed into POKEY's external clock input.
+	// Initial offset is in clock cycles from current time; period is in cycles.
+	// A period of 0 disables the external clock.
+	virtual void SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, uint32 period) = 0;
+};
+
+class IATDeviceSIOInterface : public IVDRefCount {
+public:
+	// Returns the time skew in cycles due to delays omitted during request acceleration.
+	// This is cumulative and should always be differenced.
+	virtual uint32 GetAccelTimeSkew() const = 0;
+
+	// Gets the current time in the command queue, after all currently queued commands.
+	// This is different than the current time as it tracks delays in command steps that
+	// have not been processed yet. For an accelerated request, this may be advanced but
+	// not actually reflect time that will be taken.
+	//
+	// The queue time is not valid after a receive step until that step has occurred. Once
+	// the receive has occurred, the queue time is adjusted to the current time and is valid.
+	// Transfer times are estimated for sends and ignore burst I/O.
+	//
+	virtual uint64 GetCommandQueueTime() const = 0;
+
+	// Gets the time of the end of the command frame.
+	virtual uint64 GetCommandFrameEndTime() const = 0;
+
+	// Gets the time when the SIO command line was deasserted.
+	virtual uint64 GetCommandDeassertTime() const = 0;
+
+	// Returns true if the current command is being accelerated.
+	virtual bool IsActiveCommandAccelerated() const = 0;
+
+	// Set whether this device interface only receives commands where the command line
+	// is still asserted at the end of the command frame. The default is disabled, which
+	// allows commands where the command line has been deasserted early. If enabled,
+	// commands with early deassert are ignored by this device interface.
+	virtual void SetCommandDeassertCheckEnabled(bool enabled) = 0;
+
+	// Set whether this device can cancel a command in progress when a new command
+	// starts. The default is disabled, where the device interface ignores any new
+	// commands while a command is active on the interface. If enabled, an active command
+	// is cancelled when a new command starts by assertion of the SIO command line.
+	virtual void SetCommandTruncationEnabled(bool enabled) = 0;
+
+	// Start a command. This is used before returning an affirmative response to
+	// OnSerialBeginCommand() or OnSerialAccelCommand().
 	virtual void BeginCommand() = 0;
 
 	// Send data across the SIO bus. If addChecksum is set, the standard SIO checksum
@@ -216,90 +328,14 @@ public:
 	// Shortcut for: BeginCommand(), SendACK(), SendComplete/Error(), SendData(true) if len>0, EndCommand().
 	virtual void HandleCommand(const void *data, uint32 len, bool succeeded) = 0;
 
-	// Returns true if an acceleration request is currently being processed.
-	virtual bool IsAccelRequest() const = 0;
-
-	// Returns the time skew in cycles due to delays omitted during request acceleration.
-	// This is cumulative and should always be differenced.
-	virtual uint32 GetAccelTimeSkew() const = 0;
-
-	// Returns the high speed index (POKEY divisor) that should be used for high-speed
-	// transfers. This is used for devices that might not otherwise have an inherent high
-	// speed transfer rate. -1 means that standard speed should be used.
-	virtual sint32 GetHighSpeedIndex() const = 0;
-
-	// Gets the number of cycles per bit that POKEY is currently configured to receive at.
-	// Zero means that receive is disabled, such as if the serial clock is frozen. Note
-	// that this may be as large as several million cycles if POKEY is not actually
-	// being used to receive serial data.
-	virtual uint32 GetCyclesPerBitRecv() const = 0;
-
-	// Changes every time the serial input register in POKEY is reset.
-	virtual uint32 GetRecvResetCounter() const = 0;
-
-	// Gets the number of cycles per bit that is currently being output on the serial clock
-	// out line.
-	virtual uint32 GetCyclesPerBitSend() const = 0;
-
-	// Gets the number of cycles per bit that is currently being output on the bidirectional
-	// clock line.
-	virtual uint32 GetCyclesPerBitBiClock() const = 0;
-
-	// Gets the current time in the command queue, after all currently queued commands.
-	// This is different than the current time as it tracks delays in command steps that
-	// have not been processed yet. For an accelerated request, this may be advanced but
-	// not actually reflect time that will be taken.
-	//
-	// The queue time is not valid after a receive step until that step has occurred. Once
-	// the receive has occurred, the queue time is adjusted to the current time and is valid.
-	// Transfer times are estimated for sends and ignore burst I/O.
-	//
-	virtual uint64 GetCommandQueueTime() const = 0;
-
-	// Gets the time of the end of the command frame.
-	virtual uint64 GetCommandFrameEndTime() const = 0;
-
-	// Gets the time when the SIO command line was deasserted.
-	virtual uint64 GetCommandDeassertTime() const = 0;
-
-	// Saves active command state for the given device. Returns null if no command is
+	// Saves active command state for the given interface. Returns null if no command is
 	// active for the given device, or if the current active command is for another
 	// device.
-	virtual void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const = 0;
+	virtual void SaveActiveCommandState(IATObjectState **state) const = 0;
 
-	// Loads active command state for the current device. Any other active command is
+	// Loads active command state for the current interface. Any other active command is
 	// aborted.
-	virtual void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state) = 0;
-
-	virtual void AddRawDevice(IATDeviceRawSIO *dev) = 0;
-	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) = 0;
-	virtual void SendRawByte(uint8 byte, uint32 cyclesPerBit, bool synchronous = false, bool forceFramingError = false, bool simulateInput = true) = 0;
-	virtual void SetRawInput(bool input) = 0;
-
-	// Returns if the SIO command and motor lines are asserted. Both are active low,
-	// so true (asserted) means low and active, and false (negated) means high and not active.
-	virtual bool IsSIOCommandAsserted() const = 0;
-	virtual bool IsSIOMotorAsserted() const = 0;
-
-	// Returns true if the SIO ready line is asserted (high), which means that the computer
-	// is turned on.
-	virtual bool IsSIOReadyAsserted() const = 0;
-	
-	// Returns true if POKEY is in force break status and holding the SIO data out line down.
-	virtual bool IsSIOForceBreakAsserted() const = 0;
-
-	// Control SIO interrupt and proceed lines. These lines are normally high and active
-	// low if any device is pulling them low.
-	virtual void SetSIOInterrupt(IATDeviceRawSIO *dev, bool state) = 0;
-	virtual void SetSIOProceed(IATDeviceRawSIO *dev, bool state) = 0;
-
-	// Enable serial output clock changes for a specific raw SIO device.
-	virtual void SetBiClockNotifyEnabled(IATDeviceRawSIO *dev, bool enabled) = 0;
-
-	// Set an external clock signal to be fed into POKEY's external clock input.
-	// Initial offset is in clock cycles from current time; period is in cycles.
-	// A period of 0 disables the external clock.
-	virtual void SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, uint32 period) = 0;
+	virtual void LoadActiveCommandState(IATObjectState *state) = 0;
 };
 
 class IATDeviceSIO {
@@ -315,9 +351,28 @@ public:
 	};
 
 	virtual void InitSIO(IATDeviceSIOManager *mgr) = 0;
+
+	// Called when polling devices to allow devices to handle an unaccelerated command.
+	//
+	// This will not be called on a device that is already executing a command if the
+	// device's interface is not set to allow command truncation. In that case, the
+	// device is skipped and other devices will attempt to handle the command.
+	//
 	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) = 0;
+
+	// Called when a command is cancelled before EndCommand() is reached.
 	virtual void OnSerialAbortCommand() = 0;
+
+	// Called when a receive step completes executing in the command queue.
+	//
+	// checksumOK indicates if the last byte is equal to the SIO checksum of the
+	// rest of the frame. It will only be false for non auto-protocol receives.
+	// For auto-protocol receives, the SIO manager will automatically flush the
+	// queue, send a NAK, and end the command if a receive error occurs.
+	//
 	virtual void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) = 0;
+
+	// Called when a fence step is executed in the command queue.
 	virtual void OnSerialFence(uint32 id) = 0; 
 
 	// Attempt to accelerate a command via SIOV intercept. This receives a superset
@@ -328,6 +383,10 @@ public:
 	// to abort acceleration and force usage of native SIO. It is used for requests
 	// that the device recognizes but which cannot be safely accelerated by any
 	// device.
+	//
+	// The SIO manager will automatically bypass acceleration in certain cases,
+	// particularly if any other device has a command in progress.
+	//
 	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) = 0;
 };
 

@@ -103,9 +103,9 @@ public:		// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;
 
 public:		// IATDeviceButtons
-	uint32 GetSupportedButtons() const;
-	bool IsButtonDepressed(ATDeviceButton idx) const;
-	void ActivateButton(ATDeviceButton idx, bool state);
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:	// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
@@ -121,10 +121,10 @@ public:	// IATDiskInterfaceClient
 	void OnWriteModeChanged() override;
 	void OnTimingModeChanged() override;
 	void OnAudioModeChanged() override;
-	bool IsImageSupported(const IATDiskImage& image) const;
+	bool IsImageSupported(const IATDiskImage& image) const override;
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(bool polarity);
 

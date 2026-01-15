@@ -48,7 +48,7 @@ public:
 
 protected:
 	void SetHeld(bool held);
-	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 	void Relayout();
 	void UpdateFillColor();
 

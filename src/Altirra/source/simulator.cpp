@@ -34,6 +34,7 @@
 #include <at/atcore/asyncdispatcherimpl.h>
 #include <at/atcore/bussignal.h>
 #include <at/atcore/cio.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/constants.h>
 #include <at/atcore/device.h>
@@ -115,8 +116,21 @@
 #include "1450xld.h"
 #include "autosavemanager.h"
 #include "pbidisk.h"
+#include "vgmplayer.h"
+#include "playvgm.inl"
+
+int g_ATSimScanlinesPerAdvance = 32;
+
+ATConfigVarInt32 g_ATCVSimScanlinesPerAdvance(
+	"sim.scanlines_per_advance",
+	32,
+	[] {
+		g_ATSimScanlinesPerAdvance = std::clamp<int>(g_ATCVSimScanlinesPerAdvance, 1, 1000);
+	}
+);
 
 vdrefptr<IATPrinterOutputManager> ATCreatePrinterOutputManager();
+void ATAudioRegisterStockSamples(ATAudioSamplePool& pool);
 
 namespace {
 	const char kSaveStateVersion[] = "Altirra save state V1";
@@ -255,6 +269,7 @@ class ATSimulator::PrivateData final
 	, public IATCovoxController
 	, public IATDeviceSchedulingService
 	, public IATDeviceChangeCallback
+	, public IATDeviceSystemInfo
 {
 	PrivateData(const PrivateData&) = delete;
 	PrivateData& operator=(const PrivateData&) = delete;
@@ -269,6 +284,8 @@ public:
 	ATDiskInterface *GetDiskInterface(uint32 index) override {
 		return mpDiskInterfaces[index];
 	}
+
+	void SetTracingContext(ATTraceContext *context);
 
 public:		// IATSystemController
 	void ResetCPU() override;
@@ -290,6 +307,9 @@ public:		// IATDeviceSchedulingService
 	ATScheduler *GetMachineScheduler() const override;
 	ATScheduler *GetSlowScheduler() const override;
 
+public:		// IATDeviceSystemInfo
+	const ATDeviceSystemInfo& GetSystemInfo() const override { return mSystemInfo; }
+
 public:
 	void OnDeviceAdded(uint32 iid, IATDevice *dev, void *iface) override;
 	void OnDeviceRemoving(uint32 iid, IATDevice *dev, void *iface) override;
@@ -307,6 +327,8 @@ public:
 	static void PIAChangeBanking(void *thisPtr, uint32 output);
 
 	void ApplyHardwareState();
+	void FlushPokeyWriteLog();
+	bool WritePokeyWithLogging(uint32 addr, uint8 data);
 
 	ATSimulator& mParent;
 	vdautoptr<ATTraceContext> mpTraceContext;
@@ -346,6 +368,9 @@ public:
 
 	IATDeviceSnapshot *mpFrontEnd = nullptr;
 
+	IATRegisterWriteLogger *mpPokeyWriteLogger = nullptr;
+	vdfastvector<ATMemoryWriteLogEntry> mPokeyWriteLog;
+
 	ATIRQController	mIRQController;
 	ATCartridgePort mCartPort;
 	ATPIAFloatingInputs mFloatingInputs = {};
@@ -355,6 +380,8 @@ public:
 	vdautoptr<ATVideoManager> mpVideoManager;
 	vdfunction<void()> mAsyncWakeFunction;
 	bool mAsyncWakePending = false;
+
+	vdrefptr<ATDevice> mpVGMPlayerDevice;
 
 	vdblock<uint8> mHighMemory;
 
@@ -371,9 +398,12 @@ public:
 	bool mbSIOPBIPatchEnabled = false;
 	bool mbCIOPBIPatchEnabled = false;
 
+	ATDeviceSystemInfo mSystemInfo {};
+
 	ATDiskInterface *mpDiskInterfaces[15] = {};
 
 	vdautoptr<ATPokeyTracer> mpPokeyTracer;
+	vdrefptr<IVDRefCount> mpNativeTracer;
 
 	ATSettingsLoadSaveCallback mpSettingsLoadFn;
 	ATSettingsLoadSaveCallback mpSettingsSaveFn;
@@ -432,6 +462,24 @@ ATSimulator::PrivateData::~PrivateData() {
 
 	ATSettingsUnregisterLoadCallback(&mpSettingsLoadFn);
 	ATSettingsUnregisterSaveCallback(&mpSettingsSaveFn);
+}
+
+void ATSimulator::PrivateData::SetTracingContext(ATTraceContext *context) {
+	mParent.mPIA.SetTraceContext(context);
+	mParent.mAntic.SetTraceContext(context);
+
+	for(ATDiskEmulator *disk : mParent.mpDiskDrives) {
+		if (disk)
+			disk->SetTraceContext(context);
+	}
+
+	if (mParent.mpCassette)
+		mParent.mpCassette->SetTraceContext(context);
+
+	mParent.mpSIOManager->SetTraceContext(context);
+
+	for(IATDevice *dev : mParent.mpDeviceManager->GetDevices(false, false, false))
+		dev->SetTraceContext(context);
 }
 
 void ATSimulator::PrivateData::ResetCPU() {
@@ -674,11 +722,38 @@ void ATSimulator::PrivateData::PIAChangeBanking(void *thisPtr, uint32 output) {
 
 void ATSimulator::PrivateData::ApplyHardwareState() {
 	auto mode = mParent.mHardwareMode;
+	const auto& hwtraits = kATHardwareModeTraits[mode];
 
-	mPortManager.SetPorts34Enabled(kATHardwareModeTraits[mode].mbHasPort34);
+	mPortManager.SetPorts34Enabled(hwtraits.mbHasPort34);
 	mPortManager.ReapplyTriggers();
 
 	mParent.mPokey.SetSpeakerFilterSupported(mode == kATHardwareMode_800);
+
+	mSystemInfo.mbHasPort34 = hwtraits.mbHasPort34;
+	mSystemInfo.mbHasSIO12V = hwtraits.mbHasSIO12V;
+	mSystemInfo.mbHas9VACPower = hwtraits.mbHas9VACPower;
+}
+
+void ATSimulator::PrivateData::FlushPokeyWriteLog() {
+	if (!mPokeyWriteLog.empty()) {
+		if (mpPokeyWriteLogger)
+			mpPokeyWriteLogger->LogRegisterWrites(mPokeyWriteLog);
+
+		mPokeyWriteLog.clear();
+	}
+}
+
+bool ATSimulator::PrivateData::WritePokeyWithLogging(uint32 addr, uint8 data) {
+	if (mpPokeyWriteLogger) {
+		mPokeyWriteLog.emplace_back(mParent.mScheduler.GetTick(), (uint16)addr, data);
+
+		if (mPokeyWriteLog.size() >= 256)
+			FlushPokeyWriteLog();
+	}
+
+	mParent.mPokey.WriteByte(addr, data);
+
+	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -780,13 +855,16 @@ void ATSimulator::Init() {
 	mpDeviceManager->RegisterService<IATDeviceVideoManager>(mpPrivateData->mpVideoManager);
 	mpDeviceManager->RegisterService<ATIRQController>(&mpPrivateData->mIRQController);
 	mpDeviceManager->RegisterService<ATMemoryManager>(mpMemMan);
+	mpDeviceManager->RegisterService<ATMMUEmulator>(mpMMU);
 	mpDeviceManager->RegisterService<IATDevicePIA>(&mPIA);
 	mpDeviceManager->RegisterService<IATDevicePBIManager>(mpPBIManager);
 	mpDeviceManager->RegisterService<IATDevicePortManager>(&mpPrivateData->mPortManager);
 	mpDeviceManager->RegisterService<IATDeviceSIOManager>(mpSIOManager);
 	mpDeviceManager->RegisterService<IATDeviceSchedulingService>(mpPrivateData);
+	mpDeviceManager->RegisterService<IATDeviceSystemInfo>(mpPrivateData);
 	mpDeviceManager->RegisterService<IATDeviceCartridgePort>(&mpPrivateData->mCartPort);
 	mpDeviceManager->RegisterService<IATPrinterOutputManager>(mpPrivateData->mpPrinterOutputManager);
+	mpDeviceManager->RegisterService<IATDiskDriveManager>(mpPrivateData);
 
 	mCartModuleIds[0] = 0;
 	mCartModuleIds[1] = 0;
@@ -839,17 +917,10 @@ void ATSimulator::Init() {
 
 	mpLightPen->Init(mAntic, mGTIA);
 
-	mpAudioSamplePool = new ATAudioSamplePool;
-	mpAudioSamplePool->Init();
-
-	mpAudioSamplePlayer = new ATAudioSamplePlayer(*mpAudioSamplePool);
-	mpAudioSamplePlayer->Init(&mScheduler);
-
-	mpAudioEdgeSamplePlayer = new ATAudioSamplePlayer(*mpAudioSamplePool);
-	mpAudioEdgeSamplePlayer->Init(&mScheduler);
-
 	mpAudioOutput = ATCreateAudioOutput();
-	mpAudioOutput->Init(mpAudioSamplePlayer, mpAudioEdgeSamplePlayer);
+	mpAudioOutput->Init(mScheduler);
+
+	ATAudioRegisterStockSamples(mpAudioOutput->GetPool());
 	
 	mpDeviceManager->RegisterService<IATAudioMixer>(&mpAudioOutput->AsMixer());
 
@@ -890,7 +961,7 @@ void ATSimulator::Init() {
 	for(int i=0; i<15; ++i) {
 		mpDiskDrives[i] = new ATDiskEmulator;
 		mpDiskDrives[i]->InitSIO(mpSIOManager);
-		mpDiskDrives[i]->Init(i, mpPrivateData->mpDiskInterfaces[i], &mScheduler, &mSlowScheduler, mpAudioSamplePlayer);
+		mpDiskDrives[i]->Init(i, mpPrivateData->mpDiskInterfaces[i], &mScheduler, &mSlowScheduler, mpAudioOutput->AsMixer().GetSamplePlayer());
 	}
 
 	mPendingEvent = kATSimEvent_None;
@@ -945,7 +1016,7 @@ void ATSimulator::Shutdown() {
 	mpPrivateData->mpAutoSaveManager = nullptr;
 	mpPrivateData->mStereoEnableSignal.Shutdown();
 
-	SetTracingEnabled(nullptr);
+	StopTracing();
 
 	if (mpDeviceManager)
 		mpDeviceManager->RemoveAllDevices(true);
@@ -964,17 +1035,7 @@ void ATSimulator::Shutdown() {
 
 	vdsafedelete <<= mpHLEFPAccelerator;
 
-	if (mpHLEProgramLoader) {
-		mpHLEProgramLoader->Shutdown();
-		delete mpHLEProgramLoader;
-		mpHLEProgramLoader = NULL;
-	}
-
-	if (mpHLEBasicLoader) {
-		mpHLEBasicLoader->Shutdown();
-		delete mpHLEBasicLoader;
-		mpHLEBasicLoader = NULL;
-	}
+	UnloadProgram();
 
 	if (mpDebugTarget) {
 		delete static_cast<ATDebuggerDefaultTarget *>(mpDebugTarget);
@@ -1026,24 +1087,6 @@ void ATSimulator::Shutdown() {
 	if (mpAudioOutput) {
 		delete mpAudioOutput;
 		mpAudioOutput = NULL;
-	}
-
-	if (mpAudioSamplePlayer) {
-		mpAudioSamplePlayer->Shutdown();
-		delete mpAudioSamplePlayer;
-		mpAudioSamplePlayer = nullptr;
-	}
-
-	if (mpAudioEdgeSamplePlayer) {
-		mpAudioEdgeSamplePlayer->Shutdown();
-		delete mpAudioEdgeSamplePlayer;
-		mpAudioEdgeSamplePlayer = nullptr;
-	}
-
-	if (mpAudioSamplePool) {
-		mpAudioSamplePool->Shutdown();
-		delete mpAudioSamplePool;
-		mpAudioSamplePool = nullptr;
 	}
 
 	mGTIA.SetUIRenderer(NULL);
@@ -1143,6 +1186,15 @@ bool ATSimulator::LoadROMs() {
 		changed |= fw->ReloadFirmware();
 
 	return changed;
+}
+
+void ATSimulator::PostInterruptingEvent(ATSimulatorEvent ev) {
+	if (ev == kATSimEvent_AnonymousPause) {
+		if (mPendingEvent != kATSimEvent_None)
+			return;
+	}
+
+	mPendingEvent = ev;
 }
 
 void ATSimulator::NotifyEvent(ATSimulatorEvent ev) {
@@ -1933,86 +1985,113 @@ bool ATSimulator::GetTracingEnabled() const {
 	return mpPrivateData->mpTraceContext != nullptr;
 }
 
-void ATSimulator::SetTracingEnabled(const ATTraceSettings *settings) {
+void ATSimulator::StopTracing() {
 	ATTraceContext *context = mpPrivateData->mpTraceContext;
 
-	if (settings) {
-		if (context)
-			return;
+	if (!context)
+		return;
 
-		context = new ATTraceContext;
-		context->mBaseTime = mScheduler.GetTick64();
-		context->mBaseTickScale = mScheduler.GetRate().AsInverseDouble();
-		context->mpCollection = new ATTraceCollection;
-		mpPrivateData->mpCPUTracer = new ATCPUTracer;
-		mpPrivateData->mpCPUTracer->Init(&mCPU, &mScheduler, &mSlowScheduler, mpPrivateData, context, settings->mbTraceCpuInsns, settings->mbTraceBasic);
+	if (mpUIRenderer)
+		mpUIRenderer->SetTracingSize(-1);
 
-		mpPrivateData->mpTraceChannelVideo = ATCreateTraceChannelVideo(L"Video", &context->mMemTracker);
+	if (mpPrivateData->mpVideoTracer) {
+		mGTIA.RemoveVideoTap(mpPrivateData->mpVideoTracer->AsVideoTap());
+		mpPrivateData->mpVideoTracer->Shutdown();
+		mpPrivateData->mpVideoTracer = nullptr;
+		mpPrivateData->mpTraceChannelVideo = nullptr;
+	}
 
-		if (settings->mbTraceVideo) {
-			mpPrivateData->mpVideoTracer = ATCreateVideoTracer();
-			mpPrivateData->mpVideoTracer->Init(mpPrivateData->mpTraceChannelVideo, context->mBaseTime, context->mBaseTickScale, settings->mTraceVideoDivisor);
-			mGTIA.AddVideoTap(mpPrivateData->mpVideoTracer->AsVideoTap());
-
-			context->mpCollection->AddGroup(L"Video", kATTraceGroupType_Video)->AddChannel(mpPrivateData->mpTraceChannelVideo->AsTraceChannel());
-		}
-
-		mpPrivateData->mTraceSizeLimit = UINT64_MAX;
-
-		if (settings->mbAutoLimitTraceMemory) {
-#if VD_PTR_SIZE > 4
-		mpPrivateData->mTraceSizeLimit = UINT64_C(4) << 30;		// 4GB
-#else
-		mpPrivateData->mTraceSizeLimit = UINT64_C(500) << 20;	// 500MB
-#endif
-		}
-
-		if (mpUIRenderer)
-			mpUIRenderer->SetTracingSize(0);
-	} else {
-		if (!context)
-			return;
-
-		if (mpUIRenderer)
-			mpUIRenderer->SetTracingSize(-1);
-
-		if (mpPrivateData->mpVideoTracer) {
-			mGTIA.RemoveVideoTap(mpPrivateData->mpVideoTracer->AsVideoTap());
-			mpPrivateData->mpVideoTracer->Shutdown();
-			mpPrivateData->mpVideoTracer = nullptr;
-			mpPrivateData->mpTraceChannelVideo = nullptr;
-		}
-
+	if (mpPrivateData->mpCPUTracer) {
 		mpPrivateData->mpCPUTracer->Shutdown();
 		mpPrivateData->mpCPUTracer = nullptr;
-		context = nullptr;
 	}
 
-	mPIA.SetTraceContext(context);
-	mAntic.SetTraceContext(context);
+	context = nullptr;
 
-	if (context)
-		mpPrivateData->mpPokeyTracer = new ATPokeyTracer(*context);
-	else
-		mpPrivateData->mpPokeyTracer = nullptr;
+	mpPrivateData->SetTracingContext(nullptr);
 
+	mPokey.SetTraceOutput(nullptr);
+	mpPrivateData->mpPokeyTracer = nullptr;
+	mpPrivateData->mpNativeTracer = nullptr;
+
+	// Must be last to destroying the context and collection.
+	mpPrivateData->mpTraceContext = context;
+}
+
+void ATSimulator::StartTracing(const ATTraceSettings& settings) {
+	StopTracing();
+
+	ATTraceContext *context = new ATTraceContext;
+	mpPrivateData->mpTraceContext = context;
+
+	context->mBaseTime = mScheduler.GetTick64();
+	context->mBaseTickScale = mScheduler.GetRate().AsInverseDouble();
+	context->mpCollection = new ATTraceCollection;
+	mpPrivateData->mpCPUTracer = new ATCPUTracer;
+	mpPrivateData->mpCPUTracer->Init(&mCPU, &mScheduler, &mSlowScheduler, mpPrivateData, context, settings.mbTraceCpuInsns, settings.mbTraceBasic);
+
+	mpPrivateData->mpTraceChannelVideo = ATCreateTraceChannelVideo(L"Video", &context->mMemTracker);
+
+	if (settings.mbTraceVideo) {
+		mpPrivateData->mpVideoTracer = ATCreateVideoTracer();
+		mpPrivateData->mpVideoTracer->Init(mpPrivateData->mpTraceChannelVideo, context->mBaseTime, context->mBaseTickScale, settings.mTraceVideoDivisor,
+			settings.mVideoFrameSize);
+		mGTIA.AddVideoTap(mpPrivateData->mpVideoTracer->AsVideoTap());
+
+		context->mpCollection->AddGroup(L"Video", kATTraceGroupType_Video)->AddChannel(mpPrivateData->mpTraceChannelVideo->AsTraceChannel());
+	}
+
+	mpPrivateData->mTraceSizeLimit = UINT64_MAX;
+
+	if (settings.mbAutoLimitTraceMemory) {
+#if VD_PTR_SIZE > 4
+	mpPrivateData->mTraceSizeLimit = UINT64_C(4) << 30;		// 4GB
+#else
+	mpPrivateData->mTraceSizeLimit = UINT64_C(500) << 20;	// 500MB
+#endif
+	}
+
+	if (mpUIRenderer)
+		mpUIRenderer->SetTracingSize(0);
+
+	mpPrivateData->mpPokeyTracer = new ATPokeyTracer(*context);
 	mPokey.SetTraceOutput(mpPrivateData->mpPokeyTracer);
 
-	for(ATDiskEmulator *disk : mpDiskDrives) {
-		if (disk)
-			disk->SetTraceContext(context);
+	mpPrivateData->SetTracingContext(context);
+}
+
+void ATSimulator::StartNativeTracing(const ATNativeTraceSettings& settings) {
+	StopTracing();
+
+	ATTraceContext *context = new ATTraceContext;
+	mpPrivateData->mpTraceContext = context;
+
+	context->mBaseTime = VDGetPreciseTick();
+	context->mBaseTickScale = VDGetPreciseSecondsPerTick();
+	context->mpCollection = new ATTraceCollection;
+
+	if (settings.mbAutoLimitTraceMemory) {
+#if VD_PTR_SIZE > 4
+	mpPrivateData->mTraceSizeLimit = UINT64_C(4) << 30;		// 4GB
+#else
+	mpPrivateData->mTraceSizeLimit = UINT64_C(500) << 20;	// 500MB
+#endif
 	}
 
-	if (mpCassette)
-		mpCassette->SetTraceContext(context);
+	extern vdrefptr<IVDRefCount> ATCreateNativeTracer(ATTraceContext& context, const ATNativeTraceSettings& settings);
 
-	mpSIOManager->SetTraceContext(context);
+	mpPrivateData->mpNativeTracer = ATCreateNativeTracer(*context, settings);
+}
 
-	for(IATDevice *dev : mpDeviceManager->GetDevices(false, false, false))
-		dev->SetTraceContext(context);
 
-	// Must be last in case we're destroying the context and collection.
-	mpPrivateData->mpTraceContext = context;
+void ATSimulator::SetPokeyWriteLogger(IATRegisterWriteLogger *logger) {
+	if (mpPrivateData->mpPokeyWriteLogger == logger)
+		return;
+
+	mpPrivateData->FlushPokeyWriteLog();
+	mpPrivateData->mpPokeyWriteLogger = logger;
+
+	RecreateMemLayerPOKEY();
 }
 
 uint64 ATSimulator::TicksSinceColdReset() const {
@@ -2046,6 +2125,14 @@ uint32 ATSimulator::GetLockedRandomSeed() const {
 
 void ATSimulator::SetLockedRandomSeed(uint32 seed) {
 	mpPrivateData->mLockedRandomSeed = seed;
+}
+
+bool ATSimulator::GetPotNoiseEnabled() const {
+	return mpPrivateData->mPortManager.GetPotNoiseEnabled();
+}
+
+void ATSimulator::SetPotNoiseEnabled(bool enabled) {
+	mpPrivateData->mPortManager.SetPotNoiseEnabled(enabled);
 }
 
 void ATSimulator::ColdReset() {
@@ -2180,7 +2267,8 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 	// reset POT positions now so custom devices can have a crack
 	const bool supportsPort34 = kATHardwareModeTraits[mHardwareMode].mbHasPort34;
 	if (supportsPort34) {
-		mpPrivateData->mPortManager.SetPotOverride(4, false);
+		for(int i=0; i<4; ++i)
+			mpPrivateData->mPortManager.SetPotOverride(i + 4, ATPortManager::kPotUnconnected);
 	} else {
 		// POT 4 is the forced self-test line.
 
@@ -2188,6 +2276,10 @@ void ATSimulator::InternalColdReset(bool computerOnly) {
 		// out of sync with the MMU and won't send an update until a change actually occurs.
 		// It's reset to input mode, so the MMU sees all lines pulled up.
 		mpMMU->SetBankRegister(0xFF);
+
+		// POT 5-7 are grounded
+		for(int i=0; i<3; ++i)
+			mpPrivateData->mPortManager.SetPotOverride(i + 5, ATPortManager::kPotGrounded);
 	}
 
 	if (mHardwareMode == kATHardwareMode_800 || mHardwareMode == kATHardwareMode_5200)
@@ -2352,6 +2444,8 @@ void ATSimulator::Resume() {
 
 	if (mPendingEvent == kATSimEvent_AnonymousInterrupt)
 		mPendingEvent = kATSimEvent_None;
+
+	mpSimEventManager->NotifyEvent(kATSimEvent_SimResume);
 }
 
 void ATSimulator::ResumeSingleCycle() {
@@ -2368,14 +2462,21 @@ void ATSimulator::ResumeSingleCycle() {
 
 	if (mPendingEvent == kATSimEvent_AnonymousInterrupt)
 		mPendingEvent = kATSimEvent_None;
+
+	mpSimEventManager->NotifyEvent(kATSimEvent_SimResume);
 }
 
 void ATSimulator::Pause() {
+	if (mbPaused)
+		return;
+
 	mbRunning = false;
 	mbPaused = true;
 
 	if (mpUIRenderer)
 		mpUIRenderer->SetPaused(true);
+
+	mpSimEventManager->NotifyEvent(kATSimEvent_SimPause);
 }
 
 void ATSimulator::Suspend() {
@@ -2618,6 +2719,8 @@ void ATSimulator::UnloadAll(uint32 storageTypeMask) {
 		for(auto *disk : mpDiskDrives)
 			disk->SetEnabled(false);
 	}
+
+	UnloadProgram();
 }
 
 bool ATSimulator::Load(const wchar_t *path, ATMediaWriteMode writeMode, ATImageLoadContext *loadCtx) {
@@ -2748,6 +2851,8 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 			case kATImageType_Tape:
 			case kATImageType_Program:
 			case kATImageType_BasicProgram:
+			case kATImageType_SAP:
+			case kATImageType_VGM:
 				if (mHardwareMode == kATHardwareMode_5200 || ctx.mbStopAfterImageLoaded) {
 					ctx.mbModeIncompatible = true;
 					ctx.mbModeComputerRequired = true;
@@ -2774,7 +2879,6 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 			case kATImageType_SaveState:
 			case kATImageType_Zip:
 			case kATImageType_GZip:
-			case kATImageType_SAP:
 				break;
 		}
 	}
@@ -2788,8 +2892,13 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 	ATMediaWriteMode writeMode = ctx.mWriteMode;
 
 	int loadIndex = 0;
-	if (loadCtx && loadCtx->mLoadIndex >= 0)
-		loadIndex = loadCtx->mLoadIndex;
+	bool append = false;
+	if (loadCtx) {
+		if (loadCtx->mLoadIndex >= 0)
+			loadIndex = loadCtx->mLoadIndex;
+		else if (loadCtx->mLoadIndex == ATImageLoadContext::kLoadIndexNextFree)
+			append = true;
+	}
 
 	const ATImageType loadType = image->GetImageType();
 
@@ -2806,22 +2915,55 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 			}
 		}
 
-		LoadProgram(origPath, programImage, false);
+		if (append && (mpHLEBasicLoader || mpHLEProgramLoader))
+			throw VDException(L"Cannot load more than one program at a time.");
+
+		LoadProgram(origPath, programImage, kATImageType_Program);
 		return true;
 	} else if (loadType == kATImageType_BasicProgram) {
-		LoadProgram(origPath, vdpoly_cast<IATBlobImage *>(image), true);
+		if (append && (mpHLEBasicLoader || mpHLEProgramLoader))
+			throw VDException(L"Cannot load more than one program at a time.");
+
+		LoadProgram(origPath, vdpoly_cast<IATBlobImage *>(image), kATImageType_BasicProgram);
 		return true;
 	} else if (loadType == kATImageType_Cartridge) {
+		if (append) {
+			for(;;) {
+				if (loadIndex >= std::ssize(mpCartridge))
+					throw VDException(L"Cannot load another cartridge: all cartridge slots are full.");
+
+				if (!mpCartridge[loadIndex])
+					break;
+
+				++loadIndex;
+			}
+		}
+
 		if (loadIndex >= 2)
 			throw MyError("Invalid cartridge unit %u.\n", loadIndex);
 
 		LoadCartridge(loadIndex, origPath, vdpoly_cast<IATCartridgeImage *>(image));
 		return true;
 	} else if (loadType == kATImageType_Tape) {
+		if (append && mpCassette->IsLoaded())
+			throw VDException(L"Cannot load more than one tape at a time.");
+
 		mpCassette->Load(vdpoly_cast<IATCassetteImage *>(image), origPath ? origPath : imagePath, origPath != nullptr);
 		mpCassette->Play();
 		return true;
 	} else if (loadType == kATImageType_Disk) {
+		if (append) {
+			for(;;) {
+				if (loadIndex >= std::ssize(mpPrivateData->mpDiskInterfaces))
+					throw VDException(L"Cannot load another disk: all disk drives are already loaded.");
+
+				if (!mpPrivateData->mpDiskInterfaces[loadIndex]->IsDiskLoaded())
+					break;
+
+				++loadIndex;
+			}
+		}
+
 		if (loadIndex >= 15)
 			throw MyError("Invalid disk drive D%d:.\n", loadIndex + 1);
 
@@ -2869,14 +3011,19 @@ bool ATSimulator::Load(ATMediaLoadContext& ctx) {
 		vdrefptr<IATBlobImage> exeBlobImage;
 		ATCreateBlobImage(kATImageType_Program, exe.data(), (uint32)exe.size(), ~exeBlobImage);
 
-		LoadProgram(origPath, exeBlobImage, false);
+		LoadProgram(origPath, exeBlobImage, kATImageType_Program);
+		return true;
+	} else if (loadType == kATImageType_VGM) {
+		IATBlobImage *blobImage = vdpoly_cast<IATBlobImage *>(image);
+
+		LoadProgram(origPath, blobImage, kATImageType_VGM);
 		return true;
 	} else {
 		throw MyError("Unsupported image type: %u.", loadType);
 	}
 }
 
-void ATSimulator::LoadProgram(const wchar_t *path, IATBlobImage *image, bool basic) {
+void ATSimulator::UnloadProgram() {
 	if (mpHLEProgramLoader) {
 		mpHLEProgramLoader->Shutdown();
 		delete mpHLEProgramLoader;
@@ -2889,30 +3036,59 @@ void ATSimulator::LoadProgram(const wchar_t *path, IATBlobImage *image, bool bas
 		mpHLEBasicLoader = NULL;
 	}
 
-	if (basic) {
-		vdautoptr<ATHLEBasicLoader> loader(new ATHLEBasicLoader);
-
-		loader->Init(&mCPU, mpSimEventManager, this);
-		loader->LoadProgram(image);
-
-		mpHLEBasicLoader = loader.release();
-
-		SetBASICEnabled(true);
-
-		if (!SupportsInternalBasic())
-			LoadCartridgeBASIC();
-	} else {
-		vdautoptr<ATHLEProgramLoader> loader(new ATHLEProgramLoader);
-
-		loader->Init(&mCPU, mpSimEventManager, this, mpSIOManager);
-		loader->LoadProgram(path, image, mProgramLoadMode, mbRandomizeLaunchDelay);
-
-		mpHLEProgramLoader = loader.release();
-		mpHLEProgramLoader->SetRandomizeMemoryOnLoad(mbRandomFillEXEEnabled);
+	if (mpPrivateData->mpVGMPlayerDevice) {
+		mpDeviceManager->RemoveDevice(mpPrivateData->mpVGMPlayerDevice);
+		mpPrivateData->mpVGMPlayerDevice = nullptr;
 	}
+}
 
-	// cold restart the system and wait for DSKINV hook to fire
-	ColdReset();
+void ATSimulator::LoadProgram(const wchar_t *path, IATBlobImage *image, ATImageType imageType) {
+	UnloadProgram();
+
+	try {
+		if (imageType == kATImageType_BasicProgram) {
+			vdautoptr<ATHLEBasicLoader> loader(new ATHLEBasicLoader);
+
+			loader->Init(&mCPU, mpSimEventManager, this);
+			loader->LoadProgram(image);
+
+			mpHLEBasicLoader = loader.release();
+
+			SetBASICEnabled(true);
+
+			if (!SupportsInternalBasic())
+				LoadCartridgeBASIC();
+		} else {
+			vdrefptr<IATBlobImage> tempImage;
+
+			if (imageType == kATImageType_VGM) {
+				vdrefptr<ATDeviceVGMPlayer> vgmDev(new ATDeviceVGMPlayer);
+				VDMemoryStream ms(image->GetBuffer(), image->GetSize());
+
+				vgmDev->Load(mPokey, mScheduler.GetRate().asDouble(), ms);
+
+				SetDualPokeysEnabled(vgmDev->IsStereo());
+				SetVideoStandard(vgmDev->IsPAL() ? kATVideoStandard_PAL : kATVideoStandard_NTSC);
+
+				mpDeviceManager->AddDevice(vgmDev);
+				mpPrivateData->mpVGMPlayerDevice = std::move(vgmDev);
+
+				ATCreateBlobImage(kATImageType_Program, g_ATVgmPlayer, sizeof g_ATVgmPlayer, ~tempImage);
+				image = tempImage;
+			}
+
+			vdautoptr<ATHLEProgramLoader> loader(new ATHLEProgramLoader);
+
+			loader->Init(&mCPU, mpSimEventManager, this, mpSIOManager);
+			loader->LoadProgram(path, image, mProgramLoadMode, mbRandomizeLaunchDelay);
+
+			mpHLEProgramLoader = loader.release();
+			mpHLEProgramLoader->SetRandomizeMemoryOnLoad(mbRandomFillEXEEnabled);
+		}
+	} catch(...) {
+		UnloadProgram();
+		throw;
+	}
 }
 
 bool ATSimulator::IsCartridgeAttached(uint32 unit) const {
@@ -3076,8 +3252,8 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 
 	if (!mbPowered) {
 		int scansLeft = (int)mAntic.GetScanlineCount() - (int)mAntic.GetBeamY();
-		if (scansLeft > 8)
-			scansLeft = 8;
+		if (scansLeft > g_ATSimScanlinesPerAdvance)
+			scansLeft = g_ATSimScanlinesPerAdvance;
 		else if (scansLeft < 1)
 			scansLeft = 1;
 
@@ -3088,7 +3264,7 @@ ATSimulator::AdvanceResult ATSimulator::Advance(bool dropFrame) {
 			int x = mAntic.GetBeamX();
 
 			if (!x && mAntic.GetBeamY() == 248) {
-				if (!mGTIA.BeginFrame(248, false, dropFrame))
+				if (!mGTIA.BeginFrame(mAntic.GetRawFrameCounter(), 248, false, dropFrame))
 					return kAdvanceResult_WaitingForFrame;
 			}
 
@@ -3116,8 +3292,8 @@ restart_cpu:
 	if (!cpuEvent) {
 		const int ypos = (int)mAntic.GetBeamY();
 		int scansLeft = (ypos < 248 ? 248 : (int)mAntic.GetScanlineCount()) - (int)mAntic.GetBeamY();
-		if (scansLeft > 8)
-			scansLeft = 8;
+		if (scansLeft > g_ATSimScanlinesPerAdvance)
+			scansLeft = g_ATSimScanlinesPerAdvance;
 		else if (scansLeft <= 0)
 			scansLeft = 1;
 
@@ -3128,7 +3304,7 @@ restart_cpu:
 			int x = mAntic.GetBeamX();
 
 			if (!x && mAntic.GetBeamY() == 248) {
-				if (!mGTIA.BeginFrame(248, false, dropFrame))
+				if (!mGTIA.BeginFrame(mAntic.GetRawFrameCounter(), 248, false, dropFrame))
 					return kAdvanceResult_WaitingForFrame;
 			}
 
@@ -3193,7 +3369,8 @@ handle_event:
 	if (!cpuEvent && ev == kATSimEvent_CPURestart)
 		goto restart_cpu;
 
-	mbRunning = false;
+	if (ev != kATSimEvent_AnonymousPause)
+		mbRunning = false;
 
 	if (cpuEvent)
 		NotifyEvent(cpuEvent);
@@ -3717,7 +3894,7 @@ void ATSimulator::LoadStateMachineDesc(ATSaveStateReader& reader) {
 	bool stereo = false;
 	bool mapram = false;
 	uint16 vbxebase = 0;
-	bool vbxeshared = false;
+	[[maybe_unused]] bool vbxeshared = false;
 	uint16 sbbase = 0;
 	bool kernelRefPresent = false;
 	bool basicRefPresent = false;
@@ -3934,6 +4111,7 @@ public:
 	vdrefptr<IATObjectState> mpCart;
 	vdrefptr<IATObjectState> mpCart2;
 	vdvector<vdrefptr<IATObjectState>> mpDiskDrives;
+	vdrefptr<IATObjectState> mpSIOManager;
 	vdrefptr<IATObjectState> mpU1mb;
 	vdrefptr<IATObjectState> mpDeviceStates;
 
@@ -3977,6 +4155,7 @@ public:
 		rw.Transfer("cart", &mpCart);
 		rw.Transfer("cart2", &mpCart2);
 		rw.Transfer("disk_drives", &mpDiskDrives);
+		rw.Transfer("sio_manager", &mpSIOManager);
 		rw.Transfer("u1mb", &mpU1mb);
 		rw.Transfer("device_states", &mpDeviceStates);
 
@@ -4280,6 +4459,8 @@ void ATSimulator::CreateSnapshot(IATSerializable **ppSnapshot, IATSerializable *
 		}
 	}
 
+	root->mpSIOManager = mpSIOManager->SaveState();
+	
 	ATSnapshotContext ctx;
 	if (mpUltimate1MB)
 		root->mpU1mb = mpUltimate1MB->SaveState(ctx);
@@ -4502,6 +4683,8 @@ bool ATSimulator::ApplySnapshot(const IATSerializable& snapshot, ATStateLoadCont
 			if (mpUltimate1MB)
 				mpUltimate1MB->LoadState(savestate.mpU1mb, ctx);
 
+			mpSIOManager->LoadState(savestate.mpSIOManager);
+
 			mpDeviceManager->LoadState(savestate.mpDeviceStates);
 
 			mpPrivateData->mRunTimeBaseSeconds = std::max<double>(0.0, savestate.mSimRunTimeSeconds);
@@ -4559,7 +4742,7 @@ void ATSimulator::UpdateKeyboardPresentLine() {
 
 void ATSimulator::UpdateForcedSelfTestLine() {
 	if (kATHardwareModeTraits[mHardwareMode].mbRunsXLOS)
-		mpPrivateData->mPortManager.SetPotOverride(4, mbForcedSelfTest);
+		mpPrivateData->mPortManager.SetPotOverride(4, mbForcedSelfTest ? 1 : ATPortManager::kPotGrounded);
 }
 
 void ATSimulator::UpdateCartridgeSwitch() {
@@ -5012,22 +5195,7 @@ void ATSimulator::InitMemoryMap() {
 
 	mpMemMan->SetLayerName(mpMemLayerGTIA, "GTIA");
 
-	handlerTable.mpThis = &mPokey;
-	handlerTable.mpDebugReadHandler = BindReadHandlerConst<ATPokeyEmulator, &ATPokeyEmulator::DebugReadByte>;
-	handlerTable.mpReadHandler = BindReadHandler<ATPokeyEmulator, &ATPokeyEmulator::ReadByte>;
-	handlerTable.mpWriteHandler = BindWriteHandler<ATPokeyEmulator, &ATPokeyEmulator::WriteByte>;
-
-	if (mHardwareMode == kATHardwareMode_5200)
-		mpMemLayerPOKEY = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handlerTable, 0xE8, 0x04);
-	else
-		mpMemLayerPOKEY = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handlerTable, 0xD2, 0x01);
-
-	mpMemMan->SetLayerIoBus(mpMemLayerPOKEY, true);
-	mpMemMan->SetLayerName(mpMemLayerPOKEY, "POKEY");
-
-	mpMemMan->EnableLayer(mpMemLayerANTIC, true);
-	mpMemMan->EnableLayer(mpMemLayerGTIA, true);
-	mpMemMan->EnableLayer(mpMemLayerPOKEY, true);
+	RecreateMemLayerPOKEY();
 
 	if (mHardwareMode != kATHardwareMode_5200) {
 		if (mbMapRAM) {
@@ -5177,6 +5345,37 @@ void ATSimulator::InitMemoryMap() {
 		else
 			mPIA.SetPortBFloatingInputs(nullptr);
 	}
+}
+
+void ATSimulator::RecreateMemLayerPOKEY() {
+	mpMemMan->DeleteLayerPtr(&mpMemLayerPOKEY);
+
+	ATMemoryHandlerTable handlerTable {};
+	handlerTable.mpThis = &mPokey;
+	handlerTable.mpDebugReadHandler = BindReadHandlerConst<ATPokeyEmulator, &ATPokeyEmulator::DebugReadByte>;
+	handlerTable.mpReadHandler = BindReadHandler<ATPokeyEmulator, &ATPokeyEmulator::ReadByte>;
+
+	if (mpPrivateData->mpPokeyWriteLogger) {
+		handlerTable.mpWriteHandler = [](void *context, uint32 addr, uint8 data) -> bool {
+			ATSimulator *self = (ATSimulator *)((char *)context - offsetof(ATSimulator, mPokey));
+
+			return self->mpPrivateData->WritePokeyWithLogging(addr, data);
+		};
+	} else {
+		handlerTable.mpWriteHandler = BindWriteHandler<ATPokeyEmulator, &ATPokeyEmulator::WriteByte>;
+	}
+
+	if (mHardwareMode == kATHardwareMode_5200)
+		mpMemLayerPOKEY = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handlerTable, 0xE8, 0x04);
+	else
+		mpMemLayerPOKEY = mpMemMan->CreateLayer(kATMemoryPri_Hardware, handlerTable, 0xD2, 0x01);
+
+	mpMemMan->SetLayerIoBus(mpMemLayerPOKEY, true);
+	mpMemMan->SetLayerName(mpMemLayerPOKEY, "POKEY");
+
+	mpMemMan->EnableLayer(mpMemLayerANTIC, true);
+	mpMemMan->EnableLayer(mpMemLayerGTIA, true);
+	mpMemMan->EnableLayer(mpMemLayerPOKEY, true);
 }
 
 void ATSimulator::ShutdownMemoryMap() {
@@ -5355,7 +5554,7 @@ void ATSimulator::AnticEndFrame() {
 		if (traceSize >= mpPrivateData->mTraceSizeLimit) {
 			mpSimEventManager->NotifyEvent(kATSimEvent_TracingLimitReached);
 
-			SetTracingEnabled(nullptr);
+			StopTracing();
 		}
 	}
 
@@ -5447,6 +5646,7 @@ void ATSimulator::AnticEndFrame() {
 	mScheduler.UpdateTick64();
 	mSlowScheduler.UpdateTick64();
 
+	mpPrivateData->FlushPokeyWriteLog();
 	mpPrivateData->mDeferredEventManager.FlushPendingEvents();
 }
 

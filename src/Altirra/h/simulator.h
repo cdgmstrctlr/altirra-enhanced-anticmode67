@@ -18,6 +18,7 @@
 #ifndef f_AT_SIMULATOR_H
 #define f_AT_SIMULATOR_H
 
+#include <vd2/system/vdstl.h>
 #include <at/atcore/scheduler.h>
 #include <at/ataudio/pokey.h>
 #include "cpu.h"
@@ -31,6 +32,7 @@
 
 enum ATAddressSpace : uint32;
 enum ATCartridgePriority : uint8;
+enum ATImageType : uint8;
 
 struct ATCartLoadContext;
 class ATMemoryManager;
@@ -60,6 +62,7 @@ class IVDRandomAccessStream;
 class IATImage;
 class ATTraceCollection;
 struct ATTraceSettings;
+struct ATNativeTraceSettings;
 class IATAutoSaveManager;
 class IATPrinterOutputManager;
 
@@ -93,6 +96,17 @@ struct ATSnapshotStatus;
 
 enum ATCPUMode : uint8;
 
+struct ATMemoryWriteLogEntry {
+	uint32 mCycle;
+	uint16 mAddress;
+	uint8 mValue;
+};
+
+class IATRegisterWriteLogger {
+public:
+	virtual void LogRegisterWrites(vdspan<const ATMemoryWriteLogEntry> entries) = 0;
+};
+
 class ATSimulator final : ATCPUEmulatorCallbacks,
 					ATAnticEmulatorConnections,
 					IATPokeyEmulatorConnections,
@@ -113,10 +127,7 @@ public:
 	// changed.
 	bool LoadROMs();
 
-	void PostInterruptingEvent(ATSimulatorEvent ev) {
-		mPendingEvent = ev;
-	}
-
+	void PostInterruptingEvent(ATSimulatorEvent ev);
 	void NotifyEvent(ATSimulatorEvent ev);
 
 	bool IsPowered() const {
@@ -349,7 +360,11 @@ public:
 
 	ATTraceCollection *GetTraceCollection() const;
 	bool GetTracingEnabled() const;
-	void SetTracingEnabled(const ATTraceSettings *settings);
+	void StopTracing();
+	void StartTracing(const ATTraceSettings& settings);
+	void StartNativeTracing(const ATNativeTraceSettings& settings);
+
+	void SetPokeyWriteLogger(IATRegisterWriteLogger *logger);
 
 	uint64 TicksSinceColdReset() const;
 	double RealSecondsSinceColdReset() const;
@@ -360,6 +375,9 @@ public:
 	void SetRandomSeed(uint32 seed);
 	uint32 GetLockedRandomSeed() const;
 	void SetLockedRandomSeed(uint32 seed);
+
+	bool GetPotNoiseEnabled() const;
+	void SetPotNoiseEnabled(bool enabled);
 
 	void ColdReset();
 	void ColdResetComputerOnly();
@@ -455,7 +473,8 @@ private:
 	void InternalColdReset(bool computerOnly);
 	void InternalWarmReset(bool enableHeldButtons);
 
-	void LoadProgram(const wchar_t *path, IATBlobImage *image, bool basic);
+	void UnloadProgram();
+	void LoadProgram(const wchar_t *path, IATBlobImage *image, ATImageType imageType);
 
 	void LoadStateMachineDesc(ATSaveStateReader& reader);
 	void LoadStateRefs(ATSaveStateReader& reader, ATStateLoadContext& ctx);
@@ -467,6 +486,7 @@ private:
 	bool UpdateKernel(bool trackChanges, bool forceReload = false);
 	bool ReloadU1MBFirmware();
 	void InitMemoryMap();
+	void RecreateMemLayerPOKEY();
 	void ShutdownMemoryMap();
 	void UpdateKernelROMSegments();
 	void UpdateKernelROMPtrs();
@@ -596,9 +616,6 @@ private:
 	ATPokeyEmulator	mPokey;
 	ATPokeyEmulator	mPokey2;
 	IATAudioOutput	*mpAudioOutput;
-	ATAudioSamplePool *mpAudioSamplePool = nullptr;
-	ATAudioSamplePlayer *mpAudioSamplePlayer = nullptr;
-	ATAudioSamplePlayer *mpAudioEdgeSamplePlayer = nullptr;
 	ATPokeyTables	*mpPokeyTables;
 	ATScheduler		mScheduler;
 	ATScheduler		mSlowScheduler;

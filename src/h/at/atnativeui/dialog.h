@@ -23,6 +23,7 @@
 #pragma once
 #endif
 
+#include <list>
 #include <vd2/system/function.h>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdstl.h>
@@ -30,7 +31,6 @@
 #include <vd2/system/win32/miniwindows.h>
 #include <at/atnativeui/nativewindowproxy.h>
 #include <at/atnativeui/uiproxies.h>
-#include <list>
 
 class VDException;
 enum ATUICursorImage : uint32;
@@ -108,6 +108,7 @@ public:
 	void SetRefUnits(int refX, int refY);
 	void Relayout(const int *newRefX = nullptr, const int *newRefY = nullptr);
 	void Relayout(int width, int height, const int *newRefX = nullptr, const int *newRefY = nullptr);
+	void RelayoutControl(VDZHWND hwndControl);
 	void Add(uint32 id, uint32 alignment);
 	void Add(VDZHWND hwndControl, uint32 alignment);
 	void Add(VDZHWND hwnd, sint32 x, sint32 y, sint32 w, sint32 h, uint32 alignment);
@@ -158,6 +159,31 @@ public:
 private:
 	VDZHMENU mhmenu;
 	VDZUINT mPos;
+};
+
+class ATUIPopupMenuBuilder {
+	ATUIPopupMenuBuilder(const ATUIPopupMenuBuilder&) = delete;
+	ATUIPopupMenuBuilder& operator=(const ATUIPopupMenuBuilder&) = delete;
+public:
+	ATUIPopupMenuBuilder();
+	~ATUIPopupMenuBuilder();
+
+	uint32 AddItem(const wchar_t *label);
+	void AddSpacer();
+	void AddSeparator();
+
+	void StartNewColumn();
+
+	void BeginSubMenu(const wchar_t *label);
+	void EndSubMenu();
+
+	VDZHMENU GetPopupMenu() const;
+	int GetIndexFromItemId(uint32 id) const;
+
+private:
+	vdfastvector<VDZHMENU> mMenuStack;
+	uint32 mLastId = 0;
+	uint32 mPendingItemFlags = 0;
 };
 
 class VDDialogFrameW32 : public ATUINativeWindowProxy {
@@ -219,8 +245,28 @@ public:
 
 	void ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
 	uint32 ActivateCommandPopupMenuReturnId(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
+
+	class MenuSource {
+	public:
+		MenuSource(uint32 resId) : mResId(resId), mbIsResId(true) {}
+		MenuSource(VDZHMENU hmenu) : mhMenu(hmenu), mbIsResId(false) {}
+
+		bool IsResId() const { return mbIsResId; }
+		uint32 GetResId() const { return mResId; }
+		VDZHMENU GetHMenu() const { return mhMenu; }
+
+	private:
+		union {
+			uint32 mResId;
+			VDZHMENU mhMenu;
+		};
+
+		bool mbIsResId;
+	};
+
+	uint32 ActivateCommandPopupMenuReturnId(const ATUINativeWindowProxy& anchorControl, const MenuSource& menuHandleOrResId, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
 private:
-	uint32 ActivateCommandPopupMenuInternal(bool returnId, int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
+	uint32 ActivateCommandPopupMenuInternal(bool returnId, const vdrect32& r, const MenuSource& menuHandleOrResId, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer);
 public:
 
 	bool PostCall(const vdfunction<void()>& call);
@@ -233,6 +279,7 @@ protected:
 
 	void AddProxy(VDUIProxyControl *proxy, uint32 id);
 	void AddProxy(VDUIProxyControl *proxy, VDZHWND hwnd);
+	bool AddControlFromPlaceholder(VDDialogFrameW32& control, uint32 id);
 
 	void SetCurrentSizeAsMinSize();
 	void SetCurrentSizeAsMaxSize(bool width, bool height);
@@ -241,6 +288,9 @@ protected:
 
 	VDZHWND GetFocusedWindow() const;
 	void SetFocusToControl(uint32 id);
+
+	void SetCurrentCursor(const ATUICursorImage& image);
+
 	void EnableControl(uint32 id, bool enabled);
 	void ShowControl(uint32 id, bool visible);
 	void ApplyFontToControl(uint32 id);
@@ -328,8 +378,11 @@ protected:
 	virtual void OnMouseMove(int x, int y);
 	virtual void OnMouseDownL(int x, int y);
 	virtual void OnMouseUpL(int x, int y);
+	virtual bool OnMouseDownR(int x, int y);
+	virtual bool OnMouseUpR(int x, int y);
 	virtual void OnMouseWheel(int x, int y, sint32 delta);
 	virtual void OnMouseLeave();
+	virtual bool OnSetCursor(int x, int y, ATUICursorImage& image);
 	virtual bool OnSetCursor(ATUICursorImage& image);
 	virtual void OnCaptureLost();
 	virtual void OnSetFocus();

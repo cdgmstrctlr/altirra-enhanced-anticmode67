@@ -26,6 +26,7 @@
 #ifndef f_VD2_SYSTEM_VDSTL_HASH_H
 #define f_VD2_SYSTEM_VDSTL_HASH_H
 
+#include <utility>
 #include <vd2/system/vdtypes.h>
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -88,6 +89,26 @@ template<> struct vdhash<double> {
 			return (size_t)((i >> 32) ^ i);
 		else
 			return (size_t)i;
+	}
+};
+
+template<typename T> requires std::is_enum_v<T>
+struct vdhash<T> : public vdhash<std::underlying_type_t<T>> {
+	size_t operator()(T v) const {
+		return vdhash<std::underlying_type_t<T>>::operator()(std::to_underlying(v));
+	}
+};
+
+template<typename K, typename V>
+struct vdhash<std::pair<K,V>> {
+	vdhash<K> hk;
+	vdhash<V> hv;
+
+	size_t operator()(const std::pair<K,V>& v) const {
+		static constexpr int rotateBits = (sizeof(size_t) * CHAR_BIT) / 2;
+		size_t h = hk(v.first);
+
+		return (h << rotateBits) + (h >> rotateBits) + hv(v.second);
 	}
 };
 

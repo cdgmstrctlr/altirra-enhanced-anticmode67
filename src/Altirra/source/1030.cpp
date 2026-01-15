@@ -50,7 +50,13 @@ namespace {
 
 class ATRS232Channel1030 final : public IATSchedulerCallback {
 public:
-	ATRS232Channel1030(bool is835);
+	enum class DeviceType : uint8 {
+		Type835,
+		Type1030,
+		TypeXM301
+	};
+
+	ATRS232Channel1030(DeviceType type);
 
 	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATDeviceCIOManager *ciomgr, IATDeviceSIOManager *siomgr, IATDeviceRawSIO *siodev, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher);
 	void Shutdown();
@@ -95,7 +101,7 @@ protected:
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
 	IATDeviceRawSIO *mpSIODev = nullptr;
 
-	const bool mbIs835;
+	const DeviceType mDeviceType;
 	bool	mbAddLFAfterEOL = false;
 	bool	mbTranslationEnabled = true;
 	bool	mbTranslationHeavy = false;
@@ -194,8 +200,8 @@ protected:
 	uint8	mOutputBuffer[32];
 };
 
-ATRS232Channel1030::ATRS232Channel1030(bool is835)
-	: mbIs835(is835)
+ATRS232Channel1030::ATRS232Channel1030(DeviceType type)
+	: mDeviceType(type)
 {
 	mpDevice = new ATModemEmulator;
 	mpDevice->Set1030Mode();
@@ -627,6 +633,11 @@ bool ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
 	mControllerPhase = ControllerPhase::None;
 
 	switch(c) {
+		case 'G':	// Set Auto-Answer (XM301)
+			if (mDeviceType == DeviceType::TypeXM301)
+				mpDevice->SetAutoAnswer(true);
+			break;
+
 		case 'H':	// Send Break Signal
 			// currently ignored
 			break;
@@ -644,7 +655,7 @@ bool ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
 			mpDevice->OffHook();
 			mbPulseDialing = true;
 
-			if (mbIs835)
+			if (mDeviceType != DeviceType::Type1030)
 				mpDevice->SetPhoneToAudioEnabled(true);
 			break;
 
@@ -659,20 +670,20 @@ bool ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
 			mbToneDialing = false;
 			mbPulseDialing = false;
 
-			if (mbIs835)
+			if (mDeviceType != DeviceType::Type1030)
 				mpDevice->SetPhoneToAudioEnabled(false);
 			break;
 
-		case 'O':	// Tone dial (1030)
-			if (!mbIs835) {
+		case 'O':	// Tone dial (1030/XM301)
+			if (mDeviceType != DeviceType::Type835) {
 				mpDevice->OffHook();
 				mpDevice->SetAudioToPhoneEnabled(true);
 				mbToneDialing = true;
 			}
 			break;
 
-		case 'P':	// Start 30 second timeout (1030)
-			if (!mbIs835) {
+		case 'P':	// Start 30 second timeout (1030/XM301)
+			if (mDeviceType != DeviceType::Type835) {
 				mbToneDialing = false;
 				mpDevice->OffHook();
 				mpDevice->SetAudioToPhoneEnabled(false);
@@ -691,18 +702,23 @@ bool ATRS232Channel1030::ExecuteDeviceCommand(uint8 c) {
 			mpSlowScheduler->UnsetEvent(mpSlowOutputEvent);
 			mpSlowScheduler->UnsetEvent(mpSlowCommandEvent);
 
-			if (mbIs835)
+			if (mDeviceType != DeviceType::Type1030)
 				mpDevice->SetPhoneToAudioEnabled(false);
 			break;
 
-		case 'R':	// Enable sound (835)
-			if (mbIs835)
+		case 'R':	// Enable sound (835/XM301)
+			if (mDeviceType != DeviceType::Type1030)
 				mpDevice->SetPhoneToAudioEnabled(true);
 			break;
 
-		case 'S':	// Disable sound (835)
-			if (mbIs835)
+		case 'S':	// Disable sound (835/XM301)
+			if (mDeviceType != DeviceType::Type1030)
 				mpDevice->SetPhoneToAudioEnabled(false);
+			break;
+
+		case 'T':	// Disable Auto-Answer (XM301)
+			if (mDeviceType == DeviceType::TypeXM301)
+				mpDevice->SetAutoAnswer(false);
 			break;
 
 		case 'W':	// Set Analog Loopback Test
@@ -756,7 +772,7 @@ void ATRS232Channel1030::OnControlStateChanged(const ATDeviceSerialStatus& statu
 		}
 	} else {
 		if (!mbSuspended) {
-			if (mbIs835 && (mControlState & kStatusFlag_CarrierDetect))
+			if (mDeviceType != DeviceType::Type1030 && (mControlState & kStatusFlag_CarrierDetect))
 				mpDevice->SetPhoneToAudioEnabled(false);
 
 			if (mControllerPhase == ControllerPhase::WaitForCarrier && (mControlState & kStatusFlag_CarrierDetect)) {
@@ -812,7 +828,7 @@ void ATRS232Channel1030::OnScheduledEvent(uint32 id) {
 				mControllerPhase = ControllerPhase::None;
 				mpDevice->OnHook();
 
-				if (mbIs835)
+				if (mDeviceType != DeviceType::Type1030)
 					mpDevice->SetPhoneToAudioEnabled(false);
 				break;
 		}
@@ -913,7 +929,9 @@ class ATDevice1030Modem final
 	ATDevice1030Modem(const ATDevice1030Modem&) = delete;
 	ATDevice1030Modem& operator=(const ATDevice1030Modem&) = delete;
 public:
-	ATDevice1030Modem(bool is835);
+	using DeviceType = ATRS232Channel1030::DeviceType;
+
+	ATDevice1030Modem(DeviceType type);
 	~ATDevice1030Modem();
 
 	void *AsInterface(uint32 id) override;
@@ -945,7 +963,7 @@ public:	// IATDeviceAudioOutput
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
-	void GetCIODevices(char *buf, size_t len) const override;
+	void GetCIODevices(IATDeviceCIODeviceList& deviceList) const override;
 	sint32 OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) override;
 	sint32 OnCIOClose(int channel, uint8 deviceNo) override;
 	sint32 OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) override;
@@ -971,6 +989,7 @@ protected:
 	IATAudioMixer *mpAudioMixer = nullptr;
 	IATDeviceCIOManager *mpCIOMgr = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	ATFirmwareManager *mpFwMgr = nullptr;
 
 	ATRS232Channel1030 *mpChannel = nullptr;
@@ -979,7 +998,7 @@ protected:
 
 	uint32 mDiskCounter = 0;
 	bool mbFirmwareUsable = false;
-	const bool mbIs835;
+	const DeviceType mDeviceType;
 
 	// AUTORUN.SYS and BOOT1030.COM style loaders hardcode a handler size of 0xB30, which
 	// we must use. This comes from within 0x1100-1C2F in the ModemLink firmware. We also
@@ -988,27 +1007,34 @@ protected:
 };
 
 void ATCreateDevice1030Modem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(false));
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(ATDevice1030Modem::DeviceType::Type1030));
 
 	*dev = p.release();
 }
 
 void ATCreateDevice835Modem(const ATPropertySet& pset, IATDevice **dev) {
-	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(true));
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(ATDevice1030Modem::DeviceType::Type835));
+
+	*dev = p.release();
+}
+
+void ATCreateDeviceXM301Modem(const ATPropertySet& pset, IATDevice **dev) {
+	vdrefptr<ATDevice1030Modem> p(new ATDevice1030Modem(ATDevice1030Modem::DeviceType::TypeXM301));
 
 	*dev = p.release();
 }
 
 extern const ATDeviceDefinition g_ATDeviceDef1030Modem = { "1030", "1030", L"1030 Modem", ATCreateDevice1030Modem };
 extern const ATDeviceDefinition g_ATDeviceDef835Modem = { "835", "835", L"835 Modem", ATCreateDevice835Modem };
+extern const ATDeviceDefinition g_ATDeviceDefXM301Modem = { "xm301", "835", L"XM301 Modem", ATCreateDeviceXM301Modem };
 
-ATDevice1030Modem::ATDevice1030Modem(bool is835)
-	: mEmulationLevel(is835 ? kAT850SIOEmulationLevel_Full : kAT850SIOEmulationLevel_None)
+ATDevice1030Modem::ATDevice1030Modem(DeviceType type)
+	: mEmulationLevel(type != DeviceType::Type1030 ? kAT850SIOEmulationLevel_Full : kAT850SIOEmulationLevel_None)
 	, mDiskCounter(0)
-	, mbIs835(is835)
+	, mDeviceType(type)
 {
 	// We have to init this early so it can accept settings.
-	mpChannel = new ATRS232Channel1030(is835);
+	mpChannel = new ATRS232Channel1030(type);
 }
 
 ATDevice1030Modem::~ATDevice1030Modem() {
@@ -1030,7 +1056,20 @@ void *ATDevice1030Modem::AsInterface(uint32 id) {
 }
 
 void ATDevice1030Modem::GetDeviceInfo(ATDeviceInfo& info) {
-	info.mpDef = mbIs835 ? &g_ATDeviceDef835Modem : &g_ATDeviceDef1030Modem;
+	switch(mDeviceType) {
+		case DeviceType::Type835:
+			info.mpDef = &g_ATDeviceDef835Modem;
+			break;
+
+		case DeviceType::Type1030:
+		default:
+			info.mpDef = &g_ATDeviceDef1030Modem;
+			break;
+
+		case DeviceType::TypeXM301:
+			info.mpDef = &g_ATDeviceDefXM301Modem;
+			break;
+	}
 }
 
 void ATDevice1030Modem::GetSettings(ATPropertySet& settings) {
@@ -1045,7 +1084,7 @@ bool ATDevice1030Modem::SetSettings(const ATPropertySet& settings) {
 	if (mpChannel)
 		mpChannel->SetSettings(settings);
 
-	if (!mbIs835) {
+	if (mDeviceType == DeviceType::Type1030) {
 		uint32 emulevel = settings.GetUint32("emulevel", 0);
 		if (emulevel < kAT850SIOEmulationLevelCount) {
 			auto newLevel = (AT850SIOEmulationLevel)emulevel;
@@ -1060,9 +1099,9 @@ bool ATDevice1030Modem::SetSettings(const ATPropertySet& settings) {
 
 				if (mpSIOMgr) {
 					if (newLevel == kAT850SIOEmulationLevel_None)
-						mpSIOMgr->RemoveDevice(this);
+						mpSIOInterface = nullptr;
 					else if (mEmulationLevel == kAT850SIOEmulationLevel_None)
-						mpSIOMgr->AddDevice(this);
+						mpSIOInterface = mpSIOMgr->AddDevice(this);
 				}
 
 				mEmulationLevel = newLevel;
@@ -1083,9 +1122,10 @@ void ATDevice1030Modem::Shutdown() {
 		mpCIOMgr = nullptr;
 	}
 
+	mpSIOInterface = nullptr;
+
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
-		mpSIOMgr->RemoveDevice(this);
 		mpSIOMgr = nullptr;
 	}
 
@@ -1148,8 +1188,8 @@ void ATDevice1030Modem::InitCIO(IATDeviceCIOManager *mgr) {
 		mpCIOMgr->AddCIODevice(this);
 }
 
-void ATDevice1030Modem::GetCIODevices(char *buf, size_t len) const {
-	vdstrlcpy(buf, "T", len);
+void ATDevice1030Modem::GetCIODevices(IATDeviceCIODeviceList& deviceList) const {
+	deviceList.AddDevice('T');
 }
 
 sint32 ATDevice1030Modem::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {
@@ -1220,8 +1260,8 @@ void ATDevice1030Modem::OnCIOAbortAsync() {
 void ATDevice1030Modem::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
 
-	if (!mbIs835 && mEmulationLevel != kAT850SIOEmulationLevel_None)
-		mpSIOMgr->AddDevice(this);
+	if (mDeviceType == DeviceType::Type1030 && mEmulationLevel != kAT850SIOEmulationLevel_None)
+		mpSIOInterface = mpSIOMgr->AddDevice(this);
 
 	mpSIOMgr->AddRawDevice(this);
 }
@@ -1234,16 +1274,16 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 		if (cmd.mCommand == 0x53) {			// status
 			// The 1030 answers on the 13th D1: status request.
 			if (mDiskCounter >= 13) {
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
 
 				const uint8 status[4]={
 					0x00, 0x00, 0xE0, 0x00
 				};
 
-				mpSIOMgr->SendData(status, 4, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->SendData(status, 4, true);
+				mpSIOInterface->EndCommand();
 				return kCmdResponse_Start;
 			}
 
@@ -1255,11 +1295,14 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 				if (sector != 1)
 					return kCmdResponse_Fail_NAK;
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->SendData(mFirmware, 0x80, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->SendData(mFirmware, 0x80, true);
+				mpSIOInterface->EndCommand();
+
+				return kCmdResponse_Start;
+
 			} else {
 				mDiskCounter = 0;
 			}
@@ -1290,20 +1333,20 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 
 	const auto SendTHandler = [&] {
 		// T: handler, internal page in bank 0
-		mpSIOMgr->SetTransferRate(93, kCpbInternalMB0);
-		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
+		mpSIOInterface->SetTransferRate(93, kCpbInternalMB0);
+		mpSIOInterface->SendData(mFirmware + 0x80 + 0x1100, 0x100, false);
 
 		// T: handler, internal page in bank 1
-		mpSIOMgr->SetTransferRate(93, kCpbInternalMB1);
-		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
+		mpSIOInterface->SetTransferRate(93, kCpbInternalMB1);
+		mpSIOInterface->SendData(mFirmware + 0x80 + 0x1200, 0x780, false);
 
 		// T: handler, external
-		mpSIOMgr->SetTransferRate(93, kCpbExternal);
-		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
+		mpSIOInterface->SetTransferRate(93, kCpbExternal);
+		mpSIOInterface->SendData(mFirmware + 0x80 + 0x1980, 0x200, false);
 
 		// T: handler, external ending page
-		mpSIOMgr->SetTransferRate(93, kCpbExternalEndingPage);
-		mpSIOMgr->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
+		mpSIOInterface->SetTransferRate(93, kCpbExternalEndingPage);
+		mpSIOInterface->SendData(mFirmware + 0x80 + 0x1B80, 0xB0, false);
 	};
 
 	if (cmd.mCommand == 0x3B) {
@@ -1314,53 +1357,64 @@ IATDeviceSIO::CmdResponse ATDevice1030Modem::OnSerialBeginCommand(const ATDevice
 			// portion of the firmware is being sent. The speeds below are calibrated
 			// based on measurements from the actual hardware.
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
 
-			// ModemLink part 1
-			mpSIOMgr->SetTransferRate(93, kCpbExternal);
-			mpSIOMgr->SendData(mFirmware + 0x80, 0x1100, false);
+			if (mpSIOInterface->IsActiveCommandAccelerated()) {
+				mpSIOInterface->SendData(mFirmware + 0x80, 0x2800, true);
+			} else {
+				// ModemLink part 1
+				mpSIOInterface->SetTransferRate(93, kCpbExternal);
+				mpSIOInterface->SendData(mFirmware + 0x80, 0x1100, false);
 
-			// T: handler
-			SendTHandler();
+				// T: handler
+				SendTHandler();
 
-			// ModemLink part 2, external
-			mpSIOMgr->SetTransferRate(93, kCpbExternal);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x1C30, 0xB40, false);
+				// ModemLink part 2, external
+				mpSIOInterface->SetTransferRate(93, kCpbExternal);
+				mpSIOInterface->SendData(mFirmware + 0x80 + 0x1C30, 0xB40, false);
 
-			// ModemLink part 2, external ending page
-			mpSIOMgr->SetTransferRate(93, kCpbExternalEndingPage);
-			mpSIOMgr->SendData(mFirmware + 0x80 + 0x2770, 0x90, false);
+				// ModemLink part 2, external ending page
+				mpSIOInterface->SetTransferRate(93, kCpbExternalEndingPage);
+				mpSIOInterface->SendData(mFirmware + 0x80 + 0x2770, 0x90, false);
 
-			const uint8 checksum = ATComputeSIOChecksum(mFirmware+0x80, 0x2800);
-			mpSIOMgr->SendData(&checksum, 1, false);
+				const uint8 checksum = ATComputeSIOChecksum(mFirmware+0x80, 0x2800);
+				mpSIOInterface->SendData(&checksum, 1, false);
+			}
 
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->EndCommand();
 			return kCmdResponse_Start;
 		}
 	} else if (cmd.mCommand == 0x3C) {
 		// Handler load - return $B30 bytes to load at $1D00 and run at $1D0C
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
 
 		if (mEmulationLevel == kAT850SIOEmulationLevel_Full) {
 			// Send the embedded handler within the ModemLink firmware. This is a
 			// subset of the data sent by the $3B command, with the same rates.
+			//
+			// If an accelerated command is being processed, we can't send in chunks;
+			// there would be no point anyway.
 
-			SendTHandler();
+			if (mpSIOInterface->IsActiveCommandAccelerated()) {
+				mpSIOInterface->SendData(mFirmware + 0x1180, 0xB30, true);
+			} else {
+				SendTHandler();
 
-			const uint8 checksum = ATComputeSIOChecksum(mFirmware + 0x1180, 0xB30);
-			mpSIOMgr->SendData(&checksum, 1, false);
+				const uint8 checksum = ATComputeSIOChecksum(mFirmware + 0x1180, 0xB30);
+				mpSIOInterface->SendData(&checksum, 1, false);
+			}
 
 		} else {
 			vdfastvector<uint8> buf(0xB30, 0);
 			buf[0x0C] = 0x60;		// RTS
-			mpSIOMgr->SendData(buf.data(), (uint32)buf.size(), true);
+			mpSIOInterface->SendData(buf.data(), (uint32)buf.size(), true);
 		}
 
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->EndCommand();
 		return kCmdResponse_Start;
 	}
 

@@ -131,7 +131,6 @@ private:
 	uint32	mPrevSCSIState = 0;
 	bool	mbRAMEnabled = false;
 	bool	mbSCSISelAsserted = false;
-	bool	mbSCSIBlockSize256 = false;
 	bool	mbPrinterIRQEnabled = false;
 	bool	mbACIAIRQActive = false;
 	bool	mbFirmwareUsable = false;

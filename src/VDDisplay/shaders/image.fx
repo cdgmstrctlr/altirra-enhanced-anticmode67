@@ -72,16 +72,18 @@ half4 FP_Blit(float4 pos : SV_Position, float2 uv0 : TEXCOORD0) : SV_Target0 {
 
 ///////////////////////////////////////////////////////////////////////////
 
-half4 FP_BlitSharp(float4 pos : SV_Position, float2 uv0 : TEXCOORD0,
-	uniform float4 params : register(c0)
-) : SV_Target0 {
+cbuffer BlitSharpParams : register(b0) {
+	float4 psBlitSharpParams;
+}
+
+half4 FP_BlitSharp(float4 pos : SV_Position, float2 uv0 : TEXCOORD0) : SV_Target0 {
 	
 	float2 f = floor(uv0 + 0.5f);
 	float2 d = (f - uv0);
 	
-	float2 uv = f - saturate(d * params.xy + 0.5) + 0.5;
+	float2 uv = f - saturate(d * psBlitSharpParams.xy + 0.5) + 0.5;
 
-	return half4(SAMPLE2D(srctex, srcsamp, uv * params.wz).rgb, 1);
+	return half4(SAMPLE2D(srctex, srcsamp, uv * psBlitSharpParams.wz).rgb, 1);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -186,21 +188,33 @@ float4 FP_Filter(
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_CC_SRGB		g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_SRGB
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_CC_Gamma22	g_VDDispFP_ScreenFX_PtLinear_NoScanlines_CC_Gamma22
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_GammaCC		g_VDDispFP_ScreenFX_PtLinear_NoScanlines_GammaCC
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_Mask_CC_SRGB		g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_CC_SRGB
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_Mask_CC_Gamma22	g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_CC_Gamma22
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_NoScanlines_Mask_GammaCC		g_VDDispFP_ScreenFX_PtLinear_NoScanlines_Mask_GammaCC
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_Linear			g_VDDispFP_ScreenFX_PtLinear_Scanlines_Linear
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_Gamma			g_VDDispFP_ScreenFX_PtLinear_Scanlines_Gamma
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_CC_SRGB			g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_SRGB
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_CC_Gamma22		g_VDDispFP_ScreenFX_PtLinear_Scanlines_CC_Gamma22
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_GammaCC			g_VDDispFP_ScreenFX_PtLinear_Scanlines_GammaCC
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_Mask_CC_SRGB	g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_CC_SRGB
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_Mask_CC_Gamma22	g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_CC_Gamma22
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_PtLinear_Scanlines_Mask_GammaCC	g_VDDispFP_ScreenFX_PtLinear_Scanlines_Mask_GammaCC
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_Linear			g_VDDispFP_ScreenFX_Sharp_NoScanlines_Linear
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_Gamma			g_VDDispFP_ScreenFX_Sharp_NoScanlines_Gamma
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_CC_SRGB			g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_SRGB
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_CC_Gamma22		g_VDDispFP_ScreenFX_Sharp_NoScanlines_CC_Gamma22
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_GammaCC			g_VDDispFP_ScreenFX_Sharp_NoScanlines_GammaCC
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_Mask_CC_SRGB		g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_CC_SRGB
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_Mask_CC_Gamma22	g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_CC_Gamma22
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_NoScanlines_Mask_GammaCC		g_VDDispFP_ScreenFX_Sharp_NoScanlines_Mask_GammaCC
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_Linear				g_VDDispFP_ScreenFX_Sharp_Scanlines_Linear
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_Gamma				g_VDDispFP_ScreenFX_Sharp_Scanlines_Gamma
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_CC_SRGB			g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_SRGB
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_CC_Gamma22			g_VDDispFP_ScreenFX_Sharp_Scanlines_CC_Gamma22
 //$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_GammaCC			g_VDDispFP_ScreenFX_Sharp_Scanlines_GammaCC
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_Mask_CC_SRGB		g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_CC_SRGB
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_Mask_CC_Gamma22	g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_CC_Gamma22
+//$$export_shader [ps_4_0_level_9_1] FP_ScreenFX_Sharp_Scanlines_Mask_GammaCC		g_VDDispFP_ScreenFX_Sharp_Scanlines_Mask_GammaCC
 
 //$$export_shader [vs_4_0_level_9_1] VP_Bloom1         	g_VDDispVP_Bloom1
 //$$export_shader [ps_4_0_level_9_1] FP_Bloom1_Linear  	g_VDDispFP_Bloom1_Linear

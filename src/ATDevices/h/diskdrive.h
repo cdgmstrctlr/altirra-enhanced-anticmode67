@@ -103,6 +103,7 @@ private:
 
 	ATScheduler *mpScheduler = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 
 	vdrefptr<IATDiskImage> mpDiskImage;
 	VDStringW mPath;

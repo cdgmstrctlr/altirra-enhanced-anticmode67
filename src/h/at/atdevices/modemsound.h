@@ -74,7 +74,7 @@ public:		// IATSyncAudioSource
 	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 public:		// IATDeviceAudioOutput
-	void InitAudioOutput(IATAudioMixer *mixer);
+	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 private:
 	void UpdateAudioEnabled();

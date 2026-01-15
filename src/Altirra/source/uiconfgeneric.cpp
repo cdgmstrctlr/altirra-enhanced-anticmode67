@@ -16,6 +16,7 @@
 
 #include "stdafx.h"
 #include <vd2/Dita/services.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atcore/propertyset.h>
 #include <at/atnativeui/dialog.h>
 #include "resource.h"
@@ -29,7 +30,13 @@ public:
 
 	IATUIConfigCheckboxView& AddCheckbox() override;
 	IATUIConfigPathView& AddPath() override;
+	IATUIConfigStringEditView& AddStringEdit() override;
+	IATUIConfigIntEditView& AddIntEdit() override;
+	IATUIConfigColorView& AddColor() override;
+	IATUIConfigIntDropDownView& AddIntDropDown() override;
 	IATUIConfigDropDownView& AddDropDown(const ATEnumLookupTable& enumTable) override;
+
+	void AddVerticalSpace() override;
 
 	void Read(const ATPropertySet& pset) override;
 	void Write(ATPropertySet& pset) const override;
@@ -38,9 +45,14 @@ private:
 	class BaseView;
 	class BoolView;
 	class StringView;
+	class IntView;
 	class CheckboxView;
 	class PathView;
-	class DropDownView;
+	class StringEditView;
+	class IntEditView;
+	class ColorView;
+	class IntDropDownView;
+	class EnumDropDownView;
 
 	bool OnLoaded() override;
 
@@ -57,7 +69,7 @@ private:
 	sint32 mYPosDLUs = 0;
 };
 
-class ATUIConfDialogGenericPanel::BaseView : public VDDialogFrameW32, public IATUIConfigPropView {
+class ATUIConfDialogGenericPanel::BaseView : public VDDialogFrameW32, public virtual IATUIConfigPropView {
 public:
 	using VDDialogFrameW32::VDDialogFrameW32;
 
@@ -66,28 +78,23 @@ public:
 		mViewIndex = viewIndex;
 	}
 
-	IATUIConfigPropView& SetTag(const char *tag) override {
+	void SetTagImpl(const char *tag) override {
 		mTag = tag;
-		return *this;
 	}
 
-	IATUIConfigPropView& SetLabel(const wchar_t *label) override {
+	void SetLabelImpl(const wchar_t *label) override {
 		mLabel = label;
 		UpdateLabel();
-		return *this;
 	}
 
-	IATUIConfigPropView& SetHelp(const wchar_t *text) override {
-		return *this;
+	void SetHelpImpl(const wchar_t *text) override {
 	}
 
-	IATUIConfigPropView& SetHelp(const wchar_t *caption, const wchar_t *text) override {
-		return *this;
+	void SetHelpImpl(const wchar_t *caption, const wchar_t *text) override {
 	}
 
-	IATUIConfigPropView& SetEnableExpr(vdfunction<bool()> fn) override {
+	void SetEnableExprImpl(vdfunction<bool()> fn) override {
 		mpEnableExpr = std::move(fn);
-		return *this;
 	}
 
 	void UpdateEnable() {
@@ -109,19 +116,18 @@ protected:
 	vdfunction<bool()> mpEnableExpr;
 };
 
-class ATUIConfDialogGenericPanel::BoolView : public BaseView, public IATUIConfigBoolView {
+class ATUIConfDialogGenericPanel::BoolView : public BaseView, public virtual IATUIConfigBoolView {
 public:
 	using BaseView::BaseView;
 	using BaseView::SetTag;
 
-	IATUIConfigPropView *operator->() { return this; }
-	IATUIConfigBoolView& SetDefault(bool val) override { mbDefault = val; return *this; }
+	void SetDefaultImpl(bool val) override { mbDefault = val; }
 
 	bool GetValue() const override {
 		return mbValue;
 	}
 
-	void SetValue(bool v) override {
+	void SetValueImpl(bool v) override {
 		if (mbValue != v) {
 			mbValue = v;
 			UpdateView();
@@ -143,14 +149,48 @@ protected:
 	bool mbValue = false;
 };
 
-class ATUIConfDialogGenericPanel::StringView : public BaseView, public IATUIConfigStringView {
+class ATUIConfDialogGenericPanel::IntView : public BaseView, public virtual IATUIConfigIntView {
 public:
 	using BaseView::BaseView;
 	using BaseView::SetTag;
 
-	IATUIConfigPropView *operator->() { return this; }
+	void SetDefaultImpl(sint32 val, bool writeDefault) override { mDefault = val; mbWriteDefault = writeDefault; }
+
+	sint32 GetValue() const override {
+		return mValue;
+	}
+
+	void SetValueImpl(sint32 v) override {
+		if (mValue != v) {
+			mValue = v;
+			UpdateView();
+		}
+	}
+
+	void Read(const ATPropertySet& pset) override {
+		if (!mTag.empty())
+			SetValue(pset.GetInt32(mTag.c_str(), mDefault));
+	}
+
+	void Write(ATPropertySet& pset) const override {
+		if (!mTag.empty() && (mbWriteDefault || mValue != mDefault))
+			pset.SetInt32(mTag.c_str(), mValue);
+	}
+
+protected:
+	sint32 mDefault = 0;
+	sint32 mValue = 0;
+	bool mbWriteDefault = false;
+};
+
+class ATUIConfDialogGenericPanel::StringView : public BaseView, public virtual IATUIConfigStringView {
+public:
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
 	const wchar_t *GetValue() const override { return mValue.c_str(); }
-	void SetValue(const wchar_t *s) override {
+
+	void SetValueImpl(const wchar_t *s) override {
 		const VDStringSpanW sp(s);
 
 		if (mValue != sp) {
@@ -160,18 +200,25 @@ public:
 		}
 	}
 
+	void SetDefaultImpl(const wchar_t *s, bool writeDefault) override {
+		mDefaultValue = s;
+		mbWriteDefault = writeDefault;
+	}
+
 	void Read(const ATPropertySet& pset) override {
 		if (!mTag.empty())
-			SetValue(pset.GetString(mTag.c_str(), L""));
+			SetValue(pset.GetString(mTag.c_str(), mDefaultValue.c_str()));
 	}
 
 	void Write(ATPropertySet& pset) const override {
-		if (!mTag.empty() && !mValue.empty())
+		if (!mTag.empty() && (mbWriteDefault || mValue != mDefaultValue))
 			pset.SetString(mTag.c_str(), mValue.c_str());
 	}
 
 protected:
 	VDStringW mValue;
+	VDStringW mDefaultValue;
+	bool mbWriteDefault = false;
 };
 
 class ATUIConfDialogGenericPanel::CheckboxView final : public BoolView, public IATUIConfigCheckboxView {
@@ -186,10 +233,6 @@ public:
 				}
 			}
 		);
-	}
-
-	IATUIConfigBoolView& AsBoolView() {
-		return *this;
 	}
 
 	IATUIConfigCheckboxView& SetText(const wchar_t *text) override {
@@ -250,8 +293,6 @@ public:
 			}
 		);
 	}
-	
-	IATUIConfigStringView& AsStringView() override { return *this; }
 
 	IATUIConfigPathView& SetBrowseCaption(const wchar_t *caption) override {
 		mBrowseCaption = caption;
@@ -279,7 +320,7 @@ public:
 		return *this;
 	}
 
-	IATUIConfigPathView& SetTypeImage() {
+	IATUIConfigPathView& SetTypeImage() override {
 		SetBrowseKey('img ');
 		return SetType(L"Supported image files\0*.png;*.jpg;*.jpeg\0All files\0*.*\0", nullptr);
 	}
@@ -330,27 +371,245 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////
 
-class ATUIConfDialogGenericPanel::DropDownView final : public BaseView, public IATUIConfigDropDownView {
+class ATUIConfDialogGenericPanel::StringEditView final : public StringView, public IATUIConfigStringEditView {
 public:
-	using BaseView::BaseView;
-	using BaseView::SetTag;
+	StringEditView() : StringView(IDD_CFGPROP_EDIT) {
+		mEditView.SetOnTextChanged(
+			[this](VDUIProxyEditControl *c) {
+				VDStringW s = c->GetText();
+				if (mValue != s) {
+					mValue = s;
 
-	DropDownView(const ATEnumLookupTable& enumTable)
-		: BaseView(IDD_CFGPROP_DROPDOWN)
-		, mEnumTable(enumTable)
-	{
-		mComboView.SetOnSelectionChanged(
-			[this](int idx) {
-				if ((unsigned)idx < mChoices.size())
-					mValue = mChoices[idx].mValue;
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyEditControl mEditView;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mEditView, IDC_EDIT);
+		mResizer.Add(mEditView.GetWindowHandle(), mResizer.kTC);
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mEditView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		mEditView.SetText(mValue.c_str());
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATUIConfDialogGenericPanel::IntEditView final : public IntView, public IATUIConfigIntEditView {
+public:
+	IntEditView() : IntView(IDD_CFGPROP_EDIT) {
+		mEditView.SetOnTextChanged(
+			[this](VDUIProxyEditControl *c) {
+				VDStringW s = c->GetText();
+				long long v = 0;
+				wchar_t ch = 0;
+
+				if (1 != swscanf(s.c_str(), L"%llu %lc", &v, &ch) || v != (sint32)v) {
+					s.sprintf(L"%u", mValue);
+					c->SetText(s.c_str());
+					return;
+				}
+
+				sint32 val = (sint32)v;
+				if (mValue != val) {
+					mValue = val;
+
+					mpParent->OnValueChanged();
+				}
 			}
 		);
 	}
 	
-	IATUIConfigPropView *operator->() { return this; }
+	IATUIConfigIntEditView& SetRange(sint32 minVal, sint32 maxVal) override {
+		return *this;
+	}
 
-	uint32 GetRawValue() const override { return mValue; }
-	void SetRawValue(uint32 value) override {
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyEditControl mEditView;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mEditView, IDC_EDIT);
+		mResizer.Add(mEditView.GetWindowHandle(), mResizer.kTC);
+		UpdateLabel();
+		UpdateView();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mEditView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		VDStringW s;
+		s.sprintf(L"%u", mValue);
+		mEditView.SetText(s.c_str());
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATUIConfDialogGenericPanel::ColorView final : public BaseView, public IATUIConfigColorView {
+public:	
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
+	ColorView() : BaseView(IDD_CFGPROP_COLOR) {
+		mEnableView.SetOnClicked(
+			[this] {
+				if (mEnableView.GetChecked()) {
+					if (mValue < 0)
+						SetValue(0);
+				} else {
+					SetValue(-1);
+				}
+			}
+		);
+
+		mBrowseView.SetOnClicked(
+			[this] {
+				OnBrowse();
+			}
+		);
+	}
+
+	sint32 GetValue() const override { return mValue; }
+	void SetValueImpl(sint32 c) override {
+		if (c < 0)
+			c = -1;
+		else
+			c &= 0xFFFFFF;
+
+		if (mValue != c) {
+			mValue = c;
+
+			UpdateView();
+		}
+	}
+	
+	void SetFixedPaletteImpl(vdspan<const uint32> colors) override {
+		mFixedPalette.assign(colors.begin(), colors.end());
+	}
+
+	void SetCustomPaletteKeyImpl(const char *key) override {
+		mCustomPaletteKey = key ? key : "";
+	}
+
+
+	void Read(const ATPropertySet& pset) override {
+		if (!mTag.empty()) {
+			uint32 c = 0;
+
+			if (pset.TryGetUint32(mTag.c_str(), c))
+				SetValue(c & 0xFFFFFF);
+			else
+				SetValue(-1);
+		}
+	}
+
+	void Write(ATPropertySet& pset) const override {
+		if (!mTag.empty() && mValue >= 0)
+			pset.SetUint32(mTag.c_str(), mValue);
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyButtonControl mEnableView;
+	VDUIProxyStaticControl mColorView;
+	VDUIProxyButtonControl mBrowseView;
+	sint32 mValue = -1;
+	vdfastvector<uint32> mFixedPalette;
+	VDStringA mCustomPaletteKey;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mEnableView, IDC_ENABLE);
+		AddProxy(&mColorView, IDC_STATIC_COLOR);
+		AddProxy(&mBrowseView, IDC_BROWSE);
+		mResizer.Add(mColorView.GetWindowHandle(), mResizer.kMC);
+		mResizer.Add(mBrowseView.GetWindowHandle(), mResizer.kTR);
+		UpdateLabel();
+		UpdateView();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mEnableView.SetEnabled(enable);
+		mColorView.SetEnabled(enable);
+		mBrowseView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		mEnableView.SetChecked(mValue >= 0);
+
+		if (mValue >= 0) {
+			mColorView.SetBgOverrideColor(mValue);
+			mColorView.SetVisible(true);
+			mBrowseView.SetVisible(true);
+		} else {
+			mColorView.SetVisible(false);
+			mBrowseView.SetVisible(false);
+		}
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+
+	void OnBrowse() {
+		sint32 v = VDUIShowColorPicker((VDGUIHandle)mhwnd, mValue, mFixedPalette, mCustomPaletteKey.c_str());
+
+		if (v >= 0) {
+			SetValue((uint32)v);
+		}
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATUIConfDialogGenericPanel::IntDropDownView final : public BaseView, public IATUIConfigIntDropDownView {
+public:
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
+	IntDropDownView()
+		: BaseView(IDD_CFGPROP_DROPDOWN)
+	{
+		mComboView.SetOnSelectionChanged(
+			[this](int idx) {
+				if ((unsigned)idx < mChoices.size()) {
+					mValue = mChoices[idx].mValue;
+					mpParent->OnValueChanged();
+				}
+			}
+		);
+	}
+
+	sint32 GetValue() const override { return mValue; }
+	void SetValue(sint32 value) override {
 		if (mValue != value) {
 			mValue = value;
 
@@ -358,7 +617,7 @@ public:
 		}
 	}
 
-	IATUIConfigDropDownView& AddRawChoice(uint32 value, const wchar_t *name) {
+	IATUIConfigIntDropDownView& AddChoice(sint32 value, const wchar_t *name) override {
 		auto& choice = mChoices.emplace_back();
 		choice.mValue = value;
 		choice.mName = name;
@@ -371,7 +630,116 @@ public:
 
 	void Read(const ATPropertySet& pset) override {
 		if (!mTag.empty()) {
-			uint32 v = pset.GetEnum(mEnumTable, mTag.c_str());
+			sint32 v = pset.GetInt32(mTag.c_str(), mChoices.empty() ? 0 : mChoices[0].mValue);
+			mValue = ~v;
+
+			SetValue(v);
+		}
+	}
+
+	void Write(ATPropertySet& pset) const override {
+		if (!mTag.empty())
+			pset.SetInt32(mTag.c_str(), mValue);
+	}
+
+private:
+	VDUIProxyControl mLabelView;
+	VDUIProxyComboBoxControl mComboView;
+	sint32 mValue = 0;
+
+	struct Choice {
+		sint32 mValue;
+		VDStringW mName;
+	};
+
+	vdvector<Choice> mChoices;
+
+	bool OnLoaded() override {
+		AddProxy(&mLabelView, IDC_LABEL);
+		AddProxy(&mComboView, IDC_COMBO);
+		mResizer.Add(mComboView.GetWindowHandle(), mResizer.kTC);
+
+		for(const Choice& choice : mChoices) {
+			mComboView.AddItem(choice.mName.c_str());
+		}
+
+		UpdateLabel();
+		return false;
+	}
+
+	void OnEnable(bool enable) override {
+		mComboView.SetEnabled(enable);
+	}
+
+	void UpdateView() override {
+		int index = -1;
+
+		if (!mChoices.empty()) {
+			index = 0;
+
+			auto it = std::find_if(mChoices.begin(), mChoices.end(), [value = mValue](const Choice& choice) { return choice.mValue == value; });
+
+			if (it != mChoices.end())
+				index = (int)(it - mChoices.begin());
+		}
+
+		mComboView.SetSelection(index);
+	}
+
+	void UpdateLabel() override {
+		mLabelView.SetCaption(mLabel.c_str());
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////
+
+class ATUIConfDialogGenericPanel::EnumDropDownView final : public BaseView, public IATUIConfigDropDownView {
+public:
+	using BaseView::BaseView;
+	using BaseView::SetTag;
+
+	EnumDropDownView(const ATEnumLookupTable& enumTable)
+		: BaseView(IDD_CFGPROP_DROPDOWN)
+		, mEnumTable(enumTable)
+		, mDefaultValue(enumTable.mDefaultValue)
+	{
+		mComboView.SetOnSelectionChanged(
+			[this](int idx) {
+				if ((unsigned)idx < mChoices.size())
+					mValue = mChoices[idx].mValue;
+			}
+		);
+	}
+
+	uint32 GetRawValue() const override { return mValue; }
+	void SetRawValue(uint32 value) override {
+		if (mValue != value) {
+			mValue = value;
+
+			UpdateView();
+		}
+	}
+
+	void SetRawDefaultValue(uint32 value) override {
+		mDefaultValue = value;
+	}
+
+	IATUIConfigDropDownView& AddRawChoice(uint32 value, const wchar_t *name) override {
+		auto& choice = mChoices.emplace_back();
+		choice.mValue = value;
+		choice.mName = name;
+
+		if (IsCreated())
+			mComboView.AddItem(name);
+
+		return *this;
+	}
+
+	void Read(const ATPropertySet& pset) override {
+		if (!mTag.empty()) {
+			uint32 v = mDefaultValue;
+
+			pset.TryGetEnum(mEnumTable, mTag.c_str(), v);
 			mValue = ~v;
 			SetRawValue(v);
 		}
@@ -387,6 +755,7 @@ private:
 	VDUIProxyControl mLabelView;
 	VDUIProxyComboBoxControl mComboView;
 	uint32 mValue = 0;
+	uint32 mDefaultValue = 0;
 
 	struct Choice {
 		uint32 mValue;
@@ -461,11 +830,43 @@ IATUIConfigPathView& ATUIConfDialogGenericPanel::AddPath() {
 	return *view;
 }
 
-IATUIConfigDropDownView& ATUIConfDialogGenericPanel::AddDropDown(const ATEnumLookupTable& enumTable) {
-	DropDownView *view = new DropDownView(enumTable);
+IATUIConfigStringEditView& ATUIConfDialogGenericPanel::AddStringEdit() {
+	StringEditView *view = new StringEditView;
 	AddView(view);
 
 	return *view;
+}
+
+IATUIConfigIntEditView& ATUIConfDialogGenericPanel::AddIntEdit() {
+	IntEditView *view = new IntEditView;
+	AddView(view);
+
+	return *view;
+}
+
+IATUIConfigColorView& ATUIConfDialogGenericPanel::AddColor() {
+	ColorView *view = new ColorView;
+	AddView(view);
+
+	return *view;
+}
+
+IATUIConfigIntDropDownView& ATUIConfDialogGenericPanel::AddIntDropDown() {
+	IntDropDownView *view = new IntDropDownView;
+	AddView(view);
+
+	return *view;
+}
+
+IATUIConfigDropDownView& ATUIConfDialogGenericPanel::AddDropDown(const ATEnumLookupTable& enumTable) {
+	EnumDropDownView *view = new EnumDropDownView(enumTable);
+	AddView(view);
+
+	return *view;
+}
+
+void ATUIConfDialogGenericPanel::AddVerticalSpace() {
+	mYPosDLUs += 4;
 }
 
 void ATUIConfDialogGenericPanel::Read(const ATPropertySet& pset) {

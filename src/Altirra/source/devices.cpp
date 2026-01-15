@@ -25,6 +25,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dm);
 
 extern const ATDeviceDefinition g_ATDeviceDefModem;
 extern const ATDeviceDefinition g_ATDeviceDefBlackBox;
+extern const ATDeviceDefinition g_ATDeviceDefBlackBoxFloppy;
 extern const ATDeviceDefinition g_ATDeviceDefMIO;
 extern const ATDeviceDefinition g_ATDeviceDefHardDisks;
 extern const ATDeviceDefinition g_ATDeviceDefIDEPhysDisk;
@@ -45,6 +46,7 @@ extern const ATDeviceDefinition g_ATDeviceDefPrinter;
 extern const ATDeviceDefinition g_ATDeviceDef850;
 extern const ATDeviceDefinition g_ATDeviceDef835Modem;
 extern const ATDeviceDefinition g_ATDeviceDef1030Modem;
+extern const ATDeviceDefinition g_ATDeviceDefXM301Modem;
 extern const ATDeviceDefinition g_ATDeviceDefSX212;
 extern const ATDeviceDefinition g_ATDeviceDefMidiMate;
 extern const ATDeviceDefinition g_ATDeviceDefSDrive;
@@ -69,6 +71,7 @@ extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy810;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDrive1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveUSDoubler;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSpeedy1050;
+extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSpeedyXF;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveHappy1050;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSuperArchiver;
 extern const ATDeviceDefinition g_ATDeviceDefDiskDriveSuperArchiverBW;
@@ -120,11 +123,16 @@ extern const ATDeviceDefinition g_ATDeviceDefPrinter1029;
 extern const ATDeviceDefinition g_ATDeviceDefPrinter1029Full;
 extern const ATDeviceDefinition g_ATDeviceDefPrinter825;
 extern const ATDeviceDefinition g_ATDeviceDefPrinter1020;
+extern const ATDeviceDefinition g_ATDeviceDef850Full;
+extern const ATDeviceDefinition g_ATDeviceDefThePill;
+extern const ATDeviceDefinition g_ATDeviceDefMultiplexer;
+extern const ATDeviceDefinition g_ATDeviceDefPipeSerial;
 
 void ATRegisterDevices(ATDeviceManager& dm) {
 	static constexpr const ATDeviceDefinition *kDeviceDefs[]={
 		&g_ATDeviceDefModem,
 		&g_ATDeviceDefBlackBox,
+		&g_ATDeviceDefBlackBoxFloppy,
 		&g_ATDeviceDefMIO,
 		&g_ATDeviceDefHardDisks,
 		&g_ATDeviceDefIDEPhysDisk,
@@ -143,8 +151,10 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefHostDevice,
 		&g_ATDeviceDefPrinter,
 		&g_ATDeviceDef850,
+		&g_ATDeviceDef850Full,
 		&g_ATDeviceDef835Modem,
 		&g_ATDeviceDef1030Modem,
+		&g_ATDeviceDefXM301Modem,
 		&g_ATDeviceDefSX212,
 		&g_ATDeviceDefMidiMate,
 		&g_ATDeviceDefSDrive,
@@ -169,6 +179,7 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefDiskDrive1050,
 		&g_ATDeviceDefDiskDriveUSDoubler,
 		&g_ATDeviceDefDiskDriveSpeedy1050,
+		&g_ATDeviceDefDiskDriveSpeedyXF,
 		&g_ATDeviceDefDiskDriveHappy1050,
 		&g_ATDeviceDefDiskDriveSuperArchiver,
 		&g_ATDeviceDefDiskDriveSuperArchiverBW,
@@ -220,6 +231,9 @@ void ATRegisterDevices(ATDeviceManager& dm) {
 		&g_ATDeviceDefPrinter1029Full,
 		&g_ATDeviceDefPrinter825,
 		&g_ATDeviceDefPrinter1020,
+		&g_ATDeviceDefThePill,
+		&g_ATDeviceDefMultiplexer,
+		&g_ATDeviceDefPipeSerial,
 	};
 
 	for(const ATDeviceDefinition *def : kDeviceDefs)

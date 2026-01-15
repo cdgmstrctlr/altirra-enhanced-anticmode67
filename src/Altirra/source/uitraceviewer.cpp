@@ -347,6 +347,7 @@ void ATTraceLoadDefaults(ATTraceSettings& settings) {
 	settings.mbTraceCpuInsns = key.getBool("Trace: Enable CPU insns", true);
 	settings.mbTraceBasic = key.getBool("Trace: Enable BASIC", false);
 	settings.mbAutoLimitTraceMemory = key.getBool("Trace: Auto-limit trace memory", true);
+	settings.mVideoFrameSize = std::clamp<uint32>(key.getInt("Trace: Video frame size", 128), 16, 512);
 }
 
 void ATTraceSaveDefaults(const ATTraceSettings& settings) {
@@ -357,6 +358,7 @@ void ATTraceSaveDefaults(const ATTraceSettings& settings) {
 	key.setBool("Trace: Enable CPU insns", settings.mbTraceCpuInsns);
 	key.setBool("Trace: Enable BASIC", settings.mbTraceBasic);
 	key.setBool("Trace: Auto-limit trace memory", settings.mbAutoLimitTraceMemory);
+	key.setInt("Trace: Video frame size", settings.mVideoFrameSize);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -374,6 +376,7 @@ private:
 	ATTraceSettings& mSettings;
 	VDUIProxyButtonControl mVideoButton;
 	VDUIProxyComboBoxControl mVideoRateCombo;
+	VDUIProxyComboBoxControl mVideoSizeCombo;
 };
 
 ATUIDialogTraceSettings::ATUIDialogTraceSettings(ATTraceSettings& settings)
@@ -390,6 +393,11 @@ bool ATUIDialogTraceSettings::OnLoaded() {
 	mVideoRateCombo.AddItem(L"Every two frames");
 	mVideoRateCombo.AddItem(L"Every three frames");
 
+	AddProxy(&mVideoSizeCombo, IDC_VIDEO_SIZE);
+	mVideoSizeCombo.AddItem(L"Small (default)");
+	mVideoSizeCombo.AddItem(L"Medium");
+	mVideoSizeCombo.AddItem(L"Large");
+
 	return VDDialogFrameW32::OnLoaded();
 }
 
@@ -401,6 +409,21 @@ void ATUIDialogTraceSettings::OnDataExchange(bool write) {
 
 	if (write) {
 		mSettings.mTraceVideoDivisor = mVideoRateCombo.GetSelection() + 1;
+
+		switch(mVideoSizeCombo.GetSelection()) {
+			case 0:
+			default:
+				mSettings.mVideoFrameSize = 128;
+				break;
+
+			case 1:
+				mSettings.mVideoFrameSize = 192;
+				break;
+
+			case 2:
+				mSettings.mVideoFrameSize = 256;
+				break;
+		}
 	} else {
 		switch(mSettings.mTraceVideoDivisor) {
 			case 0:
@@ -417,6 +440,13 @@ void ATUIDialogTraceSettings::OnDataExchange(bool write) {
 				mVideoRateCombo.SetSelection(2);
 				break;
 		}
+
+		if (mSettings.mVideoFrameSize >= 256)
+			mVideoSizeCombo.SetSelection(2);
+		else if (mSettings.mVideoFrameSize >= 192)
+			mVideoSizeCombo.SetSelection(1);
+		else
+			mVideoSizeCombo.SetSelection(0);
 
 		UpdateEnables();
 	}
@@ -435,10 +465,14 @@ struct ATUITraceViewerChannel {
 		kType_Tape,
 	};
 
-	sint32 mPosY;
-	sint32 mHeight;
-	Type mType;
+	sint32 mPosY = 0;
+	sint32 mBaseHeight = 0;
+	sint32 mHeight = 0;
+	Type mType {};
 	vdrefptr<IATTraceChannel> mpChannel;
+
+	double mFrameTime0 = 0;
+	double mAvgSecondsPerFrame = 0;
 
 	static constexpr uint32 kNumCachedImages = 32;
 	ATGDICachedImageW32 mCachedBitmaps[kNumCachedImages];
@@ -447,8 +481,11 @@ struct ATUITraceViewerChannel {
 
 struct ATUITraceViewerGroup {
 	VDStringW mName;
-	sint32 mPosY;
-	sint32 mHeight;
+	sint32 mPosY = 0;
+	sint32 mBaseHeight = 0;
+	sint32 mHeight = 0;
+	float mVariableHeightScale = 1.0f;
+	bool mbVariableHeight = false;
 
 	vdrefptr<ATTraceGroup> mpGroup;
 	vdfastvector<ATUITraceViewerChannel *> mChannels;
@@ -461,6 +498,7 @@ public:
 	virtual void SetFocusTime(double t) = 0;
 	virtual void SetSelection(double startTime, double endTime) = 0;
 	virtual void SetSelectionMode(bool selMode) = 0;
+	virtual void SetGroupHeightScale(int groupIndex, float scale) = 0;
 };
 
 struct ATUITraceViewerContext {
@@ -514,6 +552,7 @@ private:
 
 	ATUITraceViewerContext& mContext;
 	vdrefptr<ATTraceChannelCPUHistory> mpChannel;
+	ATTraceChannelCPUHistoryCursor mHistoryCursor;
 	double mCenterTime = -1;
 	double mViewStartTime = 0;
 	double mViewEndTime = -1;
@@ -564,7 +603,7 @@ void ATUITraceViewerCPUHistoryView::SetCenterTime(double t) {
 
 	if (mpChannel) {
 		// look up and select insn
-		mpHistoryView->SelectInsn(mpChannel->FindEvent(t));
+		mpHistoryView->SelectInsn(mpChannel->FindEvent(mHistoryCursor, t));
 	}
 
 	--mNotifyRecursionCounter;
@@ -599,7 +638,7 @@ bool ATUITraceViewerCPUHistoryView::UpdatePreviewNode(ATCPUHistoryEntry& he) {
 }
 
 uint32 ATUITraceViewerCPUHistoryView::ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 startIndex, uint32 n) {
-	return mpChannel->ReadHistoryEvents(ppInsns, startIndex, n);
+	return mpChannel->ReadHistoryEvents(mHistoryCursor, ppInsns, startIndex, n);
 }
 
 void ATUITraceViewerCPUHistoryView::OnEsc() {
@@ -611,7 +650,7 @@ void ATUITraceViewerCPUHistoryView::OnInsnSelected(uint32 index) {
 
 	if (mpChannel) {
 		++mNotifyRecursionCounter;
-		mContext.mpParent->SetFocusTime(mpChannel->GetEventTime(index));
+		mContext.mpParent->SetFocusTime(mpChannel->GetEventTime(mHistoryCursor, index));
 		--mNotifyRecursionCounter;
 	}
 }
@@ -654,13 +693,13 @@ void ATUITraceViewerCPUHistoryView::RebuildInsnView() {
 	if (!mpHistoryView || !mpChannel)
 		return;
 
-	mpChannel->StartHistoryIteration(mCenterTime, -200000);
+	mHistoryCursor = mpChannel->StartHistoryIteration(mCenterTime, -200000);
 
-	uint32 n = mpChannel->ReadHistoryEvents(nullptr, 0, 400000);
+	uint32 n = mpChannel->ReadHistoryEvents(mHistoryCursor, nullptr, 0, 400000);
 
 	if (n) {
-		mViewStartTime = mpChannel->GetEventTime(0);
-		mViewEndTime = mpChannel->GetEventTime(n - 1);
+		mViewStartTime = mpChannel->GetEventTime(mHistoryCursor, 0);
+		mViewEndTime = mpChannel->GetEventTime(mHistoryCursor, n - 1);
 	} else {
 		mViewStartTime = 0;
 		mViewEndTime = -1;
@@ -676,10 +715,10 @@ void ATUITraceViewerCPUHistoryView::PopulateFromNewChannel() {
 
 		if (mpChannel && !mpChannel->IsEmpty()) {
 			mpHistoryView->SetDisasmMode(mpChannel->GetDisasmMode(), mpChannel->GetSubCycles(), true);
-			mpChannel->StartHistoryIteration(0, 0);
+			auto cursor = mpChannel->StartHistoryIteration(0, 0);
 
 			const ATCPUHistoryEntry *he = nullptr;
-			if (mpChannel->ReadHistoryEvents(&he, 0, 1)) {
+			if (mpChannel->ReadHistoryEvents(cursor, &he, 0, 1)) {
 				mpHistoryView->SetTimestampOrigin(he->mCycle, he->mUnhaltedCycle);
 			}
 		}
@@ -720,13 +759,12 @@ private:
 		kToolbarId_Range,
 	};
 
-	ATUITraceViewerContext& mContext;
 	vdrefptr<ATTraceChannelCPUHistory> mpChannel;
+	ATTraceChannelCPUHistoryCursor mHistoryCursor;
 	double mViewStartTime = 0;
 	double mViewEndTime = -1;
 	double mSelectionStartTime = 0;
 	double mSelectionEndTime = -1;
-	uint32 mNotifyRecursionCounter = 0;
 	bool mbGlobalAddressesEnabled = false;
 
 	ATProfileMode mProfileMode = kATProfileMode_Insns;
@@ -740,9 +778,8 @@ private:
 	VDUIProxyToolbarControl mToolbar;
 };
 
-ATUITraceViewerCPUProfileView::ATUITraceViewerCPUProfileView(ATUITraceViewerContext& context)
+ATUITraceViewerCPUProfileView::ATUITraceViewerCPUProfileView(ATUITraceViewerContext&)
 	: VDDialogFrameW32(IDD_TRACEVIEWER_CPUPROFILE)
-	, mContext(context)
 {
 	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
 	mToolbar.SetDarkModeEnabled(true);
@@ -832,12 +869,14 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 		builder.Init(mProfileMode, mProfileCounterModes[0], mProfileCounterModes[1]);
 		builder.SetGlobalAddressesEnabled(mbGlobalAddressesEnabled);
 
+		auto cursor = mpChannel->StartHistoryIteration(0, 0);
+
 		uint32 startEventIdx = 0;
 		uint32 endEventIdx = mpChannel->GetEventCount();
 
 		if (mSelectionEndTime > mSelectionStartTime) {
-			startEventIdx = mpChannel->FindEvent(mSelectionStartTime);
-			endEventIdx = mpChannel->FindEvent(mSelectionEndTime);
+			startEventIdx = mpChannel->FindEvent(cursor, mSelectionStartTime);
+			endEventIdx = mpChannel->FindEvent(cursor, mSelectionEndTime);
 
 			int digits = 2;
 			double deltaTime = mSelectionEndTime - mSelectionStartTime;
@@ -860,7 +899,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 		uint32 cycle = 0;
 		uint32 unhaltedCycle = 0;
 
-		if (mpChannel->ReadHistoryEvents(hents, pos, 1)) {
+		if (mpChannel->ReadHistoryEvents(cursor, hents, pos, 1)) {
 			cycle = hents[0]->mCycle;
 			unhaltedCycle = hents[0]->mUnhaltedCycle;
 		}
@@ -870,7 +909,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 		const bool useGlobalAddrs = mpChannel->GetDisasmMode() == kATDebugDisasmMode_6502;
 
 		while(pos < endEventIdx) {
-			uint32 n = mpChannel->ReadHistoryEvents(hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
+			uint32 n = mpChannel->ReadHistoryEvents(cursor, hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
 			if (n < 2)
 				break;
 			
@@ -879,7 +918,7 @@ void ATUITraceViewerCPUProfileView::RemakeView() {
 			builder.Update(mTimestampDecoder, hents, n - 1, useGlobalAddrs);
 		}
 
-		if (pos && mpChannel->ReadHistoryEvents(hents, pos - 1, 1)) {
+		if (pos && mpChannel->ReadHistoryEvents(cursor, hents, pos - 1, 1)) {
 			cycle = hents[0]->mCycle;
 			unhaltedCycle = hents[0]->mUnhaltedCycle;
 		}
@@ -1028,17 +1067,29 @@ class ATUITraceViewerChannelView final : public VDDialogFrameW32 {
 public:
 	ATUITraceViewerChannelView(ATUITraceViewerContext& context);
 
+	void VScrollToPixel(sint32 pos);
+
 	void OnChannelsChanged();
-	void OnSelectionModeChanged();
 
 private:
 	bool OnPaint() override;
-	void OnMouseDownL(int x, int y);
+	void OnMouseDownL(int x, int y) override;
+	void OnMouseUpL(int x, int y) override;
+	void OnMouseMove(int x, int y) override;
+	void OnCaptureLost() override;
+	bool OnSetCursor(int x, int y, ATUICursorImage& image) override;
 	void OnDpiChanged() override;
 	sint32 GetBackgroundColor() const override { return GetTraceViewerTheme().mChannelBackground; }
 
+	int GetSplitterIndex(int y) const;
+
 	ATUITraceViewerContext& mContext;
 	sint32 mScrollY = 0;
+
+	bool mbDragging = false;
+	int mDragSplitIndex = 0;
+	int mDragInitialHeight = 0;
+	int mDragInitialClientY = 0;
 };
 
 ATUITraceViewerChannelView::ATUITraceViewerChannelView(ATUITraceViewerContext& context)
@@ -1047,8 +1098,17 @@ ATUITraceViewerChannelView::ATUITraceViewerChannelView(ATUITraceViewerContext& c
 {
 }
 
+void ATUITraceViewerChannelView::VScrollToPixel(sint32 pos) {
+	if (mScrollY != pos) {
+		sint32 delta = pos - mScrollY;
+		mScrollY = pos;
+
+		ScrollWindow(mhwnd, 0, -delta, nullptr, nullptr);
+	}
+}
+
 void ATUITraceViewerChannelView::OnChannelsChanged() {
-	InvalidateRect(mhdlg, NULL, TRUE);
+	Invalidate();
 }
 
 bool ATUITraceViewerChannelView::OnPaint() {
@@ -1100,6 +1160,21 @@ bool ATUITraceViewerChannelView::OnPaint() {
 }
 
 void ATUITraceViewerChannelView::OnMouseDownL(int x, int y) {
+	const int splitterIndex = GetSplitterIndex(y);
+
+	if (splitterIndex >= 0) {
+		mbDragging = true;
+		mDragSplitIndex = splitterIndex;
+
+		ATUITraceViewerGroup *group = mContext.mGroups[splitterIndex];
+
+		mDragInitialHeight = group->mHeight;
+		mDragInitialClientY = y;
+
+		SetCapture();
+		return;
+	}
+
 	y += mScrollY;
 
 	for(const auto *group : mContext.mGroups) {
@@ -1147,8 +1222,66 @@ void ATUITraceViewerChannelView::OnMouseDownL(int x, int y) {
 	}
 }
 
+void ATUITraceViewerChannelView::OnMouseUpL(int x, int y) {
+	if (mbDragging) {
+		OnMouseMove(x, y);
+
+		mbDragging = false;
+		ReleaseCapture();
+	}
+}
+
+void ATUITraceViewerChannelView::OnMouseMove(int x, int y) {
+	if (!mbDragging || mDragSplitIndex < 0)
+		return;
+
+	if ((unsigned)mDragSplitIndex >= mContext.mGroups.size())
+		return;
+
+	ATUITraceViewerGroup *group = mContext.mGroups[mDragSplitIndex];
+
+	const int targetHeight = std::max<int>(1, mDragInitialHeight + (y - mDragInitialClientY));
+	
+	if (group->mHeight != targetHeight)
+		mContext.mpParent->SetGroupHeightScale(mDragSplitIndex, (float)targetHeight / (float)group->mBaseHeight);
+}
+
+void ATUITraceViewerChannelView::OnCaptureLost() {
+	mbDragging = false;
+}
+
+bool ATUITraceViewerChannelView::OnSetCursor(int x, int y, ATUICursorImage& image) {
+	if (mbDragging) {
+		image = kATUICursorImage_SizeVert;
+		return true;
+	}
+
+	if (GetSplitterIndex(y) >= 0) {
+		image = kATUICursorImage_SizeVert;
+		return true;
+	}
+
+	return false;
+}
+
 void ATUITraceViewerChannelView::OnDpiChanged() {
-	InvalidateRect(mhdlg, nullptr, TRUE);
+	Invalidate();
+}
+
+int ATUITraceViewerChannelView::GetSplitterIndex(int y) const {
+	const int splitterHalfWidth = 5;
+	int index = 0;
+
+	y += mScrollY;
+
+	for(const auto *group : mContext.mGroups) {
+		if (group->mbVariableHeight && abs(y - (group->mPosY + group->mHeight)) < splitterHalfWidth)
+			return index;
+
+		++index;
+	}
+	
+	return -1;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1167,6 +1300,8 @@ public:
 	void ScrollToTime(double newStartTime);
 	void ScrollDeltaPixels(double newStartTime, sint32 dx, sint32 dy);
 
+	void VScrollToPixel(sint32 pos);
+
 private:
 	bool OnLoaded() override;
 	void OnDestroy() override;
@@ -1174,9 +1309,11 @@ private:
 	void OnMouseMove(int x, int y) override;
 	void OnMouseDownL(int x, int y) override;
 	void OnMouseUpL(int x, int y) override;
+	bool OnMouseDownR(int x, int y) override;
+	bool OnMouseUpR(int x, int y) override;
 	void OnMouseWheel(int x, int y, sint32 delta) override;
 	void OnContextMenu(uint32 id, int x, int y) override;
-	bool OnSetCursor(ATUICursorImage& image);
+	bool OnSetCursor(ATUICursorImage& image) override;
 	void OnCaptureLost() override;
 	bool OnShouldErase() override;
 	bool OnPaint() override;
@@ -1203,10 +1340,14 @@ private:
 	double mEndTime = 0;
 	double mSecondsPerPixel = 1.0f / 10.0f;
 
+	sint32 mScrollY = 0;
 	sint32 mWheelAccum = 0;
 	sint32 mDragAnchorX = 0;
 	sint32 mDragAnchorY = 0;
-	bool mbDragging = false;
+	bool mbDragLeft = false;
+	bool mbDragRight = false;
+	bool mbDragSelectionMode = false;
+	bool mbSuppressContextMenu = false;
 	bool mbSelectionMode = false;
 	bool mbSelectionValid = false;
 
@@ -1316,6 +1457,15 @@ void ATUITraceViewerEventView::ScrollDeltaPixels(double newStartTime, sint32 dx,
 	ScrollWindow(mhdlg, dx, dy, nullptr, nullptr);
 }
 
+void ATUITraceViewerEventView::VScrollToPixel(sint32 pos) {
+	if (mScrollY != pos) {
+		sint32 delta = pos - mScrollY;
+		mScrollY = pos;
+
+		ScrollWindow(mhwnd, 0, -delta, nullptr, nullptr);
+	}
+}
+
 bool ATUITraceViewerEventView::OnLoaded() {
 	if (HDC hdc = GetDC(mhdlg)) {
 		mhdcSel = CreateCompatibleDC(hdc);
@@ -1384,20 +1534,33 @@ void ATUITraceViewerEventView::OnMouseMove(int x, int y) {
 	const sint32 dx = x - mDragAnchorX;
 	const sint32 dy = y - mDragAnchorY;
 
-	if (!mbDragging && (GetKeyState(VK_LBUTTON) < 0)) {
-		int dragRadius = GetDpiScaledMetric(SM_CXDRAG);
+	if (!mbDragLeft && !mbDragRight) {
+		bool checkLeft = GetKeyState(VK_LBUTTON) < 0;
+		bool checkRight = GetKeyState(VK_RBUTTON) < 0;
 
-		if (abs(dx) > dragRadius || abs(dy) > dragRadius) {
-			mbDragging = true;
-			SetCapture();
+		if (checkLeft || checkRight) {
+			int dragRadius = GetDpiScaledMetric(SM_CXDRAG);
+
+			if (abs(dx) > dragRadius || abs(dy) > dragRadius) {
+				if (checkLeft)
+					mbDragLeft = true;
+				else
+					mbDragRight = true;
+
+				mbSuppressContextMenu = true;
+
+				SetCapture();
+
+				SetCurrentCursor(mbDragSelectionMode ? kATUICursorImage_IBeam : kATUICursorImage_SizeHoriz);
+			}
 		}
 	}
 
-	if (mbDragging) {
+	if (mbDragLeft || mbDragRight) {
 		mDragAnchorX = x;
 		mDragAnchorY = y;
 
-		if (mbSelectionMode)
+		if (mbDragSelectionMode)
 			SetSelection(mSelectStart, PixelToTime(x));
 		else if (dx|dy)
 			mContext.mpParent->ScrollDeltaPixels(dx, 0);
@@ -1405,25 +1568,51 @@ void ATUITraceViewerEventView::OnMouseMove(int x, int y) {
 }
 
 void ATUITraceViewerEventView::OnMouseDownL(int x, int y) {
+	if (mbDragRight)
+		return;
+
 	mDragAnchorX = x;
 	mDragAnchorY = y;
+	mbDragSelectionMode = mbSelectionMode;
 
-	if (mbSelectionMode) {
+	if (mbDragSelectionMode) {
 		double t = PixelToTime(x);
 		SetSelection(t, t);
 	}
 }
 
 void ATUITraceViewerEventView::OnMouseUpL(int x, int y) {
-	if (mbDragging) {
-		mbDragging = false;
+	if (mbDragLeft) {
+		mbDragLeft = false;
 
 		ReleaseCapture();
 
-		if (mbSelectionMode)
+		if (mbDragSelectionMode)
 			SetSelection(mSelectStart, PixelToTime(x));
 	} else {
 		mContext.mpParent->SetFocusTime(PixelToTime(x));
+	}
+}
+
+bool ATUITraceViewerEventView::OnMouseDownR(int x, int y) {
+	if (mbDragLeft)
+		return false;
+
+	mDragAnchorX = x;
+	mDragAnchorY = y;
+	mbDragSelectionMode = false;
+	mbSuppressContextMenu = false;
+	return true;
+}
+
+bool ATUITraceViewerEventView::OnMouseUpR(int x, int y) {
+	if (mbDragRight) {
+		mbDragRight = false;
+
+		ReleaseCapture();
+		return true;
+	} else {
+		return false;
 	}
 }
 
@@ -1439,7 +1628,7 @@ void ATUITraceViewerEventView::OnMouseWheel(int x, int y, sint32 delta) {
 }
 
 void ATUITraceViewerEventView::OnContextMenu(uint32 id, int x, int y) {
-	if (y < 0)
+	if (y < 0 || mbSuppressContextMenu)
 		return;
 
 	vdpoint32 cpt = TransformScreenToClient(vdpoint32(x, y));
@@ -1470,12 +1659,13 @@ void ATUITraceViewerEventView::OnContextMenu(uint32 id, int x, int y) {
 }
 
 bool ATUITraceViewerEventView::OnSetCursor(ATUICursorImage& image) {
-	image = mContext.mbSelectionMode ? kATUICursorImage_IBeam : kATUICursorImage_Arrow;
+	image = (mbDragLeft || mbDragRight ? mbDragSelectionMode : mbSelectionMode) ? kATUICursorImage_IBeam : kATUICursorImage_Arrow;
 	return true;
 }
 
 void ATUITraceViewerEventView::OnCaptureLost() {
-	mbDragging = false;
+	mbDragLeft = false;
+	mbDragRight = false;
 }
 
 bool ATUITraceViewerEventView::OnShouldErase() {
@@ -1507,6 +1697,8 @@ bool ATUITraceViewerEventView::OnPaint() {
 
 	const sint32 clipX1 = ps.rcPaint.left;
 	const sint32 clipX2 = ps.rcPaint.right;
+	const sint32 clipY1 = ps.rcPaint.top;
+	const sint32 clipY2 = ps.rcPaint.bottom;
 
 	const double startTime = mStartTime;
 	const double endTime = mEndTime;
@@ -1537,10 +1729,10 @@ bool ATUITraceViewerEventView::OnPaint() {
 				const double vblStartFrac = isPal ? 248.0f / 312.0f : 248.0f / 262.0f;
 
 				const double x0f = (ev.mEventStart - mStartTime) / mSecondsPerPixel;
-				const sint32 x0 = (sint32)x0f;
-				const sint32 xve = (sint32)(x0f + (vblEndFrac * duration) / mSecondsPerPixel);
-				const sint32 xvs = (sint32)(x0f + (vblStartFrac * duration) / mSecondsPerPixel);
-				const sint32 x1 = (sint32)((ev.mEventStop - mStartTime) / mSecondsPerPixel);
+				const sint32 x0 = VDFloorToInt32(x0f);
+				const sint32 xve = VDFloorToInt32(x0f + (vblEndFrac * duration) / mSecondsPerPixel);
+				const sint32 xvs = VDFloorToInt32(x0f + (vblStartFrac * duration) / mSecondsPerPixel);
+				const sint32 x1 = VDFloorToInt32((ev.mEventStop - mStartTime) / mSecondsPerPixel);
 
 				MoveToEx(hdc, x0, 0, nullptr);
 				LineTo(hdc, x0, sz.h);
@@ -1559,17 +1751,22 @@ bool ATUITraceViewerEventView::OnPaint() {
 	}
 
 	if (!mContext.mGroups.empty()) {
-		sint32 lastY = 0;
-
 		for(const auto *group : mContext.mGroups) {
-			const sint32 groupY = group->mPosY;
+			const sint32 groupY = group->mPosY - mScrollY;
 
 			for(auto *ch : group->mChannels) {
 				const sint32 y = ch->mPosY + groupY;
 
+				// check if channel is vertically clipped
+				if (y >= clipY2)
+					continue;
+
+				if (y + ch->mHeight <= clipY1)
+					continue;
+
 				SetDCPenColor(hdc, RGB(160, 160, 160));
-				MoveToEx(hdc, 0, groupY + ch->mPosY, nullptr);
-				LineTo(hdc, sz.w, groupY + ch->mPosY);
+				MoveToEx(hdc, 0, y, nullptr);
+				LineTo(hdc, sz.w, y);
 
 				if (ch->mType == ATUITraceViewerChannel::kType_Video) {
 					IATTraceChannelVideo *vch = vdpoly_cast<IATTraceChannelVideo *>(ch->mpChannel.get());
@@ -1578,17 +1775,22 @@ bool ATUITraceViewerEventView::OnPaint() {
 					const sint32 imgy = groupY + ch->mPosY + 2;
 					double secondsPerFrame = mSecondsPerPixel * (double)imgw;
 
+					if (ch->mAvgSecondsPerFrame > 0) {
+						secondsPerFrame = ch->mAvgSecondsPerFrame * powf(2.0f, ceilf(log2f(secondsPerFrame / ch->mAvgSecondsPerFrame)));
+					}
+
 					// We are binning the timeline into equally spaced bins <secondsPerFrame> apart and binning
 					// frame times by that, choosing the nearest frame to represent each bin. However, the frames
 					// themselves take half a frame time on either side of that, so we expand the bracket by half
 					// a frame on either side.
-					double frameStartIndex = floor(eventStartClip / secondsPerFrame - 0.5);
-					double frameEndIndex = ceil(eventEndClip / secondsPerFrame + 0.5);
+					double frameTime0 = ch->mFrameTime0 - secondsPerFrame * 0.5;
+					double frameStartIndex = floor((eventStartClip - frameTime0) / secondsPerFrame - 0.5);
+					double frameEndIndex = ceil((eventEndClip - frameTime0) / secondsPerFrame + 0.5);
 					sint32 frameCount = (sint32)(frameEndIndex - frameStartIndex + 0.5);
 					double lastFrameTime = -DBL_MAX;
 
 					for(sint32 i = 0; i < frameCount; ++i) {
-						double frameStartBracketTime = (frameStartIndex + (double)i) * secondsPerFrame;
+						double frameStartBracketTime = frameTime0 + (frameStartIndex + (double)i) * secondsPerFrame;
 						double frameTime;
 						sint32 frameBufferIndex = vch->GetNearestFrameIndex(frameStartBracketTime, frameStartBracketTime + secondsPerFrame, frameTime);
 						
@@ -1597,7 +1799,7 @@ bool ATUITraceViewerEventView::OnPaint() {
 							continue;
 
 						// compute the blit position for this frame
-						const sint32 imgx = (sint32)((frameTime - mStartTime - (double)imgw * mSecondsPerPixel * 0.5) / mSecondsPerPixel);
+						const sint32 imgx = (sint32)((frameTime - mStartTime) / mSecondsPerPixel - (double)imgw * 0.5);
 
 						// skip if outside of clip range
 						if (imgx <= clipX1 - imgw || imgx >= clipX2)
@@ -1829,10 +2031,12 @@ bool ATUITraceViewerEventView::OnPaint() {
 						}
 					}
 				}
-
-				lastY = ch->mPosY + ch->mHeight;
 			}
 		}
+
+		// draw line after last group
+		ATUITraceViewerGroup *lastGroup = mContext.mGroups.back();
+		sint32 lastY = lastGroup->mPosY + lastGroup->mHeight - mScrollY;
 
 		MoveToEx(hdc, 0, lastY, nullptr);
 		LineTo(hdc, sz.w, lastY);
@@ -1894,16 +2098,18 @@ sint32 ATUITraceViewerEventView::TimeToPixel(double t) const {
 }
 
 ATUITraceViewerChannel *ATUITraceViewerEventView::PointToTraceChannel(const vdpoint32& cpt) const {
+	sint32 channelY = cpt.y + mScrollY;
+
 	for(const auto *group : mContext.mGroups) {
 		const sint32 groupY = group->mPosY;
 
-		if (cpt.y < groupY || (cpt.y - groupY) >= group->mHeight)
+		if (channelY < groupY || (channelY - groupY) >= group->mHeight)
 			continue;
 
 		for(auto *ch : group->mChannels) {
 			const sint32 chY = ch->mPosY + groupY;
 
-			if (cpt.y >= chY && (cpt.y - chY) < ch->mHeight)
+			if (channelY >= chY && (channelY - chY) < ch->mHeight)
 				return ch;
 		}
 
@@ -2051,6 +2257,7 @@ public:
 	double GetViewCenterTime() const;
 
 	void StartStopTracing();
+	void StartNativeTrace();
 	void ZoomIn();
 	void ZoomOut();
 
@@ -2071,12 +2278,12 @@ private:
 	void SetFocusTime(double t) override;
 	void SetSelection(double startTime, double endTime) override;
 	void SetSelectionMode(bool selMode) override;
+	void SetGroupHeightScale(int groupIndex, float scale) override;
 
 private:
 	bool OnLoaded() override;
 	void OnDestroy() override;
 	void OnSize() override;
-	void OnHScroll(uint32 id, int code) override;
 	void OnDpiChanged() override;
 	sint32 GetBackgroundColor() const override { return GetTraceViewerTheme().mPanelBackground; }
 	bool PreNCDestroy() override { return true; }
@@ -2086,8 +2293,13 @@ private:
 	void UpdateToolbarSelectionState();
 	void UpdateFonts();
 	void ClearGroupViews();
-	void UpdateChannels();
+	void UpdateChannelBaseHeights();
+	void UpdateChannelPositions();
+	void VScrollToPixel(sint32 pos);
 	void UpdateHScroll(bool updateRange);
+	void UpdateVScroll(bool updateRange);
+	bool ShouldVScrollBeVisible() const;
+	void UpdateTraceButton();
 
 	void OnToolbarClicked(uint32 id);
 
@@ -2105,10 +2317,14 @@ private:
 		kToolbarId_History,
 	};
 
-	uint64 mCyclesPerPixel = 1000;
 	sint32 mChannelSplitX = 200;
 	sint32 mSplitterWidth = 5;
 	sint32 mEventViewWidth = 0;
+	sint32 mEventViewHeight = 0;
+	sint32 mScrollY = 0;
+
+	// Height of all channel groups, in pixels, not clipped by event viewport.
+	sint32 mAllGroupHeight = 0;
 
 	double mStartTime = 0;
 	double mSecondsPerPixel = 1.0f / 10.0f;
@@ -2118,8 +2334,6 @@ private:
 	sint32 mZoomLevel = -5;
 
 	uint32 mSimEventIdTraceLimited = 0;
-
-	HWND mhwndHScrollbar = nullptr;
 
 	IATUITraceViewerHost& mHost;
 
@@ -2135,6 +2349,8 @@ private:
 	ATUITraceViewerCPUHistoryView mCPUHistoryView;
 	ATUITraceViewerCPUProfileView mCPUProfileView;
 	VDUIProxyToolbarControl mToolbar;
+	VDUIProxyScrollBarControl mHScrollBar;
+	VDUIProxyScrollBarControl mVScrollBar;
 
 	vdfunction<void()> mThemeChangedFn;
 };
@@ -2156,6 +2372,18 @@ ATUITraceViewer::ATUITraceViewer(ATTraceCollection *collection, IATUITraceViewer
 
 	mToolbar.SetDarkModeEnabled(true);
 	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarClicked(id); });
+
+	mHScrollBar.SetOnValueChanged(
+		[this](sint32 value, bool final) {
+			ScrollToCenterTime((double)value * mSecondsPerHScrollTick);
+		}
+	);
+
+	mVScrollBar.SetOnValueChanged(
+		[this](sint32 value, bool final) {
+			VScrollToPixel(value);
+		}
+	);
 
 	mThemeChangedFn = [this] { Invalidate(); };
 }
@@ -2179,21 +2407,34 @@ void ATUITraceViewer::StartStopTracing() {
 		SetCollection(nullptr);
 		mHost.ClearLoadedTraceName();
 
-		g_sim.SetTracingEnabled(&mSettings);
+		g_sim.StartTracing(mSettings);
 		g_sim.Resume();
 	} else {
 		mbRecording = false;
 
 		vdrefptr<ATTraceCollection> newCollection { g_sim.GetTraceCollection() };
-		g_sim.SetTracingEnabled(nullptr);
+		g_sim.StopTracing();
 		g_sim.Pause();
 
 		SetCollection(newCollection);
 		mHost.SetLoadedTraceNameCaptured();
 	}
 
-	mToolbar.SetItemText(kToolbarId_StartStop, mbRecording ? L"Stop" : L"Start");
-	mToolbar.SetItemImage(kToolbarId_StartStop, mbRecording ? 0 : 1);
+	UpdateTraceButton();
+}
+
+void ATUITraceViewer::StartNativeTrace() {
+	mbRecording = true;
+
+	SetCollection(nullptr);
+	mHost.ClearLoadedTraceName();
+
+	ATNativeTraceSettings traceSettings;
+	static_cast<ATBaseTraceSettings&>(traceSettings) = mSettings;
+	g_sim.StartNativeTracing(traceSettings);
+	g_sim.Resume();
+
+	UpdateTraceButton();
 }
 
 void ATUITraceViewer::ZoomIn() {
@@ -2342,11 +2583,13 @@ void ATUITraceViewer::ExportToChromeTrace(const wchar_t *path) const {
 	vdfastvector<std::pair<uint32, uint32>> callFrameTable;
 	vdhashmap<std::pair<uint32, uint32>, uint32, CallFrameHash> callFrameLookup;
 
+	auto cursor = cpuTrace.StartHistoryIteration(0, 0);
+
 	int tid = kATProfileContext_Main;
 	int nextTid = tid;
 	bool firstEvent = true;
 	while(pos < endEventIdx) {
-		uint32 n = cpuTrace.ReadHistoryEvents(hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
+		uint32 n = cpuTrace.ReadHistoryEvents(cursor, hents, pos, std::min<uint32>(endEventIdx - pos, (uint32)vdcountof(hents)));
 		if (!n)
 			break;
 
@@ -2639,6 +2882,8 @@ void ATUITraceViewer::SetCollection(ATTraceCollection *collection) {
 		mpCollection = collection;
 
 		mStartTime = 0;
+		
+		VScrollToPixel(0);
 		RebuildViews();
 	}
 }
@@ -2733,6 +2978,19 @@ void ATUITraceViewer::SetSelectionMode(bool selMode) {
 	}
 }
 
+void ATUITraceViewer::SetGroupHeightScale(int groupIndex, float scale) {
+	if (groupIndex < 0 || (unsigned)groupIndex >= mContext.mGroups.size())
+		return;
+
+	ATUITraceViewerGroup *group = mContext.mGroups[groupIndex];
+
+	if (group->mVariableHeightScale != scale) {
+		group->mVariableHeightScale = scale;
+
+		UpdateChannelPositions();
+	}
+}
+
 bool ATUITraceViewer::OnLoaded() {
 	mContext.mDpi = mCurrentDpi;
 
@@ -2741,8 +2999,8 @@ bool ATUITraceViewer::OnLoaded() {
 		return false;
 
 	AddProxy(&mToolbar, hwndToolbar);
-
-	mhwndHScrollbar = GetControl(IDC_HSCROLLBAR);
+	AddProxy(&mHScrollBar, IDC_HSCROLLBAR);
+	AddProxy(&mVScrollBar, IDC_VSCROLLBAR);
 
 	SendMessage(mToolbar.GetHandle(), WM_SETFONT, (WPARAM)mhfont, TRUE);
 
@@ -2771,8 +3029,6 @@ bool ATUITraceViewer::OnLoaded() {
 void ATUITraceViewer::OnDestroy() {
 	ATUIUnregisterThemeChangeNotification(&mThemeChangedFn);
 
-	mhwndHScrollbar = nullptr;
-
 	mTimescaleView.Destroy();
 	mChannelView.Destroy();
 	mEventView.Destroy();
@@ -2800,9 +3056,14 @@ void ATUITraceViewer::OnSize() {
 
 	const sint32 hscrollH = GetDpiScaledMetric(SM_CYHSCROLL);
 	const sint32 eventViewH = std::max<sint32>(0, r.bottom - hscrollH - toolbarH - mSplitterWidth);
+	mEventViewHeight = eventViewH;
+
+	// caution -- this uses mEventViewHeight
+	const bool needVScrollBar = ShouldVScrollBeVisible();
+	const sint32 vscrollW = needVScrollBar ? GetDpiScaledMetric(SM_CXVSCROLL) : 0;
 
 	const sint32 eventViewX1 = mChannelSplitX + mSplitterWidth;
-	mEventViewWidth = std::max<sint32>(0, r.right - eventViewX1);
+	mEventViewWidth = std::max<sint32>(0, r.right - eventViewX1 - vscrollW);
 
 	const sint32 eventViewX2 = eventViewX1 + mEventViewWidth;
 	const sint32 eventViewY2 = toolbarH + mSplitterWidth + eventViewH;
@@ -2811,59 +3072,15 @@ void ATUITraceViewer::OnSize() {
 	mChannelView.SetArea(vdrect32(0, timelineSplitY + mSplitterWidth, mChannelSplitX, eventViewY2), false);
 	mEventView.SetArea(vdrect32(eventViewX1, timelineSplitY + mSplitterWidth, eventViewX2, eventViewY2), false);
 
-	if (mhwndHScrollbar)
-		SetWindowPos(mhwndHScrollbar, nullptr, eventViewX1, eventViewY2, mEventViewWidth, hscrollH, SWP_NOZORDER | SWP_NOACTIVATE);
-}
+	mHScrollBar.SetArea(vdrect32(eventViewX1, eventViewY2, eventViewX1 + mEventViewWidth, eventViewY2 + hscrollH));
 
-void ATUITraceViewer::OnHScroll(uint32 id, int code) {
-	if (!mhwndHScrollbar)
-		return;
+	if (needVScrollBar) {
+		mVScrollBar.SetArea(vdrect32(eventViewX2, timelineSplitY, eventViewX2 + vscrollW, r.bottom));
+		mVScrollBar.Show();
 
-	SCROLLINFO si = { sizeof(SCROLLINFO), SIF_POS | SIF_TRACKPOS | SIF_RANGE | SIF_PAGE };
-	GetScrollInfo(mhwndHScrollbar, SB_CTL, &si);
-
-	sint32 newPos = si.nPos;
-
-	switch(code) {
-		case SB_LEFT:
-			newPos = 0;
-			break;
-
-		case SB_RIGHT:
-			newPos = si.nMax - si.nPage + 1;
-			break;
-
-		case SB_LINELEFT:
-			newPos = si.nPos - std::max<sint32>(1, (32 * 96) / (mCurrentDpi * mPixelsPerHScrollTick));
-			break;
-
-		case SB_LINERIGHT:
-			newPos = si.nPos + std::max<sint32>(1, (32 * 96) / (mCurrentDpi * mPixelsPerHScrollTick));
-			break;
-
-		case SB_PAGELEFT:
-			newPos = si.nPos - si.nPage;
-			break;
-
-		case SB_PAGERIGHT:
-			newPos = si.nPos + si.nPage;
-			break;
-
-		case SB_THUMBTRACK:
-		case SB_THUMBPOSITION:
-			newPos = si.nTrackPos;
-			break;
-	}
-
-	newPos = std::max<sint32>(0, std::min<sint32>(newPos, si.nMax - si.nPage + 1));
-
-	if (newPos != si.nPos) {
-		si.nPos = newPos;
-		si.fMask = SIF_POS;
-		SetScrollInfo(mhwndHScrollbar, SB_CTL, &si, TRUE);
-	}
-
-	ScrollToCenterTime((double)si.nPos * mSecondsPerHScrollTick);
+		UpdateVScroll(true);
+	} else
+		mVScrollBar.Hide();
 }
 
 void ATUITraceViewer::OnDpiChanged() {
@@ -2871,7 +3088,7 @@ void ATUITraceViewer::OnDpiChanged() {
 
 	UpdateFonts();
 	OnSize();
-	UpdateChannels();
+	UpdateChannelBaseHeights();
 	RebuildToolbar();
 
 	mTimescaleView.UpdateChildDpi();
@@ -2918,8 +3135,10 @@ void ATUITraceViewer::RebuildViews() {
 				if (!viewerGroup) {
 					viewerGroup = new ATUITraceViewerGroup;
 					viewerGroup->mName = group->GetName();
-					viewerGroup->mHeight = 0;
 					viewerGroup->mpGroup = group;
+
+					if (type == kATTraceGroupType_Video)
+						viewerGroup->mbVariableHeight = true;
 				}
 
 				vdautoptr<ATUITraceViewerChannel> viewerChannel { new ATUITraceViewerChannel };
@@ -2931,6 +3150,19 @@ void ATUITraceViewer::RebuildViews() {
 					= (type == kATTraceGroupType_Video) ? ATUITraceViewerChannel::kType_Video
 					: (type == kATTraceGroupType_Tape) ? ATUITraceViewerChannel::kType_Tape
 					: ATUITraceViewerChannel::kType_Default;
+
+				if (viewerChannel->mType == ATUITraceViewerChannel::kType_Video) {
+					IATTraceChannelVideo *videoChannel = vdpoly_cast<IATTraceChannelVideo *>(channel);
+					if (videoChannel) {
+						uint32 n = channel->GetEventCount();
+
+						if (n > 1) {
+							viewerChannel->mFrameTime0 = videoChannel->GetTimeForFrame(0);
+							viewerChannel->mAvgSecondsPerFrame = (videoChannel->GetTimeForFrame(n - 1) - videoChannel->GetTimeForFrame(0)) / (double)(n - 1);
+						}
+					}
+				}
+
 				viewerGroup->mChannels.push_back(viewerChannel);
 				viewerChannel.release();
 			}
@@ -2954,7 +3186,7 @@ void ATUITraceViewer::RebuildViews() {
 	mCPUHistoryView.SetCPUTraceChannel(cpuHistoryChannel, mTimestampDecoder);
 	mCPUProfileView.SetCPUTraceChannel(cpuHistoryChannel, mTimestampDecoder);
 
-	UpdateChannels();
+	UpdateChannelBaseHeights();
 
 	ZoomDeltaSteps(0, mZoomLevel + 15);
 }
@@ -3029,11 +3261,9 @@ void ATUITraceViewer::ClearGroupViews() {
 	mContext.mpCPUHistoryChannel = nullptr;
 }
 
-void ATUITraceViewer::UpdateChannels() {
-	sint32 posY = 0;
+void ATUITraceViewer::UpdateChannelBaseHeights() {
 	const sint32 channelHeight = mContext.mEventFontMetrics.tmHeight + (8 * mContext.mDpi + 48) / 96;
-	const sint32 videoChannelHeight = (100 * mContext.mDpi + 48) / 96;
-	const sint32 tapeChannelHeight = videoChannelHeight >> 1;
+	const sint32 tapeChannelHeight = (50 * mContext.mDpi + 48) / 96;
 
 	for (auto *group : mContext.mGroups) {
 		sint32 groupY = 0;
@@ -3044,31 +3274,114 @@ void ATUITraceViewer::UpdateChannels() {
 			switch(ch->mType) {
 				case ATUITraceViewerChannel::kType_Default:
 				default:
-					ch->mHeight = channelHeight;
+					ch->mBaseHeight = channelHeight;
 					break;
 
 				case ATUITraceViewerChannel::kType_Video:
-					ch->mHeight = videoChannelHeight;
+					{
+						sint32 videoHeight = 128;
+
+						if (auto *videoCh = vdpoly_cast<IATTraceChannelVideo *>(ch->mpChannel)) {
+							uint32 n = videoCh->GetFrameBufferCount();
+
+							if (n > 0) {
+								videoHeight = 16;
+
+								for(uint32 i = 0; i < n; ++i) {
+									auto sz = videoCh->GetFrameSizeByIndex(i);
+
+									videoHeight = std::max<sint32>(videoHeight, sz.h);
+								}
+							}
+
+							// clamp the assessed height in case we have some really huge frames
+							if (videoHeight > 512)
+								videoHeight = 512;
+						}
+
+						// Originally, the video channel was a fixed 100 pixels tall for a 128 pixel frame.
+						const sint32 videoChannelHeight = VDRoundToInt32((float)videoHeight * (100.0f / 128.0f) * (float)mContext.mDpi / 96.0f);
+						ch->mBaseHeight = videoChannelHeight;
+					}
 					break;
 
 				case ATUITraceViewerChannel::kType_Tape:
-					ch->mHeight = tapeChannelHeight;
+					ch->mBaseHeight = tapeChannelHeight;
 					break;
 			}
 
-			groupY += ch->mHeight;
+			groupY += ch->mBaseHeight;
 		}
 
+		group->mBaseHeight = std::max<sint32>(groupY, 50);
+	}
+
+	UpdateChannelPositions();
+}
+
+void ATUITraceViewer::UpdateChannelPositions() {
+	sint32 posY = 0;
+
+	for (auto *group : mContext.mGroups) {
 		group->mPosY = posY;
-		group->mHeight = std::max<sint32>(groupY, 50);
+
+		if (group->mbVariableHeight) {
+			group->mHeight = std::max<int>(50, VDRoundToInt32((float)group->mBaseHeight * group->mVariableHeightScale));
+
+			sint32 groupY = 0;
+			for (auto *ch : group->mChannels) {
+				ch->mPosY = groupY;
+				ch->mHeight = group->mHeight;
+				groupY += ch->mHeight;
+			}
+		} else {
+			group->mHeight = group->mBaseHeight;
+
+			sint32 groupY = 0;
+			for (auto *ch : group->mChannels) {
+				ch->mPosY = groupY;
+				ch->mHeight = ch->mBaseHeight;
+				groupY += ch->mHeight;
+			}
+		}
+
 		posY += group->mHeight;
 	}
 
+	// update the all group height, and update the vertical scroll bar if
+	// needed
+	if (mAllGroupHeight != posY) {
+		mAllGroupHeight = posY;
+
+		UpdateVScroll(true);
+	}
+
+	// repaint the channel and event views
 	mChannelView.OnChannelsChanged();
+	mEventView.Invalidate();
+}
+
+void ATUITraceViewer::VScrollToPixel(sint32 pos) {
+	if (pos < 0)
+		pos = 0;
+
+	if (mScrollY != pos) {
+		const sint32 origPos = mScrollY;
+		const sint32 delta = pos - mScrollY;
+		mScrollY = pos;
+
+		mEventView.VScrollToPixel(pos);
+		mChannelView.VScrollToPixel(pos);
+
+		// if we scrolled up when scrolled past the normal bottom, recalc
+		// the scroll bar range to shrink or hide it if necessary
+		if (delta < 0 && origPos + mEventViewHeight > mAllGroupHeight)
+			UpdateVScroll(true);
+	}
 }
 
 void ATUITraceViewer::UpdateHScroll(bool updateRange) {
-	if (!mhwndHScrollbar)
+	if (!mHScrollBar.IsValid())
 		return;
 
 	if (updateRange) {
@@ -3084,19 +3397,64 @@ void ATUITraceViewer::UpdateHScroll(bool updateRange) {
 		}
 	}
 
-	SCROLLINFO si {};
-	si.cbSize = sizeof(SCROLLINFO);
-	si.fMask = SIF_POS;
-	si.nPos = (sint32)(0.5 + (mStartTime + (double)mEventViewWidth * 0.5 * mSecondsPerPixel) / mSecondsPerHScrollTick);
+	const sint32 newValue = (sint32)(0.5 + (mStartTime + (double)mEventViewWidth * 0.5 * mSecondsPerPixel) / mSecondsPerHScrollTick);
 
 	if (updateRange) {
-		si.fMask |= SIF_RANGE | SIF_PAGE;
-		si.nPage = std::max(1, (mEventViewWidth + mPixelsPerHScrollTick - 1) / mPixelsPerHScrollTick);
-		si.nMin = 0;
-		si.nMax = (sint32)ceil(mTraceDuration / mSecondsPerHScrollTick) + si.nPage - 1;
-	}
+		sint32 newPageSize = std::max(1, (mEventViewWidth + mPixelsPerHScrollTick - 1) / mPixelsPerHScrollTick);
+		auto newRange = std::make_pair<sint32, sint32>(
+			0,
+			(sint32)ceil(mTraceDuration / mSecondsPerHScrollTick) + newPageSize - 1
+		);
 
-	SetScrollInfo(mhwndHScrollbar, SB_CTL, &si, TRUE);
+		mHScrollBar.SetParams(
+			newValue,
+			newRange,
+			newPageSize
+		);
+	} else {
+		mHScrollBar.SetValue(newValue);
+	}
+}
+
+void ATUITraceViewer::UpdateVScroll(bool updateRange) {
+	if (!mVScrollBar.IsValid())
+		return;
+
+	const sint32 newValue = mScrollY;
+
+	if (updateRange) {
+		const bool shouldBeVisible = ShouldVScrollBeVisible();
+
+		if (shouldBeVisible) {
+			// We may be scrolled beyond the normal area, due to the channel stack being shrunk
+			// or the window enlarged. Temporarily pretend the channel stack is taller to keep
+			// the current scroll position valid; it will be shrunk if the view is scrolled back
+			// up.
+			const sint32 canvasHeight = std::max<sint32>(mAllGroupHeight, mEventViewHeight + mScrollY);
+
+			if (mEventViewHeight && mEventViewHeight < canvasHeight) {
+				mVScrollBar.SetParams(
+					newValue,
+					std::make_pair((sint32)0, canvasHeight),
+					std::max<sint32>(1, mEventViewHeight)
+				);
+			}
+		}
+
+		if (mVScrollBar.IsVisible() != shouldBeVisible)
+			OnSize();
+	} else {
+		mVScrollBar.SetValue(newValue);
+	}
+}
+
+bool ATUITraceViewer::ShouldVScrollBeVisible() const {
+	return mScrollY > 0 || mAllGroupHeight > mEventViewHeight;
+}
+
+void ATUITraceViewer::UpdateTraceButton() {
+	mToolbar.SetItemText(kToolbarId_StartStop, mbRecording ? L"Stop" : L"Start");
+	mToolbar.SetItemImage(kToolbarId_StartStop, mbRecording ? 0 : 1);
 }
 
 void ATUITraceViewer::OnToolbarClicked(uint32 id) {
@@ -3203,6 +3561,7 @@ private:
 private:
 	void DoLoad();
 	void DoSave();
+	void DoStartNativeTrace();
 	void DoImportAtari800();
 	void UpdateCaption();
 
@@ -3251,7 +3610,7 @@ LRESULT ATUIPerformanceAnalyzerContainerWindow::WndProc(UINT msg, WPARAM wParam,
 }
 
 bool ATUIPerformanceAnalyzerContainerWindow::OnCreate() {
-	ATUIRegisterModelessDialog(mhwnd);
+	ATUIRegisterModelessWindow(mhwnd);
 
 	if (!mhmenu) {
 		mhmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_PERFANALYZER_MENU));
@@ -3270,7 +3629,7 @@ void ATUIPerformanceAnalyzerContainerWindow::OnDestroy() {
 		mhmenu = nullptr;
 	}
 
-	ATUIUnregisterModelessDialog(mhwnd);
+	ATUIUnregisterModelessWindow(mhwnd);
 
 	ATContainerWindow::OnDestroy();
 }
@@ -3301,6 +3660,10 @@ bool ATUIPerformanceAnalyzerContainerWindow::OnCommand(UINT cmd) {
 					if (!path.empty())
 						mpTraceViewer->ExportToChromeTrace(path.c_str());
 				}
+				return true;
+
+			case ID_TRACE_STARTNATIVETRACE:
+				DoStartNativeTrace();
 				return true;
 
 			case ID_TOOLS_VIEWMEMORYSTATISTICS:
@@ -3339,6 +3702,10 @@ void ATUIPerformanceAnalyzerContainerWindow::DoSave() {
 	mpTraceViewer->Save(path.c_str());
 	mLoadedTraceName = VDFileSplitPath(path.c_str());
 	UpdateCaption();
+}
+
+void ATUIPerformanceAnalyzerContainerWindow::DoStartNativeTrace() {
+	mpTraceViewer->StartNativeTrace();
 }
 
 void ATUIPerformanceAnalyzerContainerWindow::DoImportAtari800() {

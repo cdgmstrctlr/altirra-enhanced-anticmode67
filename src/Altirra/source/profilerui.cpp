@@ -56,7 +56,7 @@ public:
 	void SetOnRangeSelected(const vdfunction<void(uint32, uint32)>& fn) { mpOnRangeSelected = fn; }
 
 protected:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 	void OnCreate();
 	void OnSize();
 	bool OnPreKeyDown(WPARAM wParam, LPARAM lParam);
@@ -1701,8 +1701,8 @@ class ATUIProfileView final : public ATUINativeWindow, public IATUIProfileView {
 public:
 	ATUIProfileView();
 
-	int AddRef() { return ATUINativeWindow::AddRef(); }
-	int Release() { return ATUINativeWindow::Release(); }
+	int AddRef() override { return ATUINativeWindow::AddRef(); }
+	int Release() override { return ATUINativeWindow::Release(); }
 
 	ATUINativeWindow *AsUINativeWindow() override { return this; }
 
@@ -2450,7 +2450,7 @@ void ATUIProfilerPane::OnSize() {
 
 	int toph = 0;
 
-	if (HWND hwndTimelineView = mTimelineView.GetHandleW32()) {
+	if (mTimelineView.IsValid()) {
 		if (mSession.mpFrames.size() > 1) {
 			toph = lh / 3;
 			mTimelineView.SetArea(vdrect32(0, y, r.right, y + toph));

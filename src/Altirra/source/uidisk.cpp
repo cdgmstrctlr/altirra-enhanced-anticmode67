@@ -42,6 +42,7 @@
 #include <at/atnativeui/dragdrop.h>
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include "resource.h"
 #include "disk.h"
 #include "simulator.h"
@@ -636,6 +637,9 @@ protected:
 	void OnDpiChanged() override;
 	bool PreNCDestroy() override;
 
+	void OnDriveWriteModeChanged(int visibleSlotIndex, int sel);
+	void OnEmulationModeChanged(int sel);
+
 	void AttachToInterfaces();
 	void DetachFromInterfaces();
 	void UpdateFonts();
@@ -675,6 +679,9 @@ protected:
 	HFONT mhFontMarlett = nullptr;
 	COLORREF mDriveColors[kDriveColorCount] {};
 
+	VDUIProxyComboBoxControl mDriveModeViews[8];
+	VDUIProxyComboBoxControl mEmuModeView;
+
 	DriveEntry mDriveEntries[15];
 
 	vdrefptr<ATDiskDriveDropTargetW32> mpDropTarget;
@@ -710,6 +717,16 @@ ATDiskDriveDialog::ATDiskDriveDialog()
 	mpDropTarget = new ATDiskDriveDropTargetW32(mhdlg, this);
 
 	g_pATDiskDriveDialog = this;
+
+	for(int i=0; i<8; ++i) {
+		mDriveModeViews[i].SetOnSelectionChanged(
+			[i, this](int sel) { OnDriveWriteModeChanged(i, sel); }
+		);
+	}
+
+	mEmuModeView.SetOnSelectionChanged(
+		[this](int sel) { OnEmulationModeChanged(sel); }
+	);
 }
 
 ATDiskDriveDialog::~ATDiskDriveDialog() {
@@ -800,8 +817,10 @@ bool ATDiskDriveDialog::OnLoaded() {
 	for(uint32 id : kEjectID)
 		mResizer.Add(id, mResizer.kTR);
 
-	for(uint32 id : kWriteModeID)
-		mResizer.Add(id, mResizer.kTR);
+	for (int i=0; i<8; ++i) {
+		AddProxy(&mDriveModeViews[i], kWriteModeID[i]);
+		mResizer.Add(kWriteModeID[i], mResizer.kTR);
+	}
 
 	for(uint32 id : kBrowseIds)
 		mResizer.Add(id, mResizer.kTR);
@@ -810,6 +829,8 @@ bool ATDiskDriveDialog::OnLoaded() {
 		mResizer.Add(id, mResizer.kTC);
 
 	mResizer.Add(IDOK, mResizer.kTR);
+
+	AddProxy(&mEmuModeView, IDC_EMULATION_LEVEL);
 
 	SetCurrentSizeAsMaxSize(false, true);
 
@@ -831,11 +852,26 @@ bool ATDiskDriveDialog::OnLoaded() {
 
 	UpdateFonts();
 
+	const bool dark = ATUIIsDarkThemeActive();
+	DWORD defaultBg = GetSysColor(COLOR_3DFACE);
+
+	if (!mDriveColors[kDriveColor_Default] && dark) {
+		const auto& themew32 = ATUIGetThemeColorsW32();
+
+		mDriveColorBrushes[kDriveColor_Default] = themew32.mContentBgBrush;
+		mDriveColors[kDriveColor_Default] = themew32.mContentBgCRef;
+
+		defaultBg = themew32.mContentBgCRef;
+	}
+
 	if (!mDriveColors[kDriveColor_Dirty]) {
-		DWORD c = GetSysColor(COLOR_3DFACE);
+		DWORD c = defaultBg;
 
 		// redden the color
 		uint32 d = RGB(255, 128, 64);
+
+		if (dark)
+			d = (d & 0xfefefe) >> 1;
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
@@ -844,10 +880,13 @@ bool ATDiskDriveDialog::OnLoaded() {
 	}
 
 	if (!mDriveColors[kDriveColor_Virtual]) {
-		DWORD c = GetSysColor(COLOR_3DFACE);
+		DWORD c = defaultBg;
 
 		// bluify the color
 		uint32 d = RGB(64, 128, 255);
+
+		if (dark)
+			d = (d & 0xfefefe) >> 1;
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
@@ -856,10 +895,13 @@ bool ATDiskDriveDialog::OnLoaded() {
 	}
 
 	if (!mDriveColors[kDriveColor_VirtualFolder]) {
-		DWORD c = GetSysColor(COLOR_3DFACE);
+		DWORD c = defaultBg;
 
 		// yellowify the color
 		uint32 d = RGB(255, 224, 128);
+
+		if (dark)
+			d = (d & 0xfefefe) >> 1;
 
 		c = (c|d) - (((c^d) & 0xfefefe)>>1);
 
@@ -918,7 +960,8 @@ void ATDiskDriveDialog::OnDestroy() {
 
 	RevokeDragDrop(mhdlg);
 
-	for(HBRUSH& hbr : mDriveColorBrushes) {
+	// skip Default as it is an alias for the common theme brushes
+	for(HBRUSH& hbr : vdspan(mDriveColorBrushes).subspan(1)) {
 		if (hbr) {
 			DeleteObject(hbr);
 			hbr = nullptr;
@@ -965,14 +1008,6 @@ void ATDiskDriveDialog::OnDataExchange(bool write) {
 		}
 
 		UpdateActionButtons();
-	} else {
-		int selIndex = CBGetSelectedIndex(IDC_EMULATION_LEVEL);
-
-		if (selIndex >= 0 && selIndex < (int)vdcountof(kEmuModes)) {
-			const ATDiskEmulationMode mode = kEmuModes[selIndex].mMode;
-			for(int i=0; i<15; ++i)
-				g_sim.GetDiskDrive(i).SetEmulationMode(mode);
-		}
 	}
 }
 
@@ -1368,6 +1403,7 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 					case ID_CHANGEINTERLEAVE_SD_9_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_9_1); break;
 					case ID_CHANGEINTERLEAVE_SD_9_1_REV:	Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_9_1_REV); break;
 					case ID_CHANGEINTERLEAVE_SD_5_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_5_1); break;
+					case ID_CHANGEINTERLEAVE_SD_4_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_4_1); break;
 					case ID_CHANGEINTERLEAVE_SD_2_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_SD_2_1); break;
 					case ID_CHANGEINTERLEAVE_ED_13_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_ED_13_1); break;
 					case ID_CHANGEINTERLEAVE_ED_12_1:		Reinterleave(driveIndex, diskIf, kATDiskInterleave_ED_12_1); break;
@@ -1414,61 +1450,6 @@ bool ATDiskDriveDialog::OnCommand(uint32 id, uint32 extcode) {
 								ATShowFileInSystemExplorer(filePath.c_str());
 						}
 						break;
-				}
-			}
-			return true;
-
-		case IDC_WRITEMODE8:	++index;
-		case IDC_WRITEMODE7:	++index;
-		case IDC_WRITEMODE6:	++index;
-		case IDC_WRITEMODE5:	++index;
-		case IDC_WRITEMODE4:	++index;
-		case IDC_WRITEMODE3:	++index;
-		case IDC_WRITEMODE2:	++index;
-		case IDC_WRITEMODE1:
-			if (!mInDriveUpdateCount) {
-				int driveIndex = index;
-				if (mbHighDrives)
-					driveIndex += 8;
-
-				int mode = CBGetSelectedIndex(id);
-				ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
-				ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
-
-				if (mode == 0) {
-					// We may get more than one message -- protect against reentrancy
-					// while the confirmation is up.
-					++mInDriveUpdateCount;
-					bool confirmed = ConfirmEject(driveIndex);
-					--mInDriveUpdateCount;
-
-					if (confirmed) {
-						diskIf.UnloadDisk();
-						disk.SetEnabled(false);
-					} else {
-						RefreshDrive(driveIndex, true);
-					}
-				} else {
-					if (diskIf.GetClientCount() < 2)
-						disk.SetEnabled(true);
-
-					switch(mode) {
-						case 1:
-							diskIf.SetWriteMode(kATMediaWriteMode_RO);
-							break;
-
-						case 2:
-							diskIf.SetWriteMode(kATMediaWriteMode_VRWSafe);
-							break;
-
-						case 3:
-							diskIf.SetWriteMode(kATMediaWriteMode_VRW);
-							break;
-
-						case 4:
-							diskIf.SetWriteMode(kATMediaWriteMode_RW);
-							break;
-					}
 				}
 			}
 			return true;
@@ -1566,6 +1547,10 @@ VDZINT_PTR ATDiskDriveDialog::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM l
 
 						DriveColor dcl = mDriveEntries[driveIndex].mColor;
 						SetBkColor(hdc, mDriveColors[dcl]);
+
+						if (ATUIIsDarkThemeActive())
+							SetTextColor(hdc, ATUIGetThemeColorsW32().mContentFgCRef);
+
 						return (VDZINT_PTR)mDriveColorBrushes[dcl];
 					}
 					break;
@@ -1584,6 +1569,66 @@ void ATDiskDriveDialog::OnDpiChanged() {
 
 bool ATDiskDriveDialog::PreNCDestroy() {
 	return !mbIsModal;
+}
+
+void ATDiskDriveDialog::OnDriveWriteModeChanged(int visibleSlotIndex, int sel) {
+	if (mInDriveUpdateCount)
+		return;
+
+	int driveIndex = visibleSlotIndex;
+	if (mbHighDrives)
+		driveIndex += 8;
+
+	if (driveIndex >= 15)
+		return;
+
+	int mode = sel;
+	ATDiskInterface& diskIf = g_sim.GetDiskInterface(driveIndex);
+	ATDiskEmulator& disk = g_sim.GetDiskDrive(driveIndex);
+
+	if (mode == 0) {
+		// We may get more than one message -- protect against reentrancy
+		// while the confirmation is up.
+		++mInDriveUpdateCount;
+		bool confirmed = ConfirmEject(driveIndex);
+		--mInDriveUpdateCount;
+
+		if (confirmed) {
+			diskIf.UnloadDisk();
+			disk.SetEnabled(false);
+		} else {
+			RefreshDrive(driveIndex, true);
+		}
+	} else {
+		if (diskIf.GetClientCount() < 2)
+			disk.SetEnabled(true);
+
+		switch(mode) {
+			case 1:
+				diskIf.SetWriteMode(kATMediaWriteMode_RO);
+				break;
+
+			case 2:
+				diskIf.SetWriteMode(kATMediaWriteMode_VRWSafe);
+				break;
+
+			case 3:
+				diskIf.SetWriteMode(kATMediaWriteMode_VRW);
+				break;
+
+			case 4:
+				diskIf.SetWriteMode(kATMediaWriteMode_RW);
+				break;
+		}
+	}
+}
+
+void ATDiskDriveDialog::OnEmulationModeChanged(int selIndex) {
+	if (selIndex >= 0 && selIndex < (int)vdcountof(kEmuModes)) {
+		const ATDiskEmulationMode mode = kEmuModes[selIndex].mMode;
+		for(int i=0; i<15; ++i)
+			g_sim.GetDiskDrive(i).SetEmulationMode(mode);
+	}
 }
 
 void ATDiskDriveDialog::AttachToInterfaces() {

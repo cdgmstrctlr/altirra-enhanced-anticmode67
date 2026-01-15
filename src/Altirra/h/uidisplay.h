@@ -22,6 +22,7 @@
 
 struct VDPixmap;
 class VDPixmapBuffer;
+class IATVideoWriter;
 
 enum class ATTextCopyMode : uint8 {
 	ASCII,
@@ -51,6 +52,7 @@ public:
 	virtual void UpdateFilterMode() = 0;
 	virtual void UpdateCustomRefreshRate() = 0;
 	virtual void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) = 0;
+	virtual void SetVideoWriter(IATVideoWriter *writer) = 0;
 };
 
 void ATUIRegisterDisplayPane();

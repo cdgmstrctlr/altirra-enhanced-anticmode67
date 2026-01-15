@@ -59,181 +59,6 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATCassetteTurboDecodeAlgorithm)
 	{ ATCassetteTurboDecodeAlgorithm::PeakFilterBalanceHiLo, "peakHiLo" }
 AT_DEFINE_ENUM_TABLE_END(ATCassetteTurboDecodeAlgorithm, ATCassetteTurboDecodeAlgorithm::PeakFilter)
 
-///////////////////////////////////////////////////////////////////////////
-
-namespace {
-	VDALIGN(16) const sint16 kernel[33][8] = {
-		{+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000,+0x0000 },
-		{-0x000a,+0x0052,-0x0179,+0x3fe2,+0x019f,-0x005b,+0x000c,+0x0000 },
-		{-0x0013,+0x009c,-0x02cc,+0x3f86,+0x0362,-0x00c0,+0x001a,+0x0000 },
-		{-0x001a,+0x00dc,-0x03f9,+0x3eef,+0x054a,-0x012c,+0x002b,+0x0000 },
-		{-0x001f,+0x0113,-0x0500,+0x3e1d,+0x0753,-0x01a0,+0x003d,+0x0000 },
-		{-0x0023,+0x0141,-0x05e1,+0x3d12,+0x097c,-0x021a,+0x0050,-0x0001 },
-		{-0x0026,+0x0166,-0x069e,+0x3bd0,+0x0bc4,-0x029a,+0x0066,-0x0001 },
-		{-0x0027,+0x0182,-0x0738,+0x3a5a,+0x0e27,-0x031f,+0x007d,-0x0002 },
-		{-0x0028,+0x0197,-0x07b0,+0x38b2,+0x10a2,-0x03a7,+0x0096,-0x0003 },
-		{-0x0027,+0x01a5,-0x0807,+0x36dc,+0x1333,-0x0430,+0x00af,-0x0005 },
-		{-0x0026,+0x01ab,-0x083f,+0x34db,+0x15d5,-0x04ba,+0x00ca,-0x0007 },
-		{-0x0024,+0x01ac,-0x085b,+0x32b3,+0x1886,-0x0541,+0x00e5,-0x0008 },
-		{-0x0022,+0x01a6,-0x085d,+0x3068,+0x1b40,-0x05c6,+0x0101,-0x000b },
-		{-0x001f,+0x019c,-0x0846,+0x2dfe,+0x1e00,-0x0644,+0x011c,-0x000d },
-		{-0x001c,+0x018e,-0x0819,+0x2b7a,+0x20c1,-0x06bb,+0x0136,-0x0010 },
-		{-0x0019,+0x017c,-0x07d9,+0x28e1,+0x2380,-0x0727,+0x014f,-0x0013 },
-		{-0x0016,+0x0167,-0x0788,+0x2637,+0x2637,-0x0788,+0x0167,-0x0016 },
-		{-0x0013,+0x014f,-0x0727,+0x2380,+0x28e1,-0x07d9,+0x017c,-0x0019 },
-		{-0x0010,+0x0136,-0x06bb,+0x20c1,+0x2b7a,-0x0819,+0x018e,-0x001c },
-		{-0x000d,+0x011c,-0x0644,+0x1e00,+0x2dfe,-0x0846,+0x019c,-0x001f },
-		{-0x000b,+0x0101,-0x05c6,+0x1b40,+0x3068,-0x085d,+0x01a6,-0x0022 },
-		{-0x0008,+0x00e5,-0x0541,+0x1886,+0x32b3,-0x085b,+0x01ac,-0x0024 },
-		{-0x0007,+0x00ca,-0x04ba,+0x15d5,+0x34db,-0x083f,+0x01ab,-0x0026 },
-		{-0x0005,+0x00af,-0x0430,+0x1333,+0x36dc,-0x0807,+0x01a5,-0x0027 },
-		{-0x0003,+0x0096,-0x03a7,+0x10a2,+0x38b2,-0x07b0,+0x0197,-0x0028 },
-		{-0x0002,+0x007d,-0x031f,+0x0e27,+0x3a5a,-0x0738,+0x0182,-0x0027 },
-		{-0x0001,+0x0066,-0x029a,+0x0bc4,+0x3bd0,-0x069e,+0x0166,-0x0026 },
-		{-0x0001,+0x0050,-0x021a,+0x097c,+0x3d12,-0x05e1,+0x0141,-0x0023 },
-		{+0x0000,+0x003d,-0x01a0,+0x0753,+0x3e1d,-0x0500,+0x0113,-0x001f },
-		{+0x0000,+0x002b,-0x012c,+0x054a,+0x3eef,-0x03f9,+0x00dc,-0x001a },
-		{+0x0000,+0x001a,-0x00c0,+0x0362,+0x3f86,-0x02cc,+0x009c,-0x0013 },
-		{+0x0000,+0x000c,-0x005b,+0x019f,+0x3fe2,-0x0179,+0x0052,-0x000a },
-
-		{+0x0000,+0x0000,+0x0000,+0x0000,+0x4000,+0x0000,+0x0000,+0x0000 },
-	};
-
-	uint64 resample16x2_scalar(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
-		do {
-			const sint16 *s2 = s + (uint32)(accum >> 32)*2;
-			const sint16 (*f)[8] = &kernel[(uint32)accum >> 27];
-
-			sint32 frac = ((uint32)accum >> 12) & 0x7FFF;
-			accum += inc;
-
-			sint32 f0 = (sint32)f[0][0] + ((((sint32)f[1][0] - (sint32)f[0][0])*frac) >> 15);
-			sint32 f1 = (sint32)f[0][1] + ((((sint32)f[1][1] - (sint32)f[0][1])*frac) >> 15);
-			sint32 f2 = (sint32)f[0][2] + ((((sint32)f[1][2] - (sint32)f[0][2])*frac) >> 15);
-			sint32 f3 = (sint32)f[0][3] + ((((sint32)f[1][3] - (sint32)f[0][3])*frac) >> 15);
-			sint32 f4 = (sint32)f[0][4] + ((((sint32)f[1][4] - (sint32)f[0][4])*frac) >> 15);
-			sint32 f5 = (sint32)f[0][5] + ((((sint32)f[1][5] - (sint32)f[0][5])*frac) >> 15);
-			sint32 f6 = (sint32)f[0][6] + ((((sint32)f[1][6] - (sint32)f[0][6])*frac) >> 15);
-			sint32 f7 = (sint32)f[0][7] + ((((sint32)f[1][7] - (sint32)f[0][7])*frac) >> 15);
-
-			sint32 l= (sint32)s2[ 0]*f0
-					+ (sint32)s2[ 2]*f1
-					+ (sint32)s2[ 4]*f2
-					+ (sint32)s2[ 6]*f3
-					+ (sint32)s2[ 8]*f4
-					+ (sint32)s2[10]*f5
-					+ (sint32)s2[12]*f6
-					+ (sint32)s2[14]*f7
-					+ 0x20002000;
-
-			sint32 r= (sint32)s2[ 1]*f0
-					+ (sint32)s2[ 3]*f1
-					+ (sint32)s2[ 5]*f2
-					+ (sint32)s2[ 7]*f3
-					+ (sint32)s2[ 9]*f4
-					+ (sint32)s2[11]*f5
-					+ (sint32)s2[13]*f6
-					+ (sint32)s2[15]*f7
-					+ 0x20002000;
-
-			l >>= 14;
-			r >>= 14;
-
-			if ((uint32)l >= 0x10000)
-				l = ~l >> 31;
-			if ((uint32)r >= 0x10000)
-				r = ~r >> 31;
-
-			d[0] = (sint16)(l - 0x8000);
-			d[1] = (sint16)(r - 0x8000);
-			d += 2;
-		} while(--count);
-
-		return accum;
-	}
-
-#if VD_CPU_X86 || VD_CPU_X64
-	uint64 resample16x2_SSE2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
-		__m128i round = _mm_set1_epi32(0x2000);
-
-		do {
-			const __m128i *VDRESTRICT s2 = (const __m128i *)(s + (size_t)(accum >> 32)*2);
-			const __m128i *VDRESTRICT f = (const __m128i *)kernel[(uint32)accum >> 27];
-
-			__m128i frac = _mm_shufflelo_epi16(_mm_cvtsi32_si128((accum >> 12) & 0x7FFF), 0);
-			__m128i cdiff = _mm_mulhi_epi16(_mm_sub_epi16(f[1], f[0]), _mm_shuffle_epi32(frac, 0));
-			__m128i coeff16 = _mm_add_epi16(f[0], _mm_add_epi16(cdiff, cdiff));
-
-			accum += inc;
-
-			__m128i x0 = _mm_loadu_si128(s2);
-			__m128i x1 = _mm_loadu_si128(s2 + 1);
-
-			__m128i y0 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x0, 0xd8), 0xd8);
-			__m128i y1 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(x1, 0xd8), 0xd8);
-
-			__m128i z0 = _mm_madd_epi16(y0, _mm_shuffle_epi32(coeff16, 0x50));
-			__m128i z1 = _mm_madd_epi16(y1, _mm_shuffle_epi32(coeff16, 0xfa));
-
-			__m128i a = _mm_add_epi32(z0, z1);
-			__m128i b = _mm_add_epi32(a, _mm_shuffle_epi32(a, 0xee));
-			__m128i r = _mm_srai_epi32(_mm_add_epi32(b, round), 14);
-
-			__m128i result = _mm_packs_epi32(r, r);
-
-			*(int *)d = _mm_cvtsi128_si32(result);
-			d += 2;
-		} while(--count);
-
-		return accum;
-	}
-#endif
-
-#if VD_CPU_ARM64
-	uint64 resample16x2_NEON(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
-		do {
-			const sint16 *VDRESTRICT s2 = s + (uint32)(accum >> 32)*2;
-			const sint16 (*VDRESTRICT f)[8] = &kernel[(uint32)accum >> 27];
-			const int16x8_t c0 = vld1q_s16(f[0]);
-			const int16x8_t c1 = vld1q_s16(f[1]);
-
-			uint32 frac = ((uint32)accum >> 12) & 0x7FFF;
-			accum += inc;
-
-			// vqrdmlahq_s16() would be perfect here, but unfortunately it requires ARMv8.1.
-			int16x8_t coeff16 = vaddq_s16(c0, vqrdmulhq_s16(vsubq_s16(c1, c0), vmovq_n_s16(frac)));
-
-			const int16x8x2_t x = vld2q_s16(s2 + 0);
-
-			int32x4_t z0 = vmlal_high_s16(vmull_s16(vget_low_s16(x.val[0]), vget_low_s16(coeff16)), x.val[0], coeff16);
-			int32x4_t z1 = vmlal_high_s16(vmull_s16(vget_low_s16(x.val[1]), vget_low_s16(coeff16)), x.val[1], coeff16);
-
-			int16x4x2_t a;
-			a.val[0] = vrshrn_n_s32(vmovq_n_s32(vaddvq_s32(z0)), 14);
-			a.val[1] = vrshrn_n_s32(vmovq_n_s32(vaddvq_s32(z1)), 14);
-
-			vst2_lane_s16(d, a, 0);
-			d += 2;
-		} while(--count);
-
-		return accum;
-	}
-#endif
-
-	uint64 resample16x2(sint16 *d, const sint16 *s, uint32 count, uint64 accum, sint64 inc) {
-#if VD_CPU_ARM64
-		return resample16x2_NEON(d, s, count, accum, inc);
-#elif VD_CPU_X86 || VD_CPU_X64
-		if (SSE2_enabled)
-			return resample16x2_SSE2(d, s, count, accum, inc);
-		else
-			return resample16x2_scalar(d, s, count, accum, inc);
-#else
-			return resample16x2_scalar(d, s, count, accum, inc);
-#endif
-	}
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 class ATCassetteTooLongException : public MyError {
@@ -439,8 +264,8 @@ public:
 	void *AsInterface(uint32 id) override;
 
 	ATImageType GetImageType() const override { return kATImageType_Tape; }
-	std::optional<uint32> GetImageFileCRC() const { return mbImageChecksumsValid ? std::optional(mImageFileCRC) : std::nullopt; }
-	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return mbImageChecksumsValid ? std::optional(mImageFileSHA256) : std::nullopt; }
+	std::optional<uint32> GetImageFileCRC() const override { return mbImageChecksumsValid ? std::optional(mImageFileCRC) : std::nullopt; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override { return mbImageChecksumsValid ? std::optional(mImageFileSHA256) : std::nullopt; }
 
 	uint32 GetDataLength() const override { return mDataTrack.mLength; }
 	uint32 GetAudioLength() const override { return (mbAudioCreated ? mAudioTrack : mDataTrack).mLength; }
@@ -458,7 +283,7 @@ public:
 	void ReadPeakMap(float t0, float dt, uint32 n, float *data, float *audio) override;
 	void AccumulateAudio(float *&dst, uint32& posSample, uint32& posCycle, uint32 n, float volume) const override;
 
-	ATCassetteRegionInfo GetRegionInfo(uint32 pos) const;
+	ATCassetteRegionInfo GetRegionInfo(uint32 pos) const override;
 
 	void WriteBlankData(ATCassetteWriteCursor& cursor, uint32 len, bool insert) override;
 	void WriteStdData(ATCassetteWriteCursor& cursor, uint8 byte, uint32 cyclesPerHalfBit, bool insert) override;
@@ -2453,7 +2278,7 @@ void ATLoadCassetteImage(ATVFSFileView& view, IVDRandomAccessStream *audioStream
 		vdrefptr<ATCassetteImage> dataImage(new ATCassetteImage);
 		
 		{
-			VDBufferedStream dataBs(&view.GetStream(), 65536);
+			VDBufferedRandomAccessStream dataBs(&view.GetStream(), 65536);
 			dataImage->Load(dataBs, origNameOverride, analysisOutput, dataCtx);
 		}
 
@@ -2472,7 +2297,7 @@ void ATLoadCassetteImage(ATVFSFileView& view, IVDRandomAccessStream *audioStream
 		vdrefptr<ATCassetteImage> audioImage(new ATCassetteImage);
 
 		{
-			VDBufferedStream audioBs(&audioView->GetStream(), 65536);
+			VDBufferedRandomAccessStream audioBs(&audioView->GetStream(), 65536);
 			audioImage->Load(audioBs, origNameOverride, analysisOutput, audioCtx);
 		}
 
@@ -2482,7 +2307,7 @@ void ATLoadCassetteImage(ATVFSFileView& view, IVDRandomAccessStream *audioStream
 	} else {
 		vdrefptr<ATCassetteImage> pImage(new ATCassetteImage);
 
-		VDBufferedStream bs(&view.GetStream(), 65536);
+		VDBufferedRandomAccessStream bs(&view.GetStream(), 65536);
 		pImage->Load(bs, origNameOverride, analysisOutput, ctx);
 
 		*ppImage = pImage.release();

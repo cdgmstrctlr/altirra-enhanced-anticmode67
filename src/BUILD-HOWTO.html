@@ -1,7 +1,7 @@
 <html>
 	<head>
 		<meta charset="utf-8" />
-		<title>Altirra 4.30 Build Instructions</title>
+		<title>Altirra 4.40 Build Instructions</title>
 
 		<!--
 			View this file in your web browser. If you are in Visual Studio,
@@ -70,7 +70,7 @@ h3 {
 </style>
 	</head>
 	<body>
-		<h1>Altirra 4.30 Build Instructions</h1>
+		<h1>Altirra 4.40 Build Instructions</h1>
 		<h2>Prerequisites</h2>
 		<h3>Build machine</h3>
 		<ul>
@@ -84,11 +84,11 @@ h3 {
           The following components are required to minimally build Altirra:
         </p>
 		<ul>
-          <li>Visual Studio 2022 version 17.12.4 or newer (any edition), with the following components installed:
+          <li>Visual Studio 2022 version 17.14 or newer (any edition), with the following components installed:
                 <ul>
                   <li>C++ core desktop features</li>
                   <li>MSVC v143 - VS 2022 C++ x64/x86 build tools (Latest)</li>
-			      <li>Windows 11 SDK (10.0.22621.0 or newer)</li>
+			      <li>Windows 11 SDK (10.0.26100.0 or newer)</li>
                 </ul>
           </li>
 		  <li>
@@ -190,16 +190,17 @@ h3 {
           You shouldn't get a dialog from Visual Studio offering to upgrade the projects. If you do, don't do it -- it
           will break the platform setup in the project files. Use the instructions above instead.
         </p>
-		<h2>Building</h2>
-		<h3>First time</h3>
+        <h2>Building</h2>
+        <h3>First time</h3>
         <p>
-          Open <tt>Altirra.sln</tt> and set the startup project to <tt>Altirra</tt> within the Native Projects folder in the Solution Explorer.
+            Open <tt>Altirra.sln</tt> and set the startup project to <tt>Altirra</tt> within the Native Projects folder in the Solution Explorer.
         </p>
-		<p>
-          Change the active solution configuration and platform to Release x86 and build it first. This is needed
-          to build some common build tools that are used by other configurations/platforms. After that, you can
-          build other configurations such as Debug x86 or Release x64.
-		</p>
+        <p>
+            Change the active solution configuration and platform to either Release x64 or Release ARM64 and build it first.
+            Use the platform corresponding to the native platform of the host machine doing the build. This is needed
+            to build some common build tools that are used by other configurations/platforms. After that, you can
+            build other configurations such as Debug x86 or Release x64.
+        </p>
 		<h3>Build targets</h3>
 		<p>
 			There are end projects that can be built from the three solution files:

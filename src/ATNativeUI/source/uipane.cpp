@@ -84,6 +84,11 @@ bool ATUIPaneWindowBase::CreatePaneWindow(ATFrameWindow *frame) {
 }
 
 LRESULT ATUIPaneWindowBase::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	LRESULT res {};
+
+	if (mMsgDispatcher.TryDispatch(msg, wParam, lParam, res))
+		return res;
+
 	switch(msg) {
 		case WM_CREATE:
 			if (!OnCreate())
@@ -156,6 +161,8 @@ bool ATUIPaneWindowBase::OnCreate() {
 
 void ATUIPaneWindowBase::OnDestroy() {
 	AsPane().UnregisterUIPane();
+
+	mMsgDispatcher.RemoveAllControls(true);
 }
 
 void ATUIPaneWindowBase::OnSize() {

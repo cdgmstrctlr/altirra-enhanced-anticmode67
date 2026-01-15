@@ -49,9 +49,10 @@ public:	// IATDeviceSIO
 	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
 
 private:
-	IATDeviceSIOManager *mpSIOMgr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	const bool mbType4;
-	bool mbType3PollActive;
+	bool mbType3PollActive {};
 
 	static const uint8 kHandlerData[];
 };
@@ -141,10 +142,7 @@ void ATDeviceTestSIOPoll::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATDeviceTestSIOPoll::Shutdown() {
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOMgr = nullptr;
 }
 
 void ATDeviceTestSIOPoll::ColdReset() {
@@ -153,7 +151,7 @@ void ATDeviceTestSIOPoll::ColdReset() {
 
 void ATDeviceTestSIOPoll::InitSIO(IATDeviceSIOManager *siomgr) {
 	mpSIOMgr = siomgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDeviceTestSIOPoll::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -170,11 +168,11 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOPoll::OnSerialBeginCommand(const ATDevi
 				buf[2] = 0xFE;
 				buf[3] = 0x00;
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->SendData(buf, 4, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->SendData(buf, 4, true);
+				mpSIOInterface->EndCommand();
 
 				return kCmdResponse_Start;
 			}
@@ -196,11 +194,11 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOPoll::OnSerialBeginCommand(const ATDevi
 				buf[2] = 0xFE;
 				buf[3] = 0x00;
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->SendData(buf, 4, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->SendData(buf, 4, true);
+				mpSIOInterface->EndCommand();
 
 				return kCmdResponse_Start;
 			} else if (cmd.mAUX[0] == 0x4F) {
@@ -224,11 +222,11 @@ IATDeviceSIO::CmdResponse ATDeviceTestSIOPoll::OnSerialBeginCommand(const ATDevi
 			const uint32 offset = block * 128;
 			memcpy(buf, kHandlerData + offset, std::min<uint32>(128, sizeof(kHandlerData) - offset));
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(buf, 128, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->SendData(buf, 128, true);
+			mpSIOInterface->EndCommand();
 
 			return kCmdResponse_Start;
 		}

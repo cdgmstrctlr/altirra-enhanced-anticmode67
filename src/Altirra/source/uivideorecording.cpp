@@ -124,15 +124,15 @@ bool ATUIDialogVideoRecording::OnLoaded() {
 	mResamplingModeView.AddItem(L"Sharp Bilinear - sharper resampling");
 	mResamplingModeView.AddItem(L"Nearest - sharpest resampling");
 
-	mAspectRatioModeView.AddItem(L"Full - use correct aspect ratio");
-	mAspectRatioModeView.AddItem(L"Pixel double - 1x/2x only");
+	mAspectRatioModeView.AddItem(L"Full - preserve correct pixel aspect ratio");
+	mAspectRatioModeView.AddItem(L"Pixel double - 1x/2x only to square pixels");
 	mAspectRatioModeView.AddItem(L"None - record raw pixels");
 
 	mScalingModeView.AddItem(L"No scaling");
-	mScalingModeView.AddItem(L"Scale to 640x480 (4:3)");
-	mScalingModeView.AddItem(L"Scale to 854x480 (16:9)");
-	mScalingModeView.AddItem(L"Scale to 960x720 (4:3)");
-	mScalingModeView.AddItem(L"Scale to 1280x720 (16:9)");
+	mScalingModeView.AddItem(L"Scale to fit within 640x480 (4:3)");
+	mScalingModeView.AddItem(L"Scale to fit within 854x480 (16:9)");
+	mScalingModeView.AddItem(L"Scale to fit within 960x720 (4:3)");
+	mScalingModeView.AddItem(L"Scale to fit within 1280x720 (16:9)");
 
 	mHelpProvider.AddHelpEntry(IDC_VC, L"", L"");
 	mHelpProvider.AddHelpEntry(IDC_ENCODE_ALL_FRAMES, L"Encode duplicate frames as full frames",
@@ -274,10 +274,28 @@ bool ATUIDialogVideoRecording::OnOK() {
 		return true;
 
 	if (mEncoding == kATVideoEncoding_H264_AAC) {
-		if (!Confirm2("MFAACEncodingBug",
-			L"AAC encoding produces the best quality but may produce audio glitches on some systems due to a bug in the Media Foundation AAC Encoder. H.264+MP3 encoding is recommended instead when this occurs.",
-			L"AAC Bug Warning"))
-			return true;
+	}
+
+	switch(mEncoding) {
+		case kATVideoEncoding_Raw:
+		case kATVideoEncoding_RLE: 
+		case kATVideoEncoding_ZMBV:
+			if (!mbEncodeAllFrames) {
+				if (!Confirm2("YouTubeEncodeNullFramesWarning",
+					L"If the .AVI file is going to be uploaded to YouTube, the Encode Duplicate Frames as Full Frames option is recommended. "
+					L"YouTube has bugs with reading AVI files with empty frames and may incorrectly transcode the video unless "
+					L"the Full Frames option is enabled.",
+					L"YouTube AVI Encoding Warning"))
+					return true;
+			}
+			break;
+
+		case kATVideoEncoding_H264_AAC:
+			if (!Confirm2("MFAACEncodingBug",
+				L"AAC encoding produces the best quality but may produce audio glitches on some systems due to a bug in the Media Foundation AAC Encoder, except for recent versions of Windows 11. H.264+MP3 encoding is recommended instead when this occurs.",
+				L"AAC Bug Warning"))
+				return true;
+			break;
 	}
 
 	return false;
@@ -326,7 +344,8 @@ void ATUIDialogVideoRecording::UpdateEnables() {
 	switch(mVideoCodecView.GetSelection()) {
 		case 3:		// WMV7
 		case 4:		// WMV9
-		case 5:		// H.264
+		case 5:		// H.264+MP4
+		case 6:		// H.264+AAC
 			hasVideoBitrate = true;
 			hasAudioBitrate = true;
 			hasFullFrameOption = false;

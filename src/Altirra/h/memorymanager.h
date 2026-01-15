@@ -61,32 +61,32 @@ struct ATMemoryHandlerTable {
 
 	template<auto T_Handler>
 	void BindDebugReadHandler() {
-		mpDebugReadHandler = [](void *thisptr0, uint32 address) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
+		mpDebugReadHandler = [](void *thisptr0, uint32 address) -> sint32 { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
 	}
 
 	template<auto T_Handler>
 	void BindReadHandler() {
-		mpReadHandler = [](void *thisptr0, uint32 address) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
+		mpReadHandler = [](void *thisptr0, uint32 address) -> sint32 { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address); };
 	}
 
 	template<auto T_Handler>
 	void BindWriteHandler() {
-		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address, data); };
+		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) -> bool { return (((decltype(ATGetMemoryHandlerBaseType(T_Handler)))thisptr0)->*T_Handler)(address, data); };
 	}
 
 	template<class T, sint32 (T::*T_Handler)(uint32 addr) const>
 	void BindDebugReadHandler() {
-		mpDebugReadHandler = [](void *thisptr0, uint32 address) { return (((T *)thisptr0)->*T_Handler)(address); };
+		mpDebugReadHandler = [](void *thisptr0, uint32 address) -> sint32 { return (((T *)thisptr0)->*T_Handler)(address); };
 	}
 
 	template<class T, sint32 (T::*T_Handler)(uint32 addr)>
 	void BindReadHandler() {
-		mpReadHandler = [](void *thisptr0, uint32 address) { return (((T *)thisptr0)->*T_Handler)(address); };
+		mpReadHandler = [](void *thisptr0, uint32 address) -> sint32 { return (((T *)thisptr0)->*T_Handler)(address); };
 	}
 
 	template<class T, bool (T::*T_Handler)(uint32 addr, uint8 data)>
 	void BindWriteHandler() {
-		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) { return (((T *)thisptr0)->*T_Handler)(address, data); };
+		mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) -> bool { return (((T *)thisptr0)->*T_Handler)(address, data); };
 	}
 };
 

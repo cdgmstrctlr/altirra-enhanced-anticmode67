@@ -22,6 +22,7 @@
 #include <vd2/system/math.h>
 #include <vd2/system/vecmath.h>
 #include <vd2/VDDisplay/display.h>
+#include <vd2/VDDisplay/displaytypes.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -121,7 +122,7 @@ ATArtifactingParams ATArtifactingParams::GetDefault() {
 	params.mScanlineIntensity = 0.75f;
 	params.mbEnableBloom = false;
 	params.mbBloomScanlineCompensation = true;
-	params.mBloomRadius = 0.0f;
+	params.mBloomRadius = 0.86f;
 	params.mBloomDirectIntensity = 0.80f;
 	params.mBloomIndirectIntensity = 0.40f;
 	params.mSDRIntensity = 200.0f;
@@ -506,6 +507,12 @@ public:
 
 ///////////////////////////////////////////////////////////////////////////
 
+struct ATGTIAEmulator::Impl {
+	VDDScreenMaskParams mScreenMaskParams = ATGTIAEmulator::GetDefaultScreenMaskParams();
+};
+
+///////////////////////////////////////////////////////////////////////////
+
 namespace {
 	const int kPlayerWidths[4]={8,16,8,32};
 	const int kMissileWidths[4]={2,4,2,8};
@@ -589,12 +596,12 @@ uint8 ATGTIAEmulator::SpriteState::Generate(uint32 ticks, uint8 mask, uint8 *dst
 				detect |= *dst;
 				*dst |= mask;
 			}
-	
+
 			++dst;
-	
+
 			state = stateTransitions[state];
 			shifter += shifter & kSpriteShiftMasks[state];
-		} while(--ticks);
+		} while (--ticks);
 	}
 	else
 	{
@@ -722,6 +729,8 @@ ATGTIAEmulator::ATGTIAEmulator()
 	, mRCCount(0)
 	, mpFreeSpriteImages(NULL)
 {
+	mpImpl = new Impl;
+
 	ResetColors();
 
 	mPreArtifactFrameBuffer.resize(464*312+16, 0);
@@ -894,7 +903,26 @@ void ATGTIAEmulator::GetNTSCArtifactColors(uint32 c[2]) const {
 }
 
 bool ATGTIAEmulator::AreAcceleratedEffectsAvailable() const {
-	return mpDisplay && mpDisplay->IsScreenFXPreferred();
+	switch(GetAcceleratedEffectsAvailability()) {
+		case AccelFXAvailability::Available:
+			return true;
+
+		case AccelFXAvailability::NotEnabled:
+			return g_ATCVDisplayForceHdrRendering;
+
+		default:
+			return false;
+	}
+}
+
+ATGTIAEmulator::AccelFXAvailability ATGTIAEmulator::GetAcceleratedEffectsAvailability() const {
+	if (!mpDisplay || !mpDisplay->IsScreenFXPreferred())
+		return AccelFXAvailability::NoSupport;
+
+	if (!mbAccelScreenFX)
+		return AccelFXAvailability::NotEnabled;
+
+	return AccelFXAvailability::Available;
 }
 
 ATGTIAEmulator::HDRAvailability ATGTIAEmulator::IsHDRRenderingAvailable() const {
@@ -913,10 +941,15 @@ ATGTIAEmulator::HDRAvailability ATGTIAEmulator::IsHDRRenderingAvailable() const 
 			return HDRAvailability::NoHardwareSupport;
 
 		case VDDHDRAvailability::NotEnabledOnDisplay:
-			return HDRAvailability::NotEnabledOnDisplay;
+			if (!g_ATCVDisplayForceHdrRendering)
+				return HDRAvailability::NotEnabledOnDisplay;
+
+			break;
 
 		case VDDHDRAvailability::NoDisplaySupport:
-			return HDRAvailability::NoDisplaySupport;
+			if (!g_ATCVDisplayForceHdrRendering)
+				return HDRAvailability::NoDisplaySupport;
+			break;
 
 		case VDDHDRAvailability::Available:
 			break;
@@ -1158,7 +1191,7 @@ void ATGTIAEmulator::SetVideoOutput(IVDVideoDisplay *pDisplay) {
 void ATGTIAEmulator::SetCTIAMode(bool enabled) {
 	mbCTIAMode = enabled;
 
-	if (!enabled && (mPRIOR & 0xC0)) {
+	if (enabled && (mPRIOR & 0xC0)) {
 		mPRIOR &= 0x3F;
 
 		mpRenderer->SetCTIAMode();
@@ -1171,6 +1204,7 @@ void ATGTIAEmulator::SetCTIAMode(bool enabled) {
 	}
 }
 
+// CMC
 void ATGTIAEmulator::EnhancedMode67(bool enabled) {
 	mbEnhancedMode67 = enabled;
 
@@ -1204,6 +1238,23 @@ void ATGTIAEmulator::SetSECAMMode(bool enabled) {
 	mbSECAMMode = enabled;
 
 	mpRenderer->SetSECAMMode(enabled);
+}
+
+VDDScreenMaskParams ATGTIAEmulator::GetDefaultScreenMaskParams() {
+	VDDScreenMaskParams params {};
+	params.mSourcePixelsPerDot = 0.38f;
+	params.mOpenness = 0.90f;
+	params.mbScreenMaskIntensityCompensation = true;
+
+	return params;
+}
+
+VDDScreenMaskParams ATGTIAEmulator::GetScreenMaskParams() const {
+	return mpImpl->mScreenMaskParams;
+}
+
+void ATGTIAEmulator::SetScreenMaskParams(const VDDScreenMaskParams& params) {
+	mpImpl->mScreenMaskParams = params;
 }
 
 void ATGTIAEmulator::SetConsoleSwitch(uint8 c, bool set) {
@@ -1271,6 +1322,7 @@ void ATGTIAEmulator::DumpStatus() {
 	for(int i=0; i<4; ++i) {
 		ATConsolePrintf("Player  %d: color = %02X, pos = %02X, size=%d, data = %02X\n"
 			, i
+			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]	// CMC TODO this likely needs to check something to look at correct color register
 			, mPMColor[i]
 			, mSpritePos[i]
 			, mSprites[i].mState.mSizeMode
@@ -1281,7 +1333,7 @@ void ATGTIAEmulator::DumpStatus() {
 	for(int i=0; i<4; ++i) {
 		ATConsolePrintf("Missile %d: color = %02X, pos = %02X, size=%d, data = %02X\n"
 			, i
-			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]	// CMC TODO this likely needs to check something to look at correct color register
+			, mPRIOR & 0x10 ? mPFColor[3] : mPMColor[i]
 			, mSpritePos[i+4]
 			, mSprites[i+4].mState.mSizeMode
 			, mSprites[i+4].mState.mDataLatch >> 6
@@ -1804,7 +1856,7 @@ void ATGTIAEmulator::SetOnRetryFrame(vdfunction<void()> fn) {
 	mpOnRetryFrame = fn;
 }
 
-bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
+bool ATGTIAEmulator::BeginFrame(uint32 frameNumber, uint32 y, bool force, bool drop) {
 	if (mpFrame)
 		return true;
 
@@ -1861,6 +1913,10 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 				// proceed with frame without generating/rendering it
 			}
 		}
+	}
+
+	if (mpFrame) {
+		mpFrame->mFrameNumber = frameNumber;
 	}
 	
 	mbWaitingForFrame = false;
@@ -1952,7 +2008,19 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 		fb->mbDuplicateField = false;
 
 		fb->mPixmap = fb->mBuffer;
-		fb->mPixmap.palette = mFrameProperties.mbOutputExtendedRange ? mSignedPalette : mPalette;
+
+		if (mFrameProperties.mbPaletteOutputCorrection) {
+			if (mFrameProperties.mbOutputExtendedRange)
+				fb->mPixmap.palette = mSignedPalette;
+			else
+				fb->mPixmap.palette = mPalette;
+		} else {
+			if (mFrameProperties.mbOutputExtendedRange)
+				fb->mPixmap.palette = mUncorrectedSignedPalette;
+			else
+				fb->mPixmap.palette = mUncorrectedPalette;
+		}
+
 		fb->mpPalette = mPalette;
 
 		fb->mRawPAR = (float)GetPixelAspectRatio();
@@ -2039,22 +2107,33 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 			fb->mScreenFX.mDistortionX = ap.mDistortionViewAngleX;
 			fb->mScreenFX.mDistortionYRatio = ap.mDistortionYRatio;
 
+			if (mFrameProperties.mbAccelScreenMask)
+				fb->mScreenFX.mScreenMaskParams = mpImpl->mScreenMaskParams;
+			else
+				fb->mScreenFX.mScreenMaskParams = {};
+
+			// modify the dot pitch to change units from dots/pitch to dots/cc
+			fb->mScreenFX.mScreenMaskParams.mSourcePixelsPerDot *=
+				mFrameProperties.mbOutputHoriz2x ? 4.0f : 2.0f;
+
 			if (ap.mbEnableBloom) {
 				fb->mScreenFX.mbBloomEnabled = true;
 				fb->mScreenFX.mBloomRadius = ap.mBloomRadius;
 				fb->mScreenFX.mBloomDirectIntensity = ap.mBloomDirectIntensity;
 				fb->mScreenFX.mBloomIndirectIntensity = ap.mBloomIndirectIntensity;
 
-				if (ap.mbBloomScanlineCompensation && fb->mScreenFX.mScanlineIntensity != 0) {
-					// Scanline intensity is described in gamma space while bloom intensity is
-					// linear; convert the scanline intensities to linear, average in linear,
-					// then inverse scale the bloom intensities to compensate.
-					const float i1 = 1.0f;
-					const float i2 = fb->mScreenFX.mScanlineIntensity;
-					const float i3 = 0.5f * (powf(i1, 2.2f) + powf(i2, 2.2f));
+				if (ap.mbBloomScanlineCompensation) {
+					if (fb->mScreenFX.mScanlineIntensity != 0) {
+						// Scanline intensity is described in gamma space while bloom intensity is
+						// linear; convert the scanline intensities to linear, average in linear,
+						// then inverse scale the bloom intensities to compensate.
+						const float i1 = 1.0f;
+						const float i2 = fb->mScreenFX.mScanlineIntensity;
+						float i3 = 0.5f * (powf(i1, 2.2f) + powf(i2, 2.2f));
 
-					fb->mScreenFX.mBloomDirectIntensity /= i3;
-					fb->mScreenFX.mBloomIndirectIntensity /= i3;
+						fb->mScreenFX.mBloomDirectIntensity /= i3;
+						fb->mScreenFX.mBloomIndirectIntensity /= i3;
+					}
 				}
 			} else {
 				fb->mScreenFX.mbBloomEnabled = false;
@@ -2101,7 +2180,7 @@ bool ATGTIAEmulator::BeginFrame(uint32 y, bool force, bool drop) {
 	return true;
 }
 
-void ATGTIAEmulator::BeginScanline(int y, bool hires, bool mode16XColor) {
+void ATGTIAEmulator::BeginScanline(int y, bool hires, bool mode16XColor) {	// CMC
 	// Flush remaining register changes (required for PRIOR to interact properly with hires)
 	//
 	// Note that we must use a cycle offset of -1 here because we haven't done DMA fetches
@@ -2165,7 +2244,7 @@ void ATGTIAEmulator::BeginScanline(int y, bool hires, bool mode16XColor) {
 		mpVBXE->BeginScanline(y, (uint32*)mpDst, mMergeBuffer, mAnticData, mbHiresMode);
 	else if (mpDst) {
 		mpRenderer->SetVBlank((uint32)(y - 8) >= 240);
-		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode, mode16XColor && mbEnhancedMode67);
+		mpRenderer->BeginScanline(mpDst, mMergeBuffer, mAnticData, mbHiresMode, mode16XColor && mbEnhancedMode67);	// CMC
 	}
 }
 
@@ -2940,16 +3019,17 @@ void ATGTIAEmulator::UpdateScreen(bool immediate, bool forceAnyScreen) {
 		if (dsty2 > dsty1)
 			std::copy(mbScanlinesWithHiRes + srcy1, mbScanlinesWithHiRes + srcy2, fb->mbScanlineHasHires + dsty1);
 
-		ATProfileBeginRegion(kATProfileRegion_DisplayPresent);
+		if (!fb->mbDroppedFrame) {
+			ATProfileBeginRegionWithArg(kATProfileRegion_DisplayPost, fb->mFrameNumber);
 
-		const auto& ap = mpArtifactingEngine->GetArtifactingParams();
-		mpDisplay->SetHDREnabled(mFrameProperties.mbOutputHDR);
-		mpDisplay->SetSDRBrightness(ap.mbUseSystemSDR ? -1.0f : ap.mSDRIntensity);
+			const auto& ap = mpArtifactingEngine->GetArtifactingParams();
+			mpDisplay->SetHDREnabled(mFrameProperties.mbOutputHDR);
+			mpDisplay->SetSDRBrightness(ap.mbUseSystemSDR ? -1.0f : ap.mSDRIntensity);
 
-		if (!fb->mbDroppedFrame)
 			mpDisplay->PostBuffer(fb);
 
-		ATProfileEndRegion(kATProfileRegion_DisplayPresent);
+			ATProfileEndRegion(kATProfileRegion_DisplayPost);
+		}
 
 		mpLastFrame = fb;
 		mbBlendModeLastFrame = mFrameProperties.mbSoftBlending;
@@ -2969,6 +3049,8 @@ void ATGTIAEmulator::RecomputePalette() {
 
 	memcpy(mPalette, gen.mPalette, sizeof mPalette);
 	memcpy(mSignedPalette, gen.mSignedPalette, sizeof mSignedPalette);
+	memcpy(mUncorrectedPalette, gen.mUncorrectedPalette, sizeof mUncorrectedPalette);
+	memcpy(mUncorrectedSignedPalette, gen.mUncorrectedSignedPalette, sizeof mUncorrectedSignedPalette);
 
 	const bool useMatrix = gen.mColorMatchingMatrix.has_value();
 	vdfloat3x3 mx;
@@ -3142,6 +3224,7 @@ void ATGTIAEmulator::WriteByte(uint8 reg, uint8 value) {
 				mTRIGLatched[3] = mTRIG[3];
 			}
 
+			// CMC
 			if (mGRACTL != value)
 			{
 				mGRACTL = value;
@@ -3346,9 +3429,6 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 	char *dstrow = (char *)fb->mBuffer.data;
 	ptrdiff_t dstpitch = fb->mBuffer.pitch;
 
-	const char *prevrow = nullptr;
-	ptrdiff_t prevpitchx2 = 0;
-
 	if (mFrameProperties.mbInterlaced) {
 		if (fb->mbLowerField)
 			dstrow += dstpitch;
@@ -3405,7 +3485,6 @@ void ATGTIAEmulator::ApplyArtifacting(bool immediate) {
 				);
 			}
 
-			prevrow += prevpitchx2;
 			dstrow += dstpitch;
 		} else if (mFrameProperties.mbSoftScanlines) {
 			if (row > y1)
@@ -3717,7 +3796,7 @@ void ATGTIAEmulator::SetFrameProperties() {
 	// Establish baseline feature enables and availability.
 	const auto& ap = mpArtifactingEngine->GetArtifactingParams();
 	const bool canAccelFX = mpDisplay->IsScreenFXPreferred();
-	const bool canAccelXColor = (g_ATCVDisplayForceHdrRendering || mpDisplay->IsHDRCapable() == VDDHDRAvailability::Available) && mbAccelScreenFX && ap.mbEnableHDR;
+	const bool canAccelXColor = IsHDRRenderingAvailable() == HDRAvailability::Available && ap.mbEnableHDR;
 
 	// Check if output correction is enabled.
 	const ATColorParams& params = mActiveColorParams;
@@ -3809,6 +3888,10 @@ void ATGTIAEmulator::SetFrameProperties() {
 	fp.mbSoftScanlines = preferSoftFX && mbScanlinesEnabled && !mbInterlaceEnabled;
 	fp.mbAccelScanlines = !preferSoftFX && mbScanlinesEnabled;
 
+	// Screen mask support
+	const bool useAccelScreenMask = !preferSoftFX && canAccelFX && mpImpl->mScreenMaskParams.mType != VDDScreenMaskType::None;
+	fp.mbAccelScreenMask = useAccelScreenMask;
+
 	// Output is RGB32 instead of P8 when VBXE, artifacting, deinterlacing, frame blending, or soft scanlines are active.
 	const bool rgb32 = mpVBXE || useSoftArtifacting || fp.mbSoftBlending || fp.mbSoftScanlines || fp.mbSoftDeinterlace;
 	fp.mbOutputRgb32 = rgb32;
@@ -3826,10 +3909,14 @@ void ATGTIAEmulator::SetFrameProperties() {
 	// - We can do accelerated FX, and one of these hardware-required FX is enabled:
 	//   - Distortion
 	//   - Bloom
+	//
+	// For color correction, palette > accel > soft. However, if output mask is
+	// enabled, we must use accel output correction since the mask is applied
+	// in the shader and must occur in source linear space.
 	const bool useAccelDistortion = canAccelFX && distortionEnabled;
 	const bool useAccelBloom = canAccelFX && bloomEnabled;
-	fp.mbAccelOutputCorrection = !preferSoftFX && rgb32 && outputCorrectionEnabled && !mpVBXE && !(fp.mbSoftBlending && mbBlendLinear);
-	fp.mbAccelPostProcess = fp.mbAccelScanlines || fp.mbAccelOutputCorrection || useAccelPALBlending || useAccelDistortion || useAccelBloom || canAccelXColor;
+	fp.mbAccelOutputCorrection = !preferSoftFX && ((rgb32 && outputCorrectionEnabled && !mpVBXE) || useAccelScreenMask) && !(fp.mbSoftBlending && mbBlendLinear);
+	fp.mbAccelPostProcess = fp.mbAccelScanlines || fp.mbAccelOutputCorrection || useAccelPALBlending || useAccelDistortion || useAccelBloom || useAccelScreenMask || canAccelXColor;
 
 	fp.mbSoftOutputCorrection = outputCorrectionEnabled && !fp.mbAccelOutputCorrection && rgb32 && !mpVBXE;
 

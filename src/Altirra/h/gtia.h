@@ -31,6 +31,7 @@ class IVDVideoDisplay;
 class VDVideoDisplayFrame;
 class IATUIRenderer;
 class VDPixmapBuffer;
+struct VDDScreenMaskParams;
 class ATConsoleOutput;
 
 class IATGTIAEmulatorConnections {
@@ -225,6 +226,7 @@ struct ATVideoFrameProperties {
 	bool mbAccelScanlines;
 	bool mbAccelPalArtifacting;
 	bool mbAccelOutputCorrection;
+	bool mbAccelScreenMask;
 };
 
 uint32 ATGetColorPresetCount();
@@ -303,6 +305,14 @@ public:
 
 	bool IsFrameInProgress() const { return mpFrame != NULL; }
 	bool AreAcceleratedEffectsAvailable() const;
+
+	enum class AccelFXAvailability : uint8 {
+		Available,
+		NotEnabled,
+		NoSupport
+	};
+
+	AccelFXAvailability GetAcceleratedEffectsAvailability() const;
 
 	enum class HDRAvailability : uint8 {
 		NoMinidriverSupport,
@@ -423,6 +433,10 @@ public:
 	bool GetAccelScreenFXEnabled() const { return mbAccelScreenFX; }
 	void SetAccelScreenFXEnabled(bool enabled) { mbAccelScreenFX = enabled; }
 
+	static VDDScreenMaskParams GetDefaultScreenMaskParams();
+	VDDScreenMaskParams GetScreenMaskParams() const;
+	void SetScreenMaskParams(const VDDScreenMaskParams& params);
+
 	void SetConsoleSwitch(uint8 c, bool down);
 	uint8 ReadConsoleSwitchInputs() const;
 	uint8 ReadConsoleSwitches() const;
@@ -485,8 +499,8 @@ public:
 	void SetNextFieldPolarity(ATVideoFieldPolarity polarity);
 	void SetVBLANK(VBlankMode vblMode);
 	void SetOnRetryFrame(vdfunction<void()> fn);
-	bool BeginFrame(uint32 y, bool force, bool drop);
-	void BeginScanline(int y, bool hires, bool mode16XColor);
+	bool BeginFrame(uint32 frameNumber, uint32 y, bool force, bool drop);
+	void BeginScanline(int y, bool hires, bool mode16XColor);		// CMC
 	void EndScanline(uint8 dlControl, bool pfRendered);
 	void UpdatePlayer(bool odd, int index, uint8 byte);
 	void UpdateMissile(bool odd, uint8 byte);
@@ -673,8 +687,6 @@ protected:
 
 	VDALIGN(16)	uint8	mMergeBuffer[228+12];
 	VDALIGN(16)	uint8	mAnticData[228+12];
-	uint32	mPalette[256];
-	uint32	mSignedPalette[256];
 	bool	mbScanlinesWithHiRes[240];
 
 	ATColorParams mActiveColorParams;
@@ -704,6 +716,14 @@ protected:
 	ATNotifyList<const ATGTIARawFrameFn *> mRawFrameCallbacks;
 
 	VDLinearAllocator mNodeAllocator;
+
+	struct Impl;
+	vdautoptr<Impl> mpImpl;
+
+	uint32	mPalette[256];
+	uint32	mSignedPalette[256];
+	uint32	mUncorrectedPalette[256];
+	uint32	mUncorrectedSignedPalette[256];
 };
 
 #endif

@@ -34,6 +34,12 @@
 	#include <vd2/system/vdtypes.h>
 #endif
 
+#ifdef VD_COMPILER_MSVC
+	#include <intrin.h>
+#elif defined(VD_CPU_ARM64)
+	#include <arm_acle.h>
+#endif
+
 inline int VDCountBits8(uint8 v) {
 	v -= (v >> 1) & 0x55;
 	v = ((v & 0xcc) >> 2) + (v & 0x33);
@@ -67,33 +73,48 @@ inline float VDGetIntAsFloat(sint32 i) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-#ifdef VD_COMPILER_MSVC_VC8_OR_LATER
-	#include <vd2/system/win32/intrin.h>
+inline int VDFindLowestSetBit(uint32 v) {
+	unsigned long index;
+	return _BitScanForward(&index, v) ? index : 32;
+}
 
-	inline int VDFindLowestSetBit(uint32 v) {
-		unsigned long index;
-		return _BitScanForward(&index, v) ? index : 32;
-	}
+inline int VDFindHighestSetBit(uint32 v) {
+	unsigned long index;
+	return _BitScanReverse(&index, v) ? index : -1;
+}
 
-	inline int VDFindHighestSetBit(uint32 v) {
-		unsigned long index;
-		return _BitScanReverse(&index, v) ? index : -1;
-	}
-
-	inline int VDFindLowestSetBitFast(uint32 v) {
+inline int VDFindLowestSetBitFast(uint32 v) {
+	#if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+		return _tzcnt_u32(v);
+	#else
 		unsigned long index;
 		_BitScanForward(&index, v);
-		return index;
-	}
 
-	inline int VDFindHighestSetBitFast(uint32 v) {
-		unsigned long index;
-		_BitScanReverse(&index, v);
 		return index;
-	}
-#else
-	#define VDFindLowestSetBitFast	VDFindLowestSetBit
-	#define VDFindHighestSetBitFast	VDFindHighestSetBit
-#endif
+	#endif
+}
+
+inline int VDFindHighestSetBitFast(uint32 v) {
+	unsigned long index;
+	_BitScanReverse(&index, v);
+	return index;
+}
+
+inline int VDFindLowestSetBitFast64(uint64 v) {
+	#if defined(VD_CPU_AMD64)
+		return _tzcnt_u64(v);
+	#elif defined(VD_CPU_ARM64)
+		#ifdef VD_COMPILER_MSVC
+			return _CountTrailingZeros64(v);
+		#else
+			return __clzll(__rbitll(v));
+		#endif
+	#else
+		if ((uint32)v)
+			return VDFindLowestSetBitFast((uint32)v);
+		else
+			return 32 + VDFindLowestSetBitFast((uint32)(v >> 32));
+	#endif
+}
 
 #endif

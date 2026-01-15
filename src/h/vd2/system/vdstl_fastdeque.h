@@ -220,7 +220,10 @@ public:
 	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
 
 	vdfastdeque();
+	vdfastdeque(const vdfastdeque& src) = delete;
 	~vdfastdeque();
+
+	vdfastdeque& operator=(const vdfastdeque&) = delete;
 
 	bool				empty() const;
 	size_type			size() const;
@@ -456,14 +459,8 @@ void vdfastdeque<T,A,kBlockSizeBits>::pop_back() {
 
 template<class T, class A, int kBlockSizeBits>
 void vdfastdeque<T,A,kBlockSizeBits>::swap(vdfastdeque& x) {
-	std::swap(m.mapStartAlloc, x.m.mapStartAlloc);
-	std::swap(m.mapStartCommit, x.m.mapStartCommit);
-	std::swap(m.mapStart, x.m.mapStart);
-	std::swap(m.mapEnd, x.m.mapEnd);
-	std::swap(m.mapEndCommit, x.m.mapEndCommit);
-	std::swap(m.mapEndAlloc, x.m.mapEndAlloc);
-	std::swap(mTails.startIndex, x.mTails.startIndex);
-	std::swap(mTails.endIndex, x.mTails.endIndex);
+	std::swap(m, x.m);
+	std::swap(mTails, x.mTails);
 }
 
 /////////////////////////////////

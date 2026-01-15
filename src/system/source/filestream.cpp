@@ -127,6 +127,11 @@ VDMemoryBufferStream::VDMemoryBufferStream() {
 VDMemoryBufferStream::~VDMemoryBufferStream() {
 }
 
+void VDMemoryBufferStream::Clear() {
+	mPos = 0;
+	mBuffer.clear();
+}
+
 const wchar_t *VDMemoryBufferStream::GetNameForError() {
 	return L"memory buffer stream";
 }
@@ -186,7 +191,7 @@ void VDMemoryBufferStream::Seek(sint64 offset) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-VDBufferedStream::VDBufferedStream(IVDRandomAccessStream *pSrc, uint32 bufferSize)
+VDBufferedStream::VDBufferedStream(IVDStream *pSrc, uint32 bufferSize)
 	: mpSrc(pSrc)
 	, mBuffer(bufferSize)
 	, mBasePosition(0)
@@ -267,11 +272,105 @@ void VDBufferedStream::Write(const void *buffer, sint32 bytes) {
 	throw MyError("Buffered streams are read-only.");
 }
 
-sint64 VDBufferedStream::Length() {
+void VDBufferedStream::Skip(sint64 size) {
+	while(size > 0x7FFFFFFF) {
+		size -= 0x7FFFFFFF;
+
+		Read(nullptr, 0x7FFFFFFF);
+	}
+
+	if (size)
+		Read(nullptr, (sint32)size);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+VDBufferedRandomAccessStream::VDBufferedRandomAccessStream(IVDRandomAccessStream *pSrc, uint32 bufferSize)
+	: mpSrc(pSrc)
+	, mBuffer(bufferSize)
+	, mBasePosition(0)
+	, mBufferOffset(0)
+	, mBufferValidSize(0)
+{
+}
+
+VDBufferedRandomAccessStream::~VDBufferedRandomAccessStream() {
+}
+
+const wchar_t *VDBufferedRandomAccessStream::GetNameForError() {
+	return mpSrc->GetNameForError();
+}
+
+sint64 VDBufferedRandomAccessStream::Pos() {
+	return mBasePosition + mBufferOffset;
+}
+
+void VDBufferedRandomAccessStream::Read(void *buffer, sint32 bytes) {
+	if (bytes != ReadData(buffer, bytes))
+		throw VDException(L"Cannot read %d bytes at location %08llx from %ls", bytes, mBasePosition + mBufferOffset, mpSrc->GetNameForError());
+}
+
+sint32 VDBufferedRandomAccessStream::ReadData(void *buffer, sint32 bytes) {
+	if (bytes <= 0)
+		return 0;
+
+	uint32 actual = 0;
+	for(;;) {
+		uint32 tc = mBufferValidSize - mBufferOffset;
+
+		if (tc > (uint32)bytes)
+			tc = (uint32)bytes;
+
+		if (tc) {
+			if (buffer) {
+				memcpy(buffer, mBuffer.data() + mBufferOffset, tc);
+				buffer = (char *)buffer + tc;
+			}
+
+			mBufferOffset += tc;
+			bytes -= tc;
+			actual += tc;
+
+			if (!bytes)
+				break;
+		}
+
+		// At this point, the buffer is empty.
+		if (mBufferValidSize) {
+			VDASSERT(mBufferOffset >= mBufferValidSize);
+
+			mBasePosition += mBufferValidSize;
+			mBufferOffset = 0;
+			mBufferValidSize = 0;
+		}
+
+		// If the remaining read is large, issue it directly to the underlying stream.
+		if (buffer && (uint32)bytes >= mBuffer.size() * 2) {
+			sint32 localActual = mpSrc->ReadData(buffer, bytes);
+			mBasePosition += localActual;
+			actual += localActual;
+			break;
+		}
+
+		// Refill the buffer.
+		mBufferValidSize = mpSrc->ReadData(mBuffer.data(), mBuffer.size());
+		mBufferOffset = 0;
+		if (!mBufferValidSize)
+			break;
+	}
+
+	return actual;
+}
+
+void VDBufferedRandomAccessStream::Write(const void *buffer, sint32 bytes) {
+	throw MyError("Buffered streams are read-only.");
+}
+
+sint64 VDBufferedRandomAccessStream::Length() {
 	return mpSrc->Length();
 }
 
-void VDBufferedStream::Seek(sint64 offset) {
+void VDBufferedRandomAccessStream::Seek(sint64 offset) {
 	// check if an in-buffer skip is possible
 	sint64 relativeOffset = offset - mBasePosition;
 	if (relativeOffset >= 0 && relativeOffset <= (sint64)mBufferValidSize) {
@@ -288,7 +387,7 @@ void VDBufferedStream::Seek(sint64 offset) {
 	mBasePosition = offset;
 }
 
-void VDBufferedStream::Skip(sint64 size) {
+void VDBufferedRandomAccessStream::Skip(sint64 size) {
 	sint64 targetPos = mBasePosition + mBufferOffset + size;
 	sint64 bufferEnd = mBasePosition + mBufferValidSize;
 

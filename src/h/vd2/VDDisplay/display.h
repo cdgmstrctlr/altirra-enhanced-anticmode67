@@ -1,5 +1,21 @@
-#ifndef f_VD2_RIZA_DISPLAY_H
-#define f_VD2_RIZA_DISPLAY_H
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2024 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
+#ifndef f_VD2_VDDISPLAY_DISPLAY_H
+#define f_VD2_VDDISPLAY_DISPLAY_H
 
 #include <vd2/system/function.h>
 #include <vd2/system/vectors.h>
@@ -7,36 +23,41 @@
 #include <vd2/system/refcount.h>
 #include <vd2/system/atomic.h>
 #include <vd2/Kasumi/pixmap.h>
+#include <vd2/VDDisplay/displaytypes.h>
 
 VDGUIHandle VDCreateDisplayWindowW32(uint32 dwExFlags, uint32 dwFlags, int x, int y, int width, int height, VDGUIHandle hwndParent);
 
 class IVDVideoDisplay;
 class IVDDisplayCompositor;
 class VDPixmapBuffer;
-class VDBufferedStream;
+class VDBufferedRandomAccessStream;
 
 struct VDVideoDisplayScreenFXInfo {
-	float mScanlineIntensity;
-	float mGamma;
+	float mScanlineIntensity = 0;
+	float mGamma = 0;
 
-	float mPALBlendingOffset;
+	float mPALBlendingOffset = 0;
 
-	float mDistortionX;
-	float mDistortionYRatio;
+	float mDistortionX = 0;
+	float mDistortionYRatio = 0;
 
-	bool mbSignedRGBEncoding;
-	float mHDRIntensity;
+	bool mbSignedRGBEncoding = false;
+	float mHDRIntensity = 0;
 
 	// 0 = sRGB, otherwise explicit gamma (2.2 for Adobe RGB)
 	float mOutputGamma = 0;
 
-	float mColorCorrectionMatrix[3][3];
+	float mColorCorrectionMatrix[3][3] {};
 
 	bool mbBloomEnabled = false;
-	float mBloomThreshold;
-	float mBloomRadius;
-	float mBloomDirectIntensity;
-	float mBloomIndirectIntensity;
+	float mBloomThreshold = 0;
+	float mBloomRadius = 0;
+	float mBloomDirectIntensity = 0;
+	float mBloomIndirectIntensity = 0;
+
+	VDDScreenMaskParams mScreenMaskParams {};
+
+	bool operator==(const VDVideoDisplayScreenFXInfo&) const = default;
 };
 
 struct VDDVSyncStatus {
@@ -57,6 +78,11 @@ struct VDDVSyncStatus {
 	// significant figures with some noise in the fourth digit. If real-time refresh rate
 	// is not available, this may be the refresh rate from the current display mode.
 	float	mRefreshRate = -1.0f;
+};
+
+struct VDDVSyncProfileInfo {
+	uint64 mQpcTimes[2];
+	uint32 mRefreshCounts[2];
 };
 
 class IVDVideoDisplayScreenFXEngine {
@@ -86,6 +112,7 @@ public:
 
 	VDPixmap	mPixmap {};
 	uint32		mFlags = 0;
+	uint32		mFrameNumber = 0;
 	bool		mbAllowConversion = false;
 
 	IVDVideoDisplayScreenFXEngine *mpScreenFXEngine = nullptr;
@@ -195,9 +222,14 @@ public:
 	enum ProfileEvent {
 		kProfileEvent_BeginTick,
 		kProfileEvent_EndTick,
+		kProfileEvent_BeginPresent,
+		kProfileEvent_EndPresent,
+		kProfileEvent_BeginRePresent,
+		kProfileEvent_EndRePresent,
+		kProfileEvent_VSyncInfo,
 	};
 
-	virtual void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) = 0;
+	virtual void SetProfileHook(const vdfunction<void(ProfileEvent, uintptr)>& profileHook) = 0;
 
 	virtual void RequestCapture(vdfunction<void(const VDPixmap *)> fn) = 0;
 };
@@ -219,6 +251,7 @@ void VDVideoDisplaySetD3D9LimitPS2_0(bool enable);
 void VDVideoDisplaySetD3D11Force9_1(bool enable);
 void VDVideoDisplaySetD3D11Force9_3(bool enable);
 void VDVideoDisplaySetD3D11Force10_0(bool enable);
+void VDVideoDisplaySetShowCustomShaderStats(bool enable);
 
 struct VDDBloomV2Settings {
 	float mCoeffWidthBase = -1.5f;
@@ -237,7 +270,7 @@ bool VDRegisterVideoDisplayControl();
 
 class IVDDisplayImageDecoder {
 public:
-	virtual bool DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) = 0;
+	virtual bool DecodeImage(VDPixmapBuffer& buf, VDBufferedRandomAccessStream& stream) = 0;
 };
 
 void VDDisplaySetImageDecoder(IVDDisplayImageDecoder *pfn);

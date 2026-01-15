@@ -35,7 +35,7 @@ public:
 
 	virtual void *AsInterface(uint32 iid) override;
 
-	virtual void SetManager(IATDeviceManager *devMgr);
+	virtual void SetManager(IATDeviceManager *devMgr) override;
 	virtual IATDeviceParent *GetParent() override;
 	virtual uint32 GetParentBusIndex() override;
 	virtual void SetParent(IATDeviceParent *parent, uint32 busIndex) override;

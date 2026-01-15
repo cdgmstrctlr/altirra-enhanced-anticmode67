@@ -69,11 +69,11 @@ public:
 	void ResetCartBank();
 
 public:		// IATDeviceScheduling
-	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:		// IATDeviceMemMap
-	void InitMemMap(ATMemoryManager *memmap);
-	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;

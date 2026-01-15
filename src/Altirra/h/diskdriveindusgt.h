@@ -75,9 +75,9 @@ public:		// IATDeviceAudioOutput
 	void InitAudioOutput(IATAudioMixer *mixer) override;
 
 public:		// IATDeviceButtons
-	uint32 GetSupportedButtons() const;
-	bool IsButtonDepressed(ATDeviceButton idx) const;
-	void ActivateButton(ATDeviceButton idx, bool state);
+	uint32 GetSupportedButtons() const override;
+	bool IsButtonDepressed(ATDeviceButton idx) const override;
+	void ActivateButton(ATDeviceButton idx, bool state) override;
 
 public:	// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
@@ -85,7 +85,9 @@ public:	// IATSchedulerCallback
 public:	// IATDeviceRawSIO
 	void OnCommandStateChanged(bool asserted) override;
 	void OnMotorStateChanged(bool asserted) override;
+	void OnBeginReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
 	void OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) override;
+	void OnTruncateByte() override;
 	void OnSendReady() override;
 
 public:	// IATDiskInterfaceClient
@@ -96,7 +98,7 @@ public:	// IATDiskInterfaceClient
 	bool IsImageSupported(const IATDiskImage& image) const override;
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(uint32 polarity);
 
@@ -185,7 +187,6 @@ protected:
 	vdfastvector<ATCPUHistoryEntry> mHistory;
 
 	ATDiskDriveSerialBitTransmitQueue mSerialXmitQueue;
-	ATDiskDriveSerialCommandQueue mSerialCmdQueue;
 
 	ATDiskDriveDebugTargetProxyT<ATCoProcZ80> mTargetProxy;
 

@@ -27,8 +27,8 @@
 
 // State of control signals from terminal to device.
 struct ATDeviceSerialTerminalState {
-	bool mbDataTerminalReady;
-	bool mbRequestToSend;
+	bool mbDataTerminalReady = true;
+	bool mbRequestToSend = true;
 };
 
 // State of control signals from device to terminal.

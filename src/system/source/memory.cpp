@@ -254,9 +254,57 @@ bool VDCompareRect(void *dst, ptrdiff_t dstpitch, const void *src, ptrdiff_t src
 }
 
 const void *VDMemCheck8(const void *src, uint8 value, size_t count) {
-	if (count) {
-		const uint8 *src8 = (const uint8 *)src;
+	const uint8 *src8 = (const uint8 *)src;
 
+	if (count >= 32) {
+#if VD_PTR_SIZE > 4
+		const uint64 v64 = (uint64)value * UINT64_C(0x0101010101010101);
+
+		size_t count8 = count >> 3;
+		do {
+			uint64 testVal;
+			memcpy(&testVal, src8, 8);
+
+			if (testVal != v64) [[unlikely]] {
+				for(int i=0; i<7; ++i) {
+					if (*src8 != value)
+						break;
+
+					++src8;
+				}
+				return src8;
+			}
+
+			src8 += 8;
+		} while(--count8);
+
+		count &= 7;
+#else
+		const uint32 v32 = (uint32)value * UINT64_C(0x01010101);
+
+		size_t count4 = count >> 2;
+		do {
+			uint32 testVal;
+			memcpy(&testVal, src8, 4);
+
+			if (testVal != v32) [[unlikely]] {
+				for(int i=0; i<3; ++i) {
+					if (*src8 != value)
+						break;
+
+					++src8;
+				}
+				return src8;
+			}
+
+			src8 += 4;
+		} while(--count4);
+
+		count &= 3;
+#endif
+	}
+
+	if (count) {
 		do {
 			if (*src8 != value)
 				return src8;
@@ -269,13 +317,8 @@ const void *VDMemCheck8(const void *src, uint8 value, size_t count) {
 }
 
 void VDMemset8(void *dst, uint8 value, size_t count) {
-	if (count) {
-		uint8 *dst2 = (uint8 *)dst;
-
-		do {
-			*dst2++ = value;
-		} while(--count);
-	}
+	if (count)
+		memset(dst, value, count);
 }
 
 void VDMemset16(void *dst, uint16 value, size_t count) {

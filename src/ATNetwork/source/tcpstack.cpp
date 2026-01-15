@@ -1131,6 +1131,10 @@ void ATNetTcpConnection::CloseSocket(bool force) {
 	}
 }
 
+void ATNetTcpConnection::PollSocket() {
+	VDFAIL("Not implemented");
+}
+
 ATSocketAddress ATNetTcpConnection::GetLocalAddress() const {
 	return ATSocketAddress::CreateIPv4(mConnKey.mLocalAddress, mConnKey.mLocalPort);
 }

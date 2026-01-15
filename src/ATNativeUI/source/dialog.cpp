@@ -140,6 +140,87 @@ void VDMenuItemInitializer::SetEnabled(bool enable) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+ATUIPopupMenuBuilder::ATUIPopupMenuBuilder() {
+	mMenuStack.push_back(CreatePopupMenu());
+}
+
+ATUIPopupMenuBuilder::~ATUIPopupMenuBuilder() {
+	HMENU hmenu = mMenuStack.front();
+
+	if (hmenu)
+		DestroyMenu(hmenu);
+}
+
+uint32 ATUIPopupMenuBuilder::AddItem(const wchar_t *text) {
+	++mLastId;
+
+	HMENU hmenu = mMenuStack.back();
+
+	if (hmenu)
+		VDAppendMenuW32(hmenu, mPendingItemFlags | MF_ENABLED | MF_STRING, mLastId, text);
+
+	mPendingItemFlags = 0;
+
+	return mLastId;
+}
+
+void ATUIPopupMenuBuilder::AddSpacer() {
+	HMENU hmenu = mMenuStack.back();
+
+	if (hmenu)
+		VDAppendMenuW32(hmenu, mPendingItemFlags | MF_ENABLED | MF_STRING | MF_DISABLED, 0, L"");
+
+	mPendingItemFlags = 0;
+}
+
+void ATUIPopupMenuBuilder::AddSeparator() {
+	HMENU hmenu = mMenuStack.back();
+
+	if (hmenu)
+		VDAppendMenuSeparatorW32(hmenu);
+}
+
+void ATUIPopupMenuBuilder::StartNewColumn() {
+	mPendingItemFlags |= MF_MENUBREAK;
+}
+
+void ATUIPopupMenuBuilder::BeginSubMenu(const wchar_t *text) {
+	HMENU hmenu = mMenuStack.back();
+	HMENU hSubMenu = nullptr;
+
+	if (hmenu) {
+		hSubMenu = CreatePopupMenu();
+
+		if (!VDAppendPopupMenuW32(hmenu, mPendingItemFlags | MF_ENABLED | MF_POPUP, hSubMenu, text)) {
+			DestroyMenu(hSubMenu);
+			hSubMenu = nullptr;
+		}
+	}
+
+	mPendingItemFlags = 0;
+	mMenuStack.push_back(hSubMenu);
+}
+
+void ATUIPopupMenuBuilder::EndSubMenu() {
+	if (mMenuStack.size() > 1)
+		mMenuStack.pop_back();
+
+	mPendingItemFlags = 0;
+}
+
+VDZHMENU ATUIPopupMenuBuilder::GetPopupMenu() const {
+	return mMenuStack.front();
+}
+
+int ATUIPopupMenuBuilder::GetIndexFromItemId(uint32 id) const {
+	if (id >= 1 && id <= mLastId)
+		return (int)(id - 1);
+	else
+		return -1;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 const wchar_t *VDDialogFrameW32::spDefaultCaption = L"";
 
 VDDialogFrameW32::VDDialogFrameW32(uint32 dlgid)
@@ -294,6 +375,40 @@ void VDDialogFrameW32::AddProxy(VDUIProxyControl *proxy, VDZHWND hwnd) {
 	mMsgDispatcher.AddControl(proxy);
 }
 
+bool VDDialogFrameW32::AddControlFromPlaceholder(VDDialogFrameW32& control, uint32 id) {
+	HWND hwnd = GetControl(id);
+
+	if (!hwnd)
+		return false;
+
+	ATUINativeWindowProxy placeholder(hwnd);
+
+	const vdrect32& area = placeholder.GetArea();
+	const bool visible = placeholder.IsVisible();
+	const bool tabStop = placeholder.IsTabStop();
+
+	if (!control.Create(this))
+		return false;
+
+	control.InsertBelow(hwnd);
+
+	mResizer.AddAlias(control.GetWindowHandle(), hwnd, 0);
+	mResizer.Remove(hwnd);
+
+	DestroyWindow(hwnd);
+
+	control.SetWindowId(id);
+	control.SetArea(area);
+	control.SetTabStop(tabStop);
+
+	if (visible)
+		control.Show();
+	else
+		control.Hide();
+
+	return true;
+}
+
 void VDDialogFrameW32::SetCurrentSizeAsMinSize() {
 	RECT r;
 	if (GetWindowRect(mhdlg, &r)) {
@@ -343,6 +458,42 @@ void VDDialogFrameW32::SetFocusToControl(uint32 id) {
 	HWND hwnd = GetDlgItem(mhdlg, id);
 	if (hwnd)
 		SendMessage(mhdlg, WM_NEXTDLGCTL, (WPARAM)hwnd, TRUE);
+}
+
+void VDDialogFrameW32::SetCurrentCursor(const ATUICursorImage& image) {
+	switch(image) {
+		case kATUICursorImage_Hidden:
+			::SetCursor(NULL);
+			break;
+
+		case kATUICursorImage_Arrow:
+			::SetCursor(::LoadCursor(NULL, IDC_ARROW));
+			break;
+
+		case kATUICursorImage_IBeam:
+			::SetCursor(::LoadCursor(NULL, IDC_IBEAM));
+			break;
+
+		case kATUICursorImage_Cross:
+			::SetCursor(::LoadCursor(NULL, IDC_CROSS));
+			break;
+
+		case kATUICursorImage_Query:
+			::SetCursor(::LoadCursor(NULL, IDC_HELP));
+			break;
+
+		case kATUICursorImage_SizeHoriz:
+			::SetCursor(::LoadCursor(NULL, IDC_SIZEWE));
+			break;
+
+		case kATUICursorImage_SizeVert:
+			::SetCursor(::LoadCursor(NULL, IDC_SIZENS));
+			break;
+
+		case kATUICursorImage_Move:
+			::SetCursor(::LoadCursor(NULL, IDC_SIZEALL));
+			break;
+	}
 }
 
 void VDDialogFrameW32::EnableControl(uint32 id, bool enabled) {
@@ -742,7 +893,7 @@ void VDDialogFrameW32::ShowError(const wchar_t *message, const wchar_t *caption)
 
 void VDDialogFrameW32::ShowError(const MyError& e) {
 	// don't show user abort errors
-	if (!e.empty())
+	if (e.visible())
 		ShowError(e.wc_str());
 }
 
@@ -759,7 +910,7 @@ void VDDialogFrameW32::ShowError2(const wchar_t *message, const wchar_t *title) 
 
 void VDDialogFrameW32::ShowError2(const MyError& e, const wchar_t *title) {
 	// don't show user abort errors
-	if (!e.empty())
+	if (e.visible())
 		ShowError2(e.wc_str(), title);
 }
 
@@ -946,45 +1097,73 @@ int VDDialogFrameW32::ActivatePopupMenu(int x, int y, vdspan<PopupMenuItem> item
 }
 
 void VDDialogFrameW32::ActivateCommandPopupMenu(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
-	ActivateCommandPopupMenuInternal(false, x, y, menuID, std::move(initer));
+	ActivateCommandPopupMenuInternal(false, vdrect32(x, y, x, y), menuID, std::move(initer));
 }
 
 uint32 VDDialogFrameW32::ActivateCommandPopupMenuReturnId(int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
-	return ActivateCommandPopupMenuInternal(true, x, y, menuID, std::move(initer));
+	return ActivateCommandPopupMenuInternal(true, vdrect32(x, y, x, y), menuID, std::move(initer));
 }
 
-uint32 VDDialogFrameW32::ActivateCommandPopupMenuInternal(bool returnId, int x, int y, uint32 menuID, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
-	HMENU hmenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(menuID));
-	if (hmenu) {
-		HMENU hSubMenu = GetSubMenu(hmenu, 0);
+uint32 VDDialogFrameW32::ActivateCommandPopupMenuReturnId(const ATUINativeWindowProxy& anchorControl, const MenuSource& menuHandleOrResId, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
+	const vdrect32& r = anchorControl.GetWindowArea();
 
-		if (hSubMenu) {
-			auto initMenu = [&](HMENU hInitMenu, auto& self) -> void {
-				const int numItems = GetMenuItemCount(hInitMenu);
+	return ActivateCommandPopupMenuInternal(true, r, menuHandleOrResId, std::move(initer));
+}
 
-				for(int i=0; i<numItems; ++i) {
-					MENUITEMINFO mii {};
-					mii.cbSize = sizeof mii;
-					mii.fMask = MIIM_ID | MIIM_FTYPE | MIIM_SUBMENU;
-					if (GetMenuItemInfo(hInitMenu, i, TRUE, &mii)) {
-						if (mii.hSubMenu)
-							self(mii.hSubMenu, self);
-						else if (!(mii.fType & MFT_SEPARATOR)) {
-							VDMenuItemInitializer itemIniter(hInitMenu, i);
-							initer(mii.wID, itemIniter);
-						}
-					}
-				}
-			};
+uint32 VDDialogFrameW32::ActivateCommandPopupMenuInternal(bool returnId, const vdrect32& r, const MenuSource& menuHandleOrResId, vdfunction<void(uint32 id, VDMenuItemInitializer&)> initer) {
+	HMENU hLoadedMenu = nullptr;
+	uint32 selectedId = 0;
 
-			if (initer)
-				initMenu(hSubMenu, initMenu);
+	HMENU hmenu = nullptr;
 
-			return (uint32)TrackPopupMenuEx(hSubMenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | (returnId ? TPM_RETURNCMD : 0), x, y, mhdlg, nullptr);
+	if (menuHandleOrResId.IsResId()) {
+		hLoadedMenu = LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(menuHandleOrResId.GetResId()));
+		if (hLoadedMenu) {
+			hmenu = GetSubMenu(hLoadedMenu, 0);
 		}
+	} else {
+		hmenu = menuHandleOrResId.GetHMenu();
 	}
 
-	return 0;
+	if (hmenu) {
+		auto initMenu = [&](HMENU hInitMenu, auto& self) -> void {
+			const int numItems = GetMenuItemCount(hInitMenu);
+
+			for(int i=0; i<numItems; ++i) {
+				MENUITEMINFO mii {};
+				mii.cbSize = sizeof mii;
+				mii.fMask = MIIM_ID | MIIM_FTYPE | MIIM_SUBMENU;
+				if (GetMenuItemInfo(hInitMenu, i, TRUE, &mii)) {
+					if (mii.hSubMenu)
+						self(mii.hSubMenu, self);
+					else if (!(mii.fType & MFT_SEPARATOR)) {
+						VDMenuItemInitializer itemIniter(hInitMenu, i);
+						initer(mii.wID, itemIniter);
+					}
+				}
+			}
+		};
+
+		if (initer)
+			initMenu(hmenu, initMenu);
+
+		TPMPARAMS params {
+			sizeof(TPMPARAMS),
+			{
+				r.left,
+				r.top,
+				r.right,
+				r.bottom
+			}
+		};
+
+		selectedId = (uint32)TrackPopupMenuEx(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_HORIZONTAL | (returnId ? TPM_RETURNCMD : 0), r.left, r.bottom, mhdlg, &params);
+	}
+
+	if (hLoadedMenu)
+		DestroyMenu(hLoadedMenu);
+
+	return selectedId;
 }
 
 void VDDialogFrameW32::LBClear(uint32 id) {
@@ -1187,6 +1366,11 @@ void VDDialogFrameW32::OnPreLoaded() {
 						disableTheming = true;
 						break;
 
+					case BS_SPLITBUTTON:
+						if (ATUIIsDarkThemeActive())
+							disableTheming = true;
+						break;
+
 					default:
 						break;
 				}
@@ -1382,10 +1566,22 @@ void VDDialogFrameW32::OnMouseDownL(int x, int y) {
 void VDDialogFrameW32::OnMouseUpL(int x, int y) {
 }
 
+bool VDDialogFrameW32::OnMouseDownR(int x, int y) {
+	return false;
+}
+
+bool VDDialogFrameW32::OnMouseUpR(int x, int y) {
+	return false;
+}
+
 void VDDialogFrameW32::OnMouseWheel(int x, int y, sint32 delta) {
 }
 
 void VDDialogFrameW32::OnMouseLeave() {
+}
+
+bool VDDialogFrameW32::OnSetCursor(int x, int y, ATUICursorImage& image) {
+	return OnSetCursor(image);
 }
 
 bool VDDialogFrameW32::OnSetCursor(ATUICursorImage& image) {
@@ -2040,6 +2236,17 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			OnMouseUpL((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam));
 			break;
 
+		case WM_RBUTTONDOWN:
+			if (OnMouseDownR((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam)))
+				return 0;
+
+			break;
+
+		case WM_RBUTTONUP:
+			if (OnMouseUpR((int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam)))
+				return 0;
+			break;
+
 		case WM_MOUSELEAVE:
 			OnMouseLeave();
 			break;
@@ -2051,37 +2258,23 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			break;
 		}
 
-		case WM_SETCURSOR: {
-			ATUICursorImage image {};
+		case WM_SETCURSOR:
+			if (LOWORD(lParam) == HTCLIENT) {
+				ATUICursorImage image {};
 
-			if (OnSetCursor(image)) {
-				switch(image) {
-					case kATUICursorImage_Hidden:
-						::SetCursor(NULL);
-						break;
+				const DWORD pos = ::GetMessagePos();
+				POINT pt { (SHORT)LOWORD(pos), (SHORT)HIWORD(pos) };
 
-					case kATUICursorImage_Arrow:
-						::SetCursor(::LoadCursor(NULL, IDC_ARROW));
-						break;
+				ScreenToClient(mhwnd, &pt);
 
-					case kATUICursorImage_IBeam:
-						::SetCursor(::LoadCursor(NULL, IDC_IBEAM));
-						break;
+				if (OnSetCursor(pt.x, pt.y, image)) {
+					SetCurrentCursor(image);
 
-					case kATUICursorImage_Cross:
-						::SetCursor(::LoadCursor(NULL, IDC_CROSS));
-						break;
-
-					case kATUICursorImage_Query:
-						::SetCursor(::LoadCursor(NULL, IDC_HELP));
-						break;
+					SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
+					return TRUE;
 				}
-
-				SetWindowLongPtr(mhdlg, DWLP_MSGRESULT, TRUE);
-				return TRUE;
 			}
 			break;
-		}
 
 		case WM_CAPTURECHANGED:
 			OnCaptureLost();
@@ -2150,6 +2343,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 
 		case WM_DESTROY:
 			OnDestroy();
+
+			// ensure this happens even if OnDestroy() doesn't propagate -- though
+			// some subclasses may intentionally call it early
+			mMsgDispatcher.RemoveAllControls(true);
 
 			if (mbProgressParentHooked) {
 				mbProgressParentHooked = false;
@@ -2331,6 +2528,10 @@ VDZINT_PTR VDDialogFrameW32::DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lP
 			break;
 
 		case WM_CTLCOLORSTATIC:
+			if (HBRUSH hbrush = mMsgDispatcher.TryDispatch_WM_CTLCOLORSTATIC(wParam, lParam))
+				return (INT_PTR)hbrush;
+
+			[[fallthrough]];
 		case WM_CTLCOLORBTN:
 			if (ATUIIsDarkThemeActive()) {
 				const auto& tcw32 = ATUIGetThemeColorsW32();

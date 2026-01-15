@@ -63,7 +63,7 @@ public:
 
 protected:
 	LRESULT EditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 	bool OnCreate();
 	void OnDestroy();
 	void OnSize();
@@ -2192,6 +2192,58 @@ void ATUIHistoryView::UpdateOpcodes(uint32 historyStart, uint32 historyEnd) {
 	}
 
 	const ATHistoryTranslateInsnFn translateFn = ATHistoryGetTranslateInsnFn(mDisasmMode);
+
+	// Try to refresh the last instruction node.
+	//
+	// This is necessary when execution has stopped after a history entry has
+	// been added and displayed, but before the instruction finishes. In particular,
+	// the effective address may not be available when the instruction is first
+	// seen. After stepping, we have to refresh the node with the updated EA.
+	//
+	// Note that the history window has not necessarily moved when this happens, so
+	// the check should be quick.
+	//
+	// check if the last node is an insn node, and corresponds to the last
+	// buffered insn.
+	if (mpHistoryModel->ShouldRefreshPrevNode()) {
+		ATHTNode *lastNode = mpPreviewNode;
+
+		if (lastNode) {
+			// step upward from the preview node until there is a previous node
+			while(lastNode && !lastNode->mpPrevSibling)
+				lastNode = lastNode->mpParent;
+			
+			// step to the previous node
+			if (lastNode) {
+				if (lastNode->mpPrevSibling)
+					lastNode = lastNode->mpPrevSibling;
+				else
+					lastNode = nullptr;
+			}
+		} else {
+			// no preview node -- just use the last node
+			lastNode = mHistoryTree.GetBackNode();
+		}
+
+		// find last leaf node under this node
+		while(lastNode && lastNode->mpLastChild)
+			lastNode = lastNode->mpLastChild;
+
+		if (lastNode && lastNode->mNodeType == kATHTNodeType_Insn) {
+			if (!mInsnBuffer.empty() && lastNode->mInsn.mOffset + lastNode->mInsn.mCount == mInsnBuffer.size()) {
+				const ATCPUHistoryEntry *helast = nullptr;
+				if (mpHistoryModel->ReadInsns(&helast, mInsnPosEnd - 1, 1)) {
+					ATCPUHistoryEntry& helast2 = mInsnBuffer.back();
+
+					if (helast->mCycle == helast2.mCycle && helast->mEA != helast2.mEA) {
+						helast2.mEA = helast->mEA;
+
+						RefreshNode(lastNode, lastNode->mInsn.mCount - 1);
+					}
+				}
+			}
+		}
+	}
 
 	uint32 c = historyEnd;
 	uint32 dist = c - mInsnPosEnd;

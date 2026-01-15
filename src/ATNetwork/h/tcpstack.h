@@ -135,7 +135,7 @@ public:
 	bool Bind(uint16 port, IATEmuNetSocketListener *listener);
 	void Unbind(uint16 port, IATEmuNetSocketListener *listener);
 
-	bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler& handler, IATStreamSocket **newSocket);
+	bool Connect(uint32 dstIpAddr, uint16 dstPort, IATSocketHandler& handler, IATStreamSocket **newSocket) override;
 
 	void CloseAllConnections();
 
@@ -203,6 +203,8 @@ public:
 
 	ATSocketStatus GetSocketStatus() const override { return {}; }
 	void CloseSocket(bool force) override;
+	void PollSocket() override;
+
 	ATSocketAddress GetLocalAddress() const override;
 	ATSocketAddress GetRemoteAddress() const override;
 	sint32 Recv(void *buf, uint32 len) override;

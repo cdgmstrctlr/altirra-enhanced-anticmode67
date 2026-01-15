@@ -21,13 +21,7 @@
 #include "firmwaremanager.h"
 #include "firmwaredetect.h"
 
-struct ATKnownFirmware {
-	uint32 mCRC;
-	uint32 mSize;
-	ATFirmwareType mType;
-	const wchar_t *mpDesc;
-	ATSpecificFirmwareType mSpecificType;
-} kATKnownFirmwares[]={
+static constexpr ATKnownFirmware kATKnownFirmwares[]={
 	{ 0x4248d3e3,  2048, kATFirmwareType_Kernel5200, L"Atari 5200 OS (4-port)" },
 	{ 0xc2ba2613,  2048, kATFirmwareType_Kernel5200, L"Atari 5200 OS (2-port)" },
 	{ 0x4bec4de2,  8192, kATFirmwareType_Basic, L"Atari BASIC rev. A", kATSpecificFirmwareType_BASICRevA },
@@ -36,7 +30,7 @@ struct ATKnownFirmware {
 	{ 0xc1b3bb02, 10240, kATFirmwareType_Kernel800_OSA, L"Atari 400/800 OS-A NTSC", kATSpecificFirmwareType_OSA },
 	{ 0x72b3fed4, 10240, kATFirmwareType_Kernel800_OSA, L"Atari 400/800 OS-A PAL" },
 	{ 0x0e86d61d, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B NTSC", kATSpecificFirmwareType_OSB },
-	{ 0x3e28a1fe, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B NTSC (patched)", kATSpecificFirmwareType_OSB },
+	{ 0x3e28a1fe, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B NTSC (Xformer patched)", kATSpecificFirmwareType_OSB },
 	{ 0x0c913dfc, 10240, kATFirmwareType_Kernel800_OSB, L"Atari 400/800 OS-B PAL" },
 	{ 0xc5c11546, 16384, kATFirmwareType_Kernel1200XL, L"Atari 1200XL OS rev. 10" },
 	{ 0x1A1D7B1B, 16384, kATFirmwareType_Kernel1200XL, L"Atari 1200XL OS rev. 11" },
@@ -45,9 +39,13 @@ struct ATKnownFirmware {
 	{ 0x29f133f7, 16384, kATFirmwareType_KernelXL, L"Atari XL/XE OS ver.3" },
 	{ 0x1eaf4002, 16384, kATFirmwareType_KernelXEGS, L"Atari XL/XE/XEGS OS ver.4", kATSpecificFirmwareType_XLOSr4 },
 	{ 0xbdca01fb,  8192, kATFirmwareType_Game, L"Atari XEGS Missile Command" },
+
 	{ 0xa8953874, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.34" },
 	{ 0x91175314, 16384, kATFirmwareType_BlackBox, L"Black Box ver. 1.41" },
 	{ 0x7cafd9a8, 65536, kATFirmwareType_BlackBox, L"Black Box ver. 2.16" },
+
+	{ 0x769cc316,  4096, kATFirmwareType_BlackBoxFloppy, L"Black Box Floppy Board v1.5" },
+
 	{ 0x7d68f07b, 16384, kATFirmwareType_MIO, L"MIO ver. 1.1k (128Kbit)" },
 	{ 0x00694A74, 16384, kATFirmwareType_MIO, L"MIO ver. 1.1m (128Kbit)" },
 	{ 0xa6a9e3d6,  8192, kATFirmwareType_MIO, L"MIO ver. 1.41 (64Kbit)" },
@@ -114,7 +112,20 @@ struct ATKnownFirmware {
 	{ 0x79E0FEA4,  2048, kATFirmwareType_820, L"Atari 820 firmware" },
 	{ 0x46D194B4,  4096, kATFirmwareType_1025, L"Atari 1025 firmware" },
 	{ 0x19C4F811,  4096, kATFirmwareType_1029, L"Atari 1029 firmware (English)" },
+
+	{ 0x2CF990B9,  4096, kATFirmwareType_850, L"Atari 850 firmware" },
+	{ 0x9201359A,  4096, kATFirmwareType_850, L"Atari 850 firmware (early revision)" },
+
+	{ 0x597EB2E4, 32768, kATFirmwareType_SpeedyXF, L"Speedy XF v1.7" },
+	{ 0x554A9067, 32768, kATFirmwareType_SpeedyXF, L"Speedy XF v1.8" },
 };
+
+const ATKnownFirmware *ATFirmwareGetKnownByIndex(size_t idx) {
+	if (idx < vdcountof(kATKnownFirmwares))
+		return &kATKnownFirmwares[idx];
+
+	return nullptr;
+}
 
 bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 	uint32 fileSize32 = (uint32)fileSize;
@@ -138,8 +149,9 @@ bool ATFirmwareAutodetectCheckSize(uint64 fileSize) {
 	}
 }
 
-ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificType) {
+ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificType, sint32& knownFirmwareIndex) {
 	specificType = kATSpecificFirmwareType_None;
+	knownFirmwareIndex = -1;
 
 	if (!ATFirmwareAutodetectCheckSize(len))
 		return ATFirmwareDetection::None;
@@ -154,6 +166,9 @@ ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwar
 			info.mbVisible = true;
 			info.mFlags = 0;
 			specificType = kfw.mSpecificType;
+
+			knownFirmwareIndex = (sint32)(&kfw - kATKnownFirmwares);
+
 			return ATFirmwareDetection::SpecificImage;
 		}
 	}

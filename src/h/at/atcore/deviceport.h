@@ -73,6 +73,9 @@ public:
 	virtual void AddRef() = 0;
 	virtual void Release() = 0;
 	
+	// Returns true if dirty pot emulation is enabled.
+	virtual bool IsPotNoiseEnabled() const = 0;
+
 	// Locally enable or disable the port. A disabled port does not drive any
 	// inputs or sense outputs. This is independent of the internal system enable
 	// for whether ports 3/4 actually exist.
@@ -102,8 +105,7 @@ public:
 	// Sets whether the joystick trigger is held down.
 	virtual void SetTriggerDown(bool down) = 0;
 
-	// Reset a pot input as if nothing were connected. This is equivalent to
-	// setting the pots to max value (228).
+	// Reset a pot input as if nothing were connected.
 	virtual void ResetPotPosition(bool potB) = 0;
 
 	// Set pot position in terms of the value returned from POT0-7. Valid values

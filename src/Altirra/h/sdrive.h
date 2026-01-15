@@ -57,20 +57,21 @@ public:
 	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 protected:
-	IATDeviceSIOManager *mpSIOMgr;
-	IATDeviceIndicatorManager *mpUIRenderer;
-	vdrefptr<IATBlockDevice> mpDisk;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	vdrefptr<IATBlockDevice> mpDisk = nullptr;
 
-	uint32 mSectorNumber;
-	uint32 mHighSpeedCPSLo;
-	uint32 mHighSpeedCPSHi;
-	uint8 mHighSpeedIndex;
-	bool mbHighSpeedEnabled;
-	bool mbHighSpeedPhase;
+	uint32 mSectorNumber = 0;
+	uint32 mHighSpeedCPSLo = 0;
+	uint32 mHighSpeedCPSHi = 0;
+	uint8 mHighSpeedIndex = 0;
+	bool mbHighSpeedEnabled = false;
+	bool mbHighSpeedPhase = false;
 
 	ATDeviceParentSingleChild mDeviceParent;
 
-	uint8 mSectorBuffer[512];
+	uint8 mSectorBuffer[512] {};
 };
 
 #endif

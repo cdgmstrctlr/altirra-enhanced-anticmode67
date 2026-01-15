@@ -89,7 +89,7 @@ public:
 
 	void ColdReset();
 
-	void BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires, bool mode16XColor);	// CMC
+	void BeginScanline(uint8* dst, const uint8* mergeBuffer, const uint8* anticBuffer, bool hires, bool mode16XColor);	// CMC
 	void RenderScanline(int x2, bool pfgraphics, bool pmgraphics, bool mixed);
 	uint32 SenseScanline(int hpx1, int hpx2, const uint8 *weights) const;
 	void EndScanline();
@@ -146,7 +146,7 @@ protected:
 	bool mbVBlank;
 	bool mbSECAMMode;
 	uint8 mPRIOR;
-	uint8 mGRACTL;
+	uint8 mGRACTL;			// CMC
 
 	const uint8 *mpPriTable;
 	const uint8 *mpColorTable;

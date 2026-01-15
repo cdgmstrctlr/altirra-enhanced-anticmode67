@@ -65,9 +65,9 @@ public:
 	bool IsMainFlashDirty() const { return mFlashCtrl.IsDirty(); }
 	bool IsSDXFlashDirty() const { return mSDXCtrl.IsDirty(); }
 
-	void GetSettingsBlurb(VDStringW& buf);
-	void GetSettings(ATPropertySet& settings);
-	bool SetSettings(const ATPropertySet& settings);
+	void GetSettingsBlurb(VDStringW& buf) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
 
 	void Init() override;
 	void Shutdown() override;

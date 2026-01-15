@@ -118,9 +118,7 @@ void ATWriteRawFMToTrack(uint8 *track, uint32 trackOffsetBits, uint32 trackLenBi
 	fmBuffer[numBytes * 2 + 2] = 0;
 	fmBuffer[numBytes * 2 + 3] = 0;
 
-	// encode to MFM
-	uint8 lastByte = 0xFF;
-
+	// encode to FM
 	for(uint32 i = 0; i < numBytes; ++i) {
 		const uint8 d = dataBits[i];
 		const uint8 m = clockMaskBits[i];
@@ -129,8 +127,6 @@ void ATWriteRawFMToTrack(uint8 *track, uint32 trackOffsetBits, uint32 trackLenBi
 		const uint16 fmClockBits = kATMFMBitSpreadTable[m];
 
 		VDWriteUnalignedBEU16(&fmBuffer[2 + i*2], fmDataBits + (fmClockBits << 1));
-
-		lastByte = d;
 	}
 
 	// check if the write would wrap around the track, and thus we need a split write

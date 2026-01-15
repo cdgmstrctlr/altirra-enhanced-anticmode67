@@ -148,6 +148,10 @@ void OnCommandViewEffectReload() {
 	g_ATUIManager.SetCustomEffectPath(VDStringW(g_ATUIManager.GetCustomEffectPath()).c_str(), true);
 }
 
+void OnCommandViewEffectClear() {
+	g_ATUIManager.SetCustomEffectPath(L"", true);
+}
+
 void OnCommandViewToggleIndicatorMargin() {
 	ATUISetDisplayPadIndicators(!ATUIGetDisplayPadIndicators());
 }

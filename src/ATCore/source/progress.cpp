@@ -60,8 +60,8 @@ void ATSetProgressHandler(IATProgressHandler *h) {
 class ATTaskProgressContextNull final : public IATTaskProgressContext {
 public:
 	bool CheckForCancellationOrStatus() override { return false; }
-	void SetProgress(double progress) {}
-	void SetProgressF(double progress, const wchar_t *format, ...) {}
+	void SetProgress(double progress) override {}
+	void SetProgressF(double progress, const wchar_t *format, ...) override {}
 };
 
 void ATRunTaskWithProgress(const wchar_t *desc, const vdfunction<void(IATTaskProgressContext&)>& fn) {

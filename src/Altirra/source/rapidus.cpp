@@ -18,6 +18,7 @@
 #include "stdafx.h"
 #include <vd2/system/file.h>
 #include <vd2/system/registry.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/devicepia.h>
@@ -31,6 +32,8 @@ extern ATLogChannel g_ATLCEEPROMRead;
 extern ATLogChannel g_ATLCEEPROMWrite;
 
 void ATCreateDeviceRapidus(const ATPropertySet& pset, IATDevice **dev);
+
+ATConfigVarBool g_ATCVDevicesRapidus40MHz("devices.rapidus.40mhz", false);
 
 extern const ATDeviceDefinition g_ATDeviceDefRapidus = { "rapidus", nullptr, L"Rapidus", ATCreateDeviceRapidus, kATDeviceDefFlag_RebootOnPlug };
 
@@ -60,7 +63,13 @@ void ATRapidusDevice::GetDeviceInfo(ATDeviceInfo& info) {
 
 void ATRapidusDevice::Init() {
 	mpPIA = GetService<IATDevicePIA>();
-	mPIAOutput = mpPIA->AllocOutput([](void *data, uint32 outputState) { ((ATRapidusDevice *)data)->UpdateSRAMWindows(0xE); }, this, IATDevicePIA::kMask_PB0 | IATDevicePIA::kMask_PB1 | IATDevicePIA::kMask_PB7);
+	mPIAOutput = mpPIA->AllocOutput(
+		[](void *data, uint32 outputState) {
+			((ATRapidusDevice *)data)->UpdateSRAMWindows(0xE);
+		},
+		this,
+		IATDevicePIA::kMask_PB0 | IATDevicePIA::kMask_PB1 | IATDevicePIA::kMask_PB7
+	);
 
 	ReloadFirmware();
 	mFlashEmu.Init(mFlash, kATFlashType_SST39SF040, mpScheduler);
@@ -74,16 +83,24 @@ void ATRapidusDevice::Init() {
 		uint32 mPageStart;
 		uint32 mPageCount;
 		const char *mpName;
+		const char *mpShadowName;
 	} kSRAMWindows[]={
-		{ 0x00, 0x40,	"Rapidus $0000-3FFF SRAM window" },
-		{ 0x40, 0x40,	"Rapidus $4000-7FFF SRAM window (1)" },
-		{ 0x58, 0x28,	"Rapidus $4000-7FFF SRAM window (2)" },
-		{ 0x80, 0x40,	"Rapidus $8000-BFFF SRAM window" },
-		{ 0xC0, 0x40,	"Rapidus $C000-FFFF SRAM window (1)" },
-		{ 0xD8, 0x28,	"Rapidus $C000-FFFF SRAM window (2)" },
+		{ 0x00, 0x40,	"Rapidus $0000-3FFF SRAM window"	, "Rapidus $0000-3FFF write-through window" },
+		{ 0x40, 0x40,	"Rapidus $4000-7FFF SRAM window (1)", "Rapidus $4000-7FFF write-through window (1)" },
+		{ 0x58, 0x28,	"Rapidus $4000-7FFF SRAM window (2)", "Rapidus $4000-7FFF write-through window (2)" },
+		{ 0x80, 0x40,	"Rapidus $8000-BFFF SRAM window"	, "Rapidus $8000-BFFF write-through window" },
+		{ 0xC0, 0x40,	"Rapidus $C000-FFFF SRAM window (1)", "Rapidus $C000-FFFF write-through window (1)" },
+		{ 0xD8, 0x28,	"Rapidus $C000-FFFF SRAM window (2)", "Rapidus $C000-FFFF write-through window (2)" },
 	};
 
 	static_assert(vdcountof(kSRAMWindows) == vdcountof(mpLayerBank0RAM), "SRAM window array mismatch");
+
+	ATMemoryHandlerTable writeThroughHandlers {};
+	writeThroughHandlers.mbPassWrites = true;
+	writeThroughHandlers.mpThis = this;
+	writeThroughHandlers.mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) {
+		return ((ATRapidusDevice *)thisptr0)->WriteThroughSRAM(address, data);
+	};
 
 	for(uint32 i=0; i<(uint32)vdcountof(kSRAMWindows); ++i) {
 		const SRAMWindow& sw = kSRAMWindows[i];
@@ -95,22 +112,12 @@ void ATRapidusDevice::Init() {
 
 		mpLayerBank0RAM[i] = layer;
 
+		ATMemoryLayer *shadowLayer = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay + 2, writeThroughHandlers, sw.mPageStart, sw.mPageCount);
+		mpMemMan->SetLayerName(shadowLayer, sw.mpShadowName);
+		mpMemMan->SetLayerTag(shadowLayer, this);
+		mpLayerBank0RAMShadow[i] = shadowLayer;
 	}
 
-	ATMemoryHandlerTable writeThroughHandlers {};
-	writeThroughHandlers.mbPassWrites = true;
-	writeThroughHandlers.mpThis = this;
-	writeThroughHandlers.mpWriteHandler = [](void *thisptr0, uint32 address, uint8 data) { return ((ATRapidusDevice *)thisptr0)->WriteThroughSRAM(address, data); };
-
-	ATMemoryLayer *loShadowLayer = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay + 2, writeThroughHandlers, 0, 0x40);
-	mpMemMan->SetLayerName(loShadowLayer, "Rapidus low SRAM write-through shadow");
-	mpMemMan->SetLayerTag(loShadowLayer, this);
-	mpLayerLoBank0RAMShadow = loShadowLayer;
-
-	ATMemoryLayer *hiShadowLayer = mpMemMan->CreateLayer(kATMemoryPri_HardwareOverlay + 2, writeThroughHandlers, 0x40, 0xC0);
-	mpMemMan->SetLayerName(hiShadowLayer, "Rapidus high SRAM write-through shadow");
-	mpMemMan->SetLayerTag(hiShadowLayer, this);
-	mpLayerHiBank0RAMShadow = hiShadowLayer;
 
 	mpLayerSRAM = mpMemMan->CreateLayer(kATMemoryPri_ExtRAM + 1, mSRAM + 0x10000, 0x100, 0x700, false);
 	mpMemMan->SetLayerFastBus(mpLayerSRAM, true);
@@ -240,8 +247,9 @@ void ATRapidusDevice::Shutdown() {
 		for(ATMemoryLayer *&p : mpLayerBank0RAM)
 			mpMemMan->DeleteLayerPtr(&p);
 
-		mpMemMan->DeleteLayerPtr(&mpLayerLoBank0RAMShadow);
-		mpMemMan->DeleteLayerPtr(&mpLayerHiBank0RAMShadow);
+		for(ATMemoryLayer *&p : mpLayerBank0RAMShadow)
+			mpMemMan->DeleteLayerPtr(&p);
+
 		mpMemMan->DeleteLayerPtr(&mpLayerSRAM);
 		mpMemMan->DeleteLayerPtr(&mpLayerSDRAM);
 		mpMemMan->DeleteLayerPtr(&mpLayerBankedSDRAM);
@@ -787,7 +795,7 @@ void ATRapidusDevice::ResetCPU() {
 	if (mFPGAConfigReg & 0x40) {
 		mpSystemController->OverrideCPUMode(this, false, 1);
 	} else {
-		mpSystemController->OverrideCPUMode(this, true, 11);
+		mpSystemController->OverrideCPUMode(this, true, g_ATCVDevicesRapidus40MHz ? 23 : 11);
 	}
 }
 
@@ -901,6 +909,7 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 		const bool window0Enabled = !(effectiveMCR & 1);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[0], kATMemoryAccessMode_AR, window0Enabled);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[0], kATMemoryAccessMode_W, window0Enabled && (!enableWriteThrough || fastMem0));
+		mpMemMan->EnableLayer(mpLayerBank0RAMShadow[0], kATMemoryAccessMode_W, enableWriteThrough && !fastMem0);
 	}
 
 	// window 1 ($4000-7FFF)
@@ -910,15 +919,21 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 		const bool selfTestEnabled = (portState & (IATDevicePIA::kMask_PB0 | IATDevicePIA::kMask_PB7)) == IATDevicePIA::kMask_PB0;
 		const bool window1Enabled = !(effectiveMCR & 2) && !xramEnabled;
 
-		if (selfTestEnabled)
+		if (selfTestEnabled) {
 			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[1], 0x40, 0x10);
-		else
+			mpMemMan->SetLayerMaskRange(mpLayerBank0RAMShadow[1], 0x40, 0x10);
+		} else {
 			mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[1], 0x40, 0x40);
+			mpMemMan->SetLayerMaskRange(mpLayerBank0RAMShadow[1], 0x40, 0x40);
+		}
 
 		mpMemMan->EnableLayer(mpLayerBank0RAM[1], kATMemoryAccessMode_AR, window1Enabled);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[1], kATMemoryAccessMode_W, window1Enabled && !enableWriteThrough);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[2], kATMemoryAccessMode_AR, window1Enabled && selfTestEnabled);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[2], kATMemoryAccessMode_W, window1Enabled && selfTestEnabled && !enableWriteThrough);
+
+		mpMemMan->EnableLayer(mpLayerBank0RAMShadow[1], kATMemoryAccessMode_W, !xramEnabled && enableWriteThrough);
+		mpMemMan->EnableLayer(mpLayerBank0RAMShadow[2], kATMemoryAccessMode_W, !xramEnabled && enableWriteThrough && selfTestEnabled);
 	}
 
 	// window 2 ($8000-BFFF)
@@ -933,6 +948,7 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 
 		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_AR, window2Enabled);
 		mpMemMan->EnableLayer(mpLayerBank0RAM[3], kATMemoryAccessMode_W, window2Enabled && !enableWriteThrough);
+		mpMemMan->EnableLayer(mpLayerBank0RAMShadow[3], kATMemoryAccessMode_W, enableWriteThrough);
 	}
 
 	// $C000-FFFF window (can be fragmented by hardware $D000-D7FF window)
@@ -942,23 +958,29 @@ void ATRapidusDevice::UpdateSRAMWindows(uint8 windowMask) {
 		if ((effectiveMCR & 0x08) || osEnabled) {
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_ARW, false);
 			mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_ARW, false);
+			mpMemMan->EnableLayer(mpLayerBank0RAMShadow[4], kATMemoryAccessMode_W, false);
+			mpMemMan->EnableLayer(mpLayerBank0RAMShadow[5], kATMemoryAccessMode_W, false);
 		} else {
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_AR, true);
 			mpMemMan->EnableLayer(mpLayerBank0RAM[4], kATMemoryAccessMode_W, !enableWriteThrough);
+			mpMemMan->EnableLayer(mpLayerBank0RAMShadow[4], kATMemoryAccessMode_W, true);
 
 			if (effectiveMCR & 0x40) {
 				mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[4], 0xC0, 0x10);
+				mpMemMan->SetLayerMaskRange(mpLayerBank0RAMShadow[4], 0xC0, 0x10);
+
 				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_AR, true);
 				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_W, !enableWriteThrough);
+				mpMemMan->EnableLayer(mpLayerBank0RAMShadow[5], kATMemoryAccessMode_W, true);
 			} else {
 				mpMemMan->SetLayerMaskRange(mpLayerBank0RAM[4], 0xC0, 0x40);
+				mpMemMan->SetLayerMaskRange(mpLayerBank0RAMShadow[4], 0xC0, 0x40);
 				mpMemMan->EnableLayer(mpLayerBank0RAM[5], kATMemoryAccessMode_ARW, false);
+				mpMemMan->EnableLayer(mpLayerBank0RAMShadow[5], kATMemoryAccessMode_W, false);
 			}
 		}
 	}
 
-	mpMemMan->EnableLayer(mpLayerLoBank0RAMShadow, kATMemoryAccessMode_W, enableWriteThrough && !fastMem0);
-	mpMemMan->EnableLayer(mpLayerHiBank0RAMShadow, kATMemoryAccessMode_W, enableWriteThrough);
 }
 
 void ATRapidusDevice::UpdateSDRAMWindow() {

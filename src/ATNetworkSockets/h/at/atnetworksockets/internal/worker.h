@@ -86,19 +86,19 @@ public:
 	ATNetSockWorker();
 	~ATNetSockWorker();
 
-	virtual IATEmuNetSocketListener *AsSocketListener() { return this; }
-	virtual IATEmuNetUdpSocketListener *AsUdpListener() { return this; }
+	IATEmuNetSocketListener *AsSocketListener() override { return this; }
+	IATEmuNetUdpSocketListener *AsUdpListener() override { return this; }
 
 	bool Init(IATEmuNetUdpStack *udp, IATEmuNetTcpStack *tcp, bool externalAccess, uint32 forwardingAddr, uint16 forwardingPort);
 	void Shutdown();
 
-	void ResetAllConnections();
+	void ResetAllConnections() override;
 
 	bool GetHostAddressesForLocalAddress(bool tcp, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, ATSocketAddress& hostAddr, ATSocketAddress& remoteAddr) const override;
 
 public:
-	virtual bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATStreamSocket *socket, IATSocketHandler **handler);
-	virtual void OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen);
+	bool OnSocketIncomingConnection(uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, IATStreamSocket *socket, IATSocketHandler **handler) override;
+	void OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcIpAddr, uint16 srcPort, uint32 dstIpAddr, uint16 dstPort, const void *data, uint32 dataLen) override;
 
 private:
 	enum {

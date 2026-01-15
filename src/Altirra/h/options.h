@@ -29,8 +29,7 @@ enum ATErrorMode {
 enum class ATProcessEfficiencyMode : uint8;
 enum ATMediaWriteMode : uint8;
 
-struct ATOptions {
-	bool mbDirty;
+struct ATOptionsData {
 	bool mbDisplayD3D9;
 	bool mbDisplay3D;
 	bool mbDisplay16Bit;
@@ -53,6 +52,7 @@ struct ATOptions {
 
 	VDStringA	mSICFlashChip;
 	VDStringA	mU1MBFlashChip;
+	VDStringA	mMaxflash1MbFlashChip;
 	VDStringA	mMaxflash8MbFlashChip;
 
 	ATMediaWriteMode mDefaultWriteMode;
@@ -67,7 +67,13 @@ struct ATOptions {
 
 	bool mbAccEnabled = false;
 
-	ATOptions();
+	ATOptionsData();
+	
+	bool operator==(const ATOptionsData&) const = default;
+};
+
+struct ATOptions final : public ATOptionsData {
+	bool mbDirty = false;
 };
 
 void ATOptionsLoad();

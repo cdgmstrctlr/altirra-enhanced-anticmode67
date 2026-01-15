@@ -427,7 +427,7 @@ namespace {
 
 		__m128i rowFilters[T_Rows];
 		for(unsigned i = 0; i < T_Rows; ++i)
-			rowFilters[i] = _mm_shuffle_epi32(_mm_loadu_si32(&filter[i*2]), 0);
+			rowFilters[i] = _mm_shuffle_epi32(_mm_loadu_si32(&filter[i*4]), 0);
 
 
 		const __m128i zero = _mm_setzero_si128();

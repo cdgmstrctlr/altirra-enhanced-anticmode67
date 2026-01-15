@@ -3,8 +3,7 @@
 <topic title="XEP80 Interface Module">
   <p>
     The XEP80 Interface Module was an 80-column display module that connected to the joystick port of
-    the Atari. Altirra emulates all official and some unofficial functionality of the XEP80, but not
-    the printer port.
+    the Atari. Altirra emulates all official and some unofficial functionality of the XEP80
   </p>
   <h2>Usage</h2>
   <p>
@@ -23,9 +22,12 @@
     The Auto-switch XEP80 View option makes this easier by automatically switching to the XEP80's
     display if it receives valid data and back to the standard display on reset.
   </p>
+  <p>
+  </p>
   <h2>Caveats</h2>
   <p>
-    The printer interface isn't emulated.
+    The printer interface is emulated, but the XEP80 drivers on the Additions disk don't support it -- you
+    need the original XEP80 driver.
   </p>
   <p>
     Altirra attempts to emulate a fair amount of undocumented behavior within the XEP80, particularly

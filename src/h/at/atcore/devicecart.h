@@ -78,8 +78,8 @@
 class IATDeviceCartridge;
 
 enum ATCartridgePriority : uint8 {
-	kATCartridgePriority_Default,
 	kATCartridgePriority_PassThrough,
+	kATCartridgePriority_Default,
 	kATCartridgePriority_Internal,
 	kATCartridgePriority_PBI,
 	kATCartridgePriority_MMU

@@ -45,13 +45,13 @@ public:
 	ATDeviceRVerter(bool sioAdapter);
 	~ATDeviceRVerter();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
-	void Init();
-	void Shutdown();
+	void Init() override;
+	void Shutdown() override;
 	void GetDeviceInfo(ATDeviceInfo& info) override;
 
-	void ColdReset();
+	void ColdReset() override;
 
 public:	// ATDeviceSIO
 	void InitSIO(IATDeviceSIOManager *mgr) override;

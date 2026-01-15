@@ -30,6 +30,7 @@ enum ATDisplayFilterMode : uint32;
 enum ATDisplayStretchMode : uint32;
 enum ATFrameRateMode : uint32;
 class ATUICommandManager;
+struct ATUICommandOptions;
 class ATUIManager;
 class IATAsyncDispatcher;
 
@@ -145,7 +146,8 @@ enum ATUIRecordingStatus {
 	kATUIRecordingStatus_Video,
 	kATUIRecordingStatus_Audio,
 	kATUIRecordingStatus_RawAudio,
-	kATUIRecordingStatus_Sap
+	kATUIRecordingStatus_Sap,
+	kATUIRecordingStatus_Vgm
 };
 
 ATUIRecordingStatus ATUIGetRecordingStatus();
@@ -177,6 +179,7 @@ bool ATUIGetDeviceButtonDepressed(uint32 idx);
 void ATUIActivateDeviceButton(uint32 idx, bool state);
 
 ATUICommandManager& ATUIGetCommandManager();
+void ATUIExecuteCommandStringAndShowErrors(const char *cmd, const ATUICommandOptions *opts) noexcept;
 
 void ATUIBootImage(const wchar_t *path);
 

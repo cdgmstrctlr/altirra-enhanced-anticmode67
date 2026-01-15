@@ -16,13 +16,38 @@
 
 #include <stdafx.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/color.h>
 #include <vd2/system/Error.h>
 #include <vd2/system/vdstl_hashtable.h>
 #include <vd2/system/vdstl_vectorview.h>
 #include "printeroutput.h"
 
-ATPrinterOutput::ATPrinterOutput(ATPrinterOutputManager& parent)
-	: mParent(parent)
+int ATPrinterOutputBase::AddRef() {
+	return ++mRefCount;
+}
+
+int ATPrinterOutputBase::Release() {
+	const int rc = --mRefCount;
+	if (!rc) {
+		mParent.OnDestroyingOutput(*this);
+		delete this;
+	}
+
+	return rc;
+}
+
+void *ATPrinterOutputBase::AsInterface(uint32 id) {
+	return nullptr;
+}
+
+const wchar_t *ATPrinterOutputBase::GetName() const {
+	return mName.c_str();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+ATPrinterOutput::ATPrinterOutput(ATPrinterOutputManager& parent, const wchar_t *name)
+	: ATPrinterOutputBase(parent, name)
 {
 }
 
@@ -50,25 +75,11 @@ void ATPrinterOutput::Clear() {
 	mColumn = 0;
 }
 
-int ATPrinterOutput::AddRef() {
-	return ++mRefCount;
-}
-
-int ATPrinterOutput::Release() {
-	const int rc = --mRefCount;
-	if (!rc) {
-		mParent.OnDestroyingOutput(*this);
-		delete this;
-	}
-
-	return rc;
-}
-
 void *ATPrinterOutput::AsInterface(uint32 id) {
 	if (id == IATPrinterOutput::kTypeID)
 		return static_cast<IATPrinterOutput *>(this);
 
-	return nullptr;
+	return ATPrinterOutputBase::AsInterface(id);
 }
 
 bool ATPrinterOutput::WantUnicode() const {
@@ -169,11 +180,23 @@ void ATPrinterGraphicalOutput::VectorQueryRect::Init(const vdrect32f& r, float d
 }
 
 void ATPrinterGraphicalOutput::VectorQueryRect::Translate(float dx, float dy) {
-	mXC += dx;
-	mYC += dy;
+	mXC += dx * 2;
+	mYC += dy * 2;
 }
 
 bool ATPrinterGraphicalOutput::VectorQueryRect::Intersects(const Vector& v) const {
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	__m128 vxy1 = _mm_castpd_ps(_mm_load_sd((const double *)&v.mX1));
+	__m128 vxy2 = _mm_castpd_ps(_mm_load_sd((const double *)&v.mX2));
+	__m128 qxc = _mm_castpd_ps(_mm_load_sd((const double *)&mXC));
+	__m128 qxd = _mm_castpd_ps(_mm_load_sd((const double *)&mXD));
+	__m128 absMask = _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF));
+
+	__m128 xydiff = _mm_and_ps(_mm_sub_ps(_mm_add_ps(vxy1, vxy2), qxc), absMask);
+	__m128 xyrange = _mm_add_ps(_mm_and_ps(_mm_sub_ps(vxy1, vxy2), absMask), qxd);
+
+	return (_mm_movemask_ps(_mm_cmpge_ps(xydiff, xyrange)) & 3) == 0;
+#else
 	// AABB-AABB intersection test. For now we skip the complexity of a
 	// more accurate AABB-OBB test. Note that the two points are the endpoints
 	// of a line segment and not corners of a rectangle, so we cannot rely on
@@ -187,12 +210,54 @@ bool ATPrinterGraphicalOutput::VectorQueryRect::Intersects(const Vector& v) cons
 		return false;
 
 	return true;
+#endif
+}
+
+bool ATPrinterGraphicalOutput::VectorQueryRect::IntersectsPrecise(const Vector& v) const {
+	// AABB-OBB intersection test. More precise test used during insertion in
+	// order to reduce the number of false intersections during extraction,
+	// which is more performance intensive.
+	//
+	// The OBB test introduces two additional axes to test against, the line
+	// segment direction and its normal. The query rect is padded by the pen
+	// width instead of the vector, so the OBB is infinitely thin along the
+	// normal axis.
+
+	const float xc = v.mX1 + v.mX2;
+	const float yc = v.mY1 + v.mY2;
+	const float xd = v.mX1 - v.mX2;
+	const float yd = v.mY1 - v.mY2;
+	const float axd = fabsf(xd);
+	const float ayd = fabsf(yd);
+	const float dxc = xc - mXC;
+	const float dyc = yc - mYC;
+	const float sxd = axd + mXD;
+	const float syd = ayd + mYD;
+
+	// test AABB normals
+	if (fabsf(dxc) >= sxd || fabsf(dyc) >= syd)
+		return false;
+
+	// Test OBB normals.
+	//
+	// We use > instead of >= to avoid an ugly scenario with zero-length vectors
+	// that would ordinarily cause a false reject.
+	const float d1 = sxd * axd + syd * ayd;
+	const float d2 = mXD * ayd + mYD * axd;
+
+	if (fabsf(dxc * xd + dyc * yd) > d1)
+		return false;
+	
+	if (fabsf(dxc * yd - dyc * xd) > d2)
+		return false;
+
+	return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-ATPrinterGraphicalOutput::ATPrinterGraphicalOutput(ATPrinterOutputManager& parent, const ATPrinterGraphicsSpec& spec)
-	: mParent(parent)
+ATPrinterGraphicalOutput::ATPrinterGraphicalOutput(ATPrinterOutputManager& parent, const wchar_t *name, const ATPrinterGraphicsSpec& spec)
+	: ATPrinterOutputBase(parent, name)
 	, mGraphicsSpec(spec)
 {
 	mPageWidthMM = spec.mPageWidthMM;
@@ -448,6 +513,7 @@ void ATPrinterGraphicalOutput::ExtractVectors(vdfastvector<RenderVector>& render
 
 	// iterate over tiles
 	auto *VDRESTRICT bitSetView = mVectorBitSet.data();
+	const vdspan vectors(mVectors);
 
 	for(sint32 tileY = tileRect.top; tileY < tileRect.bottom; ++tileY) {
 		for(sint32 tileX = tileRect.left; tileX < tileRect.right; ++tileX) {
@@ -472,7 +538,7 @@ void ATPrinterGraphicalOutput::ExtractVectors(vdfastvector<RenderVector>& render
 
 					bitSetView[bitSetIdx] |= bitSetBit;
 
-					const Vector& v = mVectors[vectorId - 1];
+					const Vector& v = vectors[vectorId - 1];
 
 					if (vq.Intersects(v))
 						renderVectors.push_back(v);
@@ -484,25 +550,11 @@ void ATPrinterGraphicalOutput::ExtractVectors(vdfastvector<RenderVector>& render
 	}
 }
 
-int ATPrinterGraphicalOutput::AddRef() {
-	return ++mRefCount;
-}
-
-int ATPrinterGraphicalOutput::Release() {
-	const int rc = --mRefCount;
-	if (!rc) {
-		mParent.OnDestroyingOutput(*this);
-		delete this;
-	}
-
-	return rc;
-}
-
 void *ATPrinterGraphicalOutput::AsInterface(uint32 id) {
 	if (id == IATPrinterGraphicalOutput::kTypeID)
 		return static_cast<IATPrinterGraphicalOutput *>(this);
 
-	return nullptr;
+	return ATPrinterOutputBase::AsInterface(id);
 }
 
 void ATPrinterGraphicalOutput::SetOnClear(vdfunction<void()> fn) {
@@ -555,14 +607,23 @@ void ATPrinterGraphicalOutput::Print(float x, uint32 pins) {
 	}
 }
 
-void ATPrinterGraphicalOutput::AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 colorIndex) {
-	// add vector
+void ATPrinterGraphicalOutput::AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 color) {
+	// add vector, reorienting to top down
 	Vector& v = mVectors.emplace_back();
-	v.mX1 = pt1.x;
-	v.mY1 = pt1.y;
-	v.mX2 = pt2.x;
-	v.mY2 = pt2.y;
-	v.mColorIndex = colorIndex;
+	
+	if (pt1.y <= pt2.y) {
+		v.mX1 = pt1.x;
+		v.mY1 = pt1.y;
+		v.mX2 = pt2.x;
+		v.mY2 = pt2.y;
+	} else {
+		v.mX1 = pt2.x;
+		v.mY1 = pt2.y;
+		v.mX2 = pt1.x;
+		v.mY2 = pt1.y;
+	}
+
+	v.mLinearColor = color;
 
 	const uint32 vectorId = (uint32)mVectors.size();
 
@@ -581,7 +642,7 @@ void ATPrinterGraphicalOutput::AddVector(const vdfloat2& pt1, const vdfloat2& pt
 	for(sint32 tileY = tileY1; tileY < tileY2; ++tileY) {
 		VectorQueryRect q2 = q;
 		for(sint32 tileX = tileX1; tileX < tileX2; ++tileX) {
-			if (q2.Intersects(v)) {
+			if (q2.IntersectsPrecise(v)) {
 				AddVectorToTile(tileX, tileY, vectorId);
 			}
 
@@ -599,6 +660,10 @@ void ATPrinterGraphicalOutput::AddVector(const vdfloat2& pt1, const vdfloat2& pt
 			std::max<float>(pt1.y, pt2.y) + mDotRadiusMM
 		}
 	);
+}
+
+uint32 ATPrinterGraphicalOutput::ConvertColor(uint32 srgb) const {
+	return nsVDVecMath::packus8(vdfloat32x3(VDColorRGB::FromBGR8(srgb).SRGBToLinear()) * 64.0f) & 0xFFFFFF;
 }
 
 size_t ATPrinterGraphicalOutput::HashVectorTile(sint32 tileX, sint32 tileY) const {
@@ -771,8 +836,8 @@ ATPrinterGraphicalOutput& ATPrinterOutputManager::GetGraphicalOutput(uint32 idx)
 	return *mGraphicalOutputs[idx];
 }
 
-vdrefptr<IATPrinterOutput> ATPrinterOutputManager::CreatePrinterOutput() {
-	vdrefptr<ATPrinterOutput> output(new ATPrinterOutput(*this));
+vdrefptr<IATPrinterOutput> ATPrinterOutputManager::CreatePrinterOutput(const wchar_t *name) {
+	vdrefptr<ATPrinterOutput> output(new ATPrinterOutput(*this, name));
 
 	mOutputs.push_back(output);
 	OnAddedOutput.InvokeAll(*output);
@@ -780,8 +845,8 @@ vdrefptr<IATPrinterOutput> ATPrinterOutputManager::CreatePrinterOutput() {
 	return output;
 }
 
-vdrefptr<IATPrinterGraphicalOutput> ATPrinterOutputManager::CreatePrinterGraphicalOutput(const ATPrinterGraphicsSpec& spec) {
-	vdrefptr<ATPrinterGraphicalOutput> output(new ATPrinterGraphicalOutput(*this, spec));
+vdrefptr<IATPrinterGraphicalOutput> ATPrinterOutputManager::CreatePrinterGraphicalOutput(const wchar_t *name, const ATPrinterGraphicsSpec& spec) {
+	vdrefptr<ATPrinterGraphicalOutput> output(new ATPrinterGraphicalOutput(*this, name, spec));
 
 	mGraphicalOutputs.push_back(output);
 	OnAddedGraphicalOutput.InvokeAll(*output);
@@ -789,26 +854,33 @@ vdrefptr<IATPrinterGraphicalOutput> ATPrinterOutputManager::CreatePrinterGraphic
 	return output;
 }
 
-void ATPrinterOutputManager::OnDestroyingOutput(ATPrinterOutput& output) {
-	auto it = std::find(mOutputs.begin(), mOutputs.end(), &output);
+void ATPrinterOutputManager::OnDestroyingOutput(ATPrinterOutputBase& output) {
+	IATPrinterOutput *outputInterface = vdpoly_cast<IATPrinterOutput *>(&output);
+	if (outputInterface) {
+		ATPrinterOutput& output = *static_cast<ATPrinterOutput *>(outputInterface);
+		auto it = std::find(mOutputs.begin(), mOutputs.end(), &output);
 
-	if (it == mOutputs.end())
-		VDRaiseInternalFailure();
+		if (it == mOutputs.end())
+			VDRaiseInternalFailure();
 
-	mOutputs.erase(it);
+		mOutputs.erase(it);
 
-	OnRemovingOutput.InvokeAll(output);
-}
+		OnRemovingOutput.InvokeAll(output);
+	}
 
-void ATPrinterOutputManager::OnDestroyingOutput(ATPrinterGraphicalOutput& output) {
-	auto it = std::find(mGraphicalOutputs.begin(), mGraphicalOutputs.end(), &output);
+	IATPrinterGraphicalOutput *graphicalOutputInterface = vdpoly_cast<IATPrinterGraphicalOutput *>(&output);
+	if (graphicalOutputInterface) {
+		ATPrinterGraphicalOutput& goutput = *static_cast<ATPrinterGraphicalOutput *>(graphicalOutputInterface);
 
-	if (it == mGraphicalOutputs.end())
-		VDRaiseInternalFailure();
+		auto it = std::find(mGraphicalOutputs.begin(), mGraphicalOutputs.end(), &goutput);
 
-	mGraphicalOutputs.erase(it);
+		if (it == mGraphicalOutputs.end())
+			VDRaiseInternalFailure();
 
-	OnRemovingGraphicalOutput.InvokeAll(output);
+		mGraphicalOutputs.erase(it);
+
+		OnRemovingGraphicalOutput.InvokeAll(goutput);
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

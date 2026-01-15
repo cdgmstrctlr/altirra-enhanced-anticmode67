@@ -35,6 +35,9 @@
     <Filter Include="Precompiled Header Files">
       <UniqueIdentifier>{cf4761af-5ba5-4fc3-b8b8-d5e07d107cab}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files %28ARM64%29">
+      <UniqueIdentifier>{7204f120-59a0-4ac9-ac7e-969424693dbe}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\alphablt.cpp">
@@ -151,6 +154,12 @@
     <ClCompile Include="source\region_neon.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\resample_stages_arm64.cpp">
+      <Filter>Source Files %28ARM64%29</Filter>
+    </ClCompile>
+    <ClCompile Include="source\blt_spanutils_arm64.cpp">
+      <Filter>Source Files %28ARM64%29</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\bitutils.h">
@@ -259,6 +268,12 @@
       <Filter>Precompiled Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\uberblit_ycbcr_sse2_intrin.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\resample_stages_arm64.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\blt_spanutils_arm64.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

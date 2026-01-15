@@ -74,7 +74,7 @@ void ATDeviceFileWriter::ColdReset() {
 
 bool ATDeviceFileWriter::GetErrorStatus(uint32 idx, VDStringW& error) {
 	if (idx == 0 && !mCurrentError.empty()) {
-		error = VDTextAToW(mCurrentError.c_str());
+		error = mCurrentError.wc_str();
 		return true;
 	}
 
@@ -185,8 +185,8 @@ void ATDeviceFileWriter::WriteToFile(const void *buf, size_t len) {
 
 	try {
 		mFile.write(buf, len);
-	} catch(MyError& e) {
-		mCurrentError.TransferFrom(e);
+	} catch(VDException& e) {
+		mCurrentError = std::move(e);
 		mFile.closeNT();
 	}
 }
@@ -197,8 +197,8 @@ void ATDeviceFileWriter::TryOpenOutput() {
 			mFile.open(mPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyNone | nsVDFile::kOpenAlways);
 			mFile.seek(0, nsVDFile::kSeekEnd);
 			mCurrentError.clear();
-		} catch(MyError& e) {
-			mCurrentError.TransferFrom(e);
+		} catch(VDException& e) {
+			mCurrentError = std::move(e);
 			mFile.closeNT();
 		}
 	}

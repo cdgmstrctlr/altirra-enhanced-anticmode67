@@ -81,6 +81,9 @@
     <ClCompile Include="source\hotkeyscandialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\debug_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="res\resource.h">
@@ -150,6 +153,9 @@
       <Filter>Interface Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\h\at\atnativeui\hotkeyscandialog.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atnativeui\debug_win32.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>

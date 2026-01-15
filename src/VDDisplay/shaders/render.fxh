@@ -5,13 +5,9 @@
 // driver.
 //
 
-cbuffer VSRendererConstants {
-	float4 vsXform2d;
-	float4 vsRdrHDRInfo;
-};
-
-cbuffer PSRendererConstants {
-	float4 psRdrHDRInfo;
+cbuffer RendererConstants : register(b0) {
+	float4 vpsXform2d;
+	float4 vpsRdrHDRInfo;
 };
 
 void VP_RenderBlitGamma(
@@ -23,7 +19,7 @@ void VP_RenderBlitGamma(
 	out float2 oT0 : TEXCOORD0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
 	oD0 = c;
 	oT0 = uv;
 	
@@ -39,8 +35,8 @@ void VP_RenderBlitLinear(
 	out float2 oT0 : TEXCOORD0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
-	oD0.rgb = SrgbToLinear(c.rgb) * vsRdrHDRInfo.x;
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
+	oD0.rgb = SrgbToLinear(c.rgb) * vpsRdrHDRInfo.x;
 	oD0.a = c.a;
 	oT0 = uv;
 	
@@ -56,11 +52,11 @@ void VP_RenderBlitLinearColor(
 	out float2 oT0 : TEXCOORD0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
 
 	// This is an oddball case where we are shoving a channel mask into RGB and the
 	// color channel into A.
-	oD0.a = SrgbToLinear(c.aaa).x * vsRdrHDRInfo.x;
+	oD0.a = SrgbToLinear(c.aaa).x * vpsRdrHDRInfo.x;
 	oD0.rgb = c.rgb;
 	
 	oT0 = uv;
@@ -77,7 +73,7 @@ void VP_RenderBlitLinearColor2(
 	out float2 oT0 : TEXCOORD0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
 
 	// This is an oddball case where we are shoving a channel mask into RGB and the
 	// color channel into A.
@@ -96,7 +92,7 @@ void VP_RenderFillGamma(
 	out float4 oD0 : COLOR0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
 
 	oD0 = c;
 	
@@ -110,8 +106,8 @@ void VP_RenderFillLinear(
 	out float4 oD0 : COLOR0
 )
 {
-	oPos = float4(pos.xy * vsXform2d.xy + vsXform2d.zw, 0.5, 1);
-	oD0.rgb = SrgbToLinear(c.rgb) * vsRdrHDRInfo.x;
+	oPos = float4(pos.xy * vpsXform2d.xy + vpsXform2d.zw, 0.5, 1);
+	oD0.rgb = SrgbToLinear(c.rgb) * vpsRdrHDRInfo.x;
 	oD0.a = c.a;
 	
 	VP_APPLY_VIEWPORT(oPos);
@@ -211,5 +207,5 @@ half4 FP_RenderBlitColorLinear(float4 pos : SV_Position,
 	half4 px2 = (half4)SAMPLE2D(srctex, srcsamp, (half2)uv + half2(0.5, 0.0));
 	half4 px = lerp(px1, px2, c.a);
 	
-	return half4(px.rgb * c.rgb, c.a * psRdrHDRInfo.x);
+	return half4(px.rgb * c.rgb, c.a * vpsRdrHDRInfo.x);
 }

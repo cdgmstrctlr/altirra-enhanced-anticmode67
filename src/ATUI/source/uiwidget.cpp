@@ -695,7 +695,6 @@ void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 	}
 
 	bool drawInner = true;
-	bool framed = false;
 
 	if (mFrameMode) {
 		vdrect32 frameRect(0, 0, mArea.width(), mArea.height());
@@ -719,8 +718,6 @@ void ATUIWidget::Draw(IVDDisplayRenderer& rdr) {
 				ATUIDrawThin3DRect(*sr, frameRect, true);
 				break;
 		}
-
-		framed = true;
 	}
 
 	drawInner = sr->PushViewport(mClientArea, mClientArea.left - mClientOrigin.x, mClientArea.top - mClientOrigin.y);

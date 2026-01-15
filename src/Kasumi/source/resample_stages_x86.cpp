@@ -1057,6 +1057,9 @@ VDResamplerSeparableTableRowStage8SSE41::VDResamplerSeparableTableRowStage8SSE41
 void VDResamplerSeparableTableRowStage8SSE41::Init(const VDResamplerAxis& axis, uint32 srcw) {
 	uint32 w = axis.dx_preclip + axis.dx_active + axis.dx_postclip + axis.dx_dualclip;
 
+	if (!w)
+		return;
+
 	if (mLastSrcWidth != srcw || mLastDstWidth != w || mLastU != axis.u || mLastDUDX != axis.dudx) {
 		mLastSrcWidth	= srcw;
 		mLastDstWidth	= w;

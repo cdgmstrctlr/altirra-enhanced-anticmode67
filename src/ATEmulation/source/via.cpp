@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <at/atcore/consoleoutput.h>
 #include <at/atcore/snapshotimpl.h>
 #include <at/atcore/scheduler.h>
 #include <at/atemulation/via.h>
@@ -36,6 +37,9 @@ ATVIA6522Emulator::ATVIA6522Emulator()
 	, mPCR(0)
 	, mIFR(0)
 	, mIER(0)
+	, mTimerPB7(0xFF)
+	, mTimerPB7Mask(0x00)
+	, mbTimer1UnderflowInProgress(false)
 	, mCA1Input(true)
 	, mCA2Input(true)
 	, mCB1Input(true)
@@ -56,21 +60,98 @@ ATVIA6522Emulator::~ATVIA6522Emulator() {
 
 void ATVIA6522Emulator::Init(ATScheduler *sch) {
 	mpScheduler = sch;
+
+	Reset();
 }
 
 void ATVIA6522Emulator::Shutdown() {
 	if (mpScheduler) {
 		mpScheduler->UnsetEvent(mpEventCA2Update);
 		mpScheduler->UnsetEvent(mpEventCB2Update);
+		mpScheduler->UnsetEvent(mpEventT1Update);
+		mpScheduler = nullptr;
 	}
 }
 
-void ATVIA6522Emulator::SetPortAInput(uint8 val) {
-	mIRA = val;
+void ATVIA6522Emulator::DumpStatus(ATConsoleOutput& out) {
+	const uint32 output = ComputeOutput();
+
+	out("Port A:  [ORA $%02X] & [DDRA $%02X] <+> input $%02X => read $%02X, output $%02X", mORA, mDDRA, mPortAInput, DebugReadByte(1), output & 0xFF);
+	out("Port B:  [ORB $%02X] & [DDRB $%02X] <+> input $%02X => read $%02X, output $%02X", mORB, mDDRB, mPortBInput, DebugReadByte(0), (output >> 8) & 0xFF);
+	out("CA1/CB1: CA1%c, CB1%c", mCA1Input ? '+' : '-', mCB1Input ? '+' : '-');
+
+	static constexpr const char *kShiftModes[8] {
+		"Shift off",
+		"Shift in T2",
+		"Shift in sysclk",
+		"Shift in xclk",
+		"Shift free T2",
+		"Shift out T2",
+		"Shift out sysclk",
+		"Shift out xclk",
+	};
+
+	out("ACR:     $%02X | %s | %s | %s | %s | %s"
+		, mACR
+		, mACR & 0x80 ? "T1 -> PB7" : "No PB7"
+		, mACR & 0x40 ? "T1 free-run": "T1 one-shot"
+		, mACR & 0x20 ? "T2 count" : "T2 one-shot"
+		, kShiftModes[(mACR >> 2) & 7]
+		, mACR & 0x02 ? "PB latched" : "PB no latch"
+		, mACR & 0x02 ? "PA latched" : "PA no latch"
+	);
+
+	static constexpr const char *kC2Modes[8] {
+		"-in auto",
+		"-in manual",
+		"+in auto",
+		"+in manual",
+		"out handshake",
+		"out pulse",
+		"-manual",
+		"+manual",
+	};
+
+	out("PCR:     $%02X | CB2 %s | CB1 %c | CA2 %s | CA1 %c"
+		, mPCR
+		, kC2Modes[(mPCR >> 5) & 7]
+		, mPCR & 0x10 ? '+' : '-'
+		, kC2Modes[(mPCR >> 1) & 7]
+		, mPCR & 0x01 ? '+' : '-'
+	);
+
+	out("IFR:     $%02X", mIFR);
+	out("IER:     $%02X", mIER);
+
+	double t1period = (double)mT1L * 1000.0 * mpScheduler->GetRate().AsInverseDouble();
+	if (mpEventT1Update)
+		out("T1L:     $%04X (%.2f ms) - %u cycles to next active update", mT1L, t1period, mpScheduler->GetTicksToEvent(mpEventT1Update));
+	else
+		out("T1L:     $%04X (%.2f ms)", mT1L, t1period);
 }
 
-void ATVIA6522Emulator::SetPortBInput(uint8 val) {
-	mIRB = val;
+void ATVIA6522Emulator::SetPortAInput(uint8 val, uint8 mask) {
+	val = mPortAInput ^ ((mPortAInput ^ val) & mask);
+
+	if (mPortAInput == val)
+		return;
+
+	mPortAInput = val;
+
+	if (!(mACR & 0x01))
+		mIRA = val;
+}
+
+void ATVIA6522Emulator::SetPortBInput(uint8 val, uint8 mask) {
+	val = mPortBInput ^ ((mPortBInput ^ val) & mask);
+
+	if (mPortBInput == val)
+		return;
+
+	mPortBInput = val;
+
+	if (!(mACR & 0x02))
+		mIRB = val;
 }
 
 void ATVIA6522Emulator::SetCA1Input(bool state) {
@@ -172,6 +253,8 @@ void ATVIA6522Emulator::SetInterruptFn(const vdfunction<void(bool)>& fn) {
 }
 
 void ATVIA6522Emulator::Reset() {
+	mIRA = mPortAInput;
+	mIRB = mPortBInput;
 	mORB = 0;
 	mORA = 0;
 	mDDRB = 0;
@@ -185,15 +268,21 @@ void ATVIA6522Emulator::Reset() {
 	mPCR = 0;
 	mIFR = 0;
 	mIER = 0;
+	mTimerPB7 = 0xFF;
+	mTimerPB7Mask = 0x00;
 	mCA2 = true;
 	mCB2 = true;
 	mbIrqState = false;
+	mbTimer1UnderflowInProgress = false;
 
 	if (mInterruptFn)
 		mInterruptFn(false);
 	
 	mpScheduler->UnsetEvent(mpEventCA2Update);
 	mpScheduler->UnsetEvent(mpEventCB2Update);
+	mpScheduler->UnsetEvent(mpEventT1Update);
+
+	mT1LastUpdate = mpScheduler->GetTick64();
 
 	UpdateOutput();
 }
@@ -271,8 +360,8 @@ uint8 ATVIA6522Emulator::ReadByte(uint8 address) {
 					ClearIF(kIF_CA2);
 					break;
 
-				case 0x80:	// handshake mode - assert CA2
-					mpScheduler->SetEvent(1, this, kEventId_CA2Assert, mpEventCA2Update);
+				case 0x80:	// handshake mode - assert CB2
+					mpScheduler->SetEvent(1, this, kEventId_CB2Assert, mpEventCB2Update);
 					break;
 			}
 
@@ -453,7 +542,36 @@ void ATVIA6522Emulator::WriteByte(uint8 address, uint8 value) {
 			break;
 
 		case 11:
-			mACR = value;
+			// |  7  |  6  |  5  |  4  |  3  |  2  |  1  |  0  |
+			// | T1control |T2ctl|  Shift control  |PBLtc|PALtc|
+			//
+			if (uint8 delta = mACR ^ value) {
+				mACR = value;
+
+				// check if PA latch has been enabled
+				if (delta & value & 0x01) {
+					// latch current port A value
+					mIRA = mPortAInput;
+				}
+
+				// check if PB latch has been enabled
+				if (delta & value & 0x02) {
+					// latch current port B value
+					mIRB = mPortBInput;
+				}
+
+				// if timer 1 PB7 output is being toggled, re-evaluate state
+				if (delta & 0x80) {
+					UpdateT1Event();
+				}
+
+				// check if timer 1 PB7 output has been changed
+				if (delta & 0x80) {
+					mTimerPB7Mask = value & 0x80;
+
+					UpdateOutput();
+				}
+			}
 			break;
 
 		case 12:
@@ -569,6 +687,8 @@ public:
 	template<ATExchanger T>
 	void Exchange(T& ex);
 
+	uint8 mIRA = 0;
+	uint8 mIRB = 0;
 	uint8 mORA = 0;
 	uint8 mORB = 0;
 	uint8 mDDRA = 0;
@@ -586,6 +706,9 @@ public:
 
 template<ATExchanger T>
 void ATSaveStateVIA6522::Exchange(T& ex) {
+	ex.Transfer("arch_ira", &mIRA);
+	ex.Transfer("arch_irb", &mIRB);
+
 	ex.Transfer("arch_ora", &mORA);
 	ex.Transfer("arch_orb", &mORB);
 	ex.Transfer("arch_ddra", &mDDRA);
@@ -625,6 +748,16 @@ void ATVIA6522Emulator::LoadState(const IATObjectState *state) {
 	mSR = viastate.mSR;
 	mACR = viastate.mACR;
 
+	if (mACR & 0x01)
+		mIRA = viastate.mIRA;
+	else
+		mIRA = mPortAInput;
+
+	if (mACR & 0x02)
+		mIRB = viastate.mIRB;
+	else
+		mIRB = mPortBInput;
+
 	// Invoke write path to ensure invariants are upheld for PCR and IER
 	WriteByte(12, viastate.mPCR);
 
@@ -637,6 +770,9 @@ void ATVIA6522Emulator::LoadState(const IATObjectState *state) {
 
 vdrefptr<IATObjectState> ATVIA6522Emulator::SaveState() {
 	vdrefptr viastate { new ATSaveStateVIA6522 };
+
+	viastate->mIRA = mIRA;
+	viastate->mIRB = mIRB;
 
 	viastate->mORA = mORA;
 	viastate->mORB = mORB;
@@ -692,12 +828,29 @@ void ATVIA6522Emulator::OnScheduledEvent(uint32 id) {
 				UpdateOutput();
 			}
 			break;
+
+		case kEventId_T1Update:
+			mpEventT1Update = nullptr;
+
+			UpdateT1Event();
+			break;
 	}
 }
 
 void ATVIA6522Emulator::SetIF(uint8 mask) {
 	if (~mIFR & mask) {
 		mIFR |= mask;
+
+		// if CA1 or CB1 is being set and latching is enabled, update the latch
+		if (mask & 0x02) {
+			if (mACR & 0x01)
+				mIRA = mPortAInput;
+		}
+
+		if (mask & 0x10) {
+			if (mACR & 0x02)
+				mIRB = mPortBInput;
+		}
 
 		if (!mbIrqState && (mIFR & mIER)) {
 			mbIrqState = true;
@@ -718,11 +871,20 @@ void ATVIA6522Emulator::ClearIF(uint8 mask) {
 			if (mInterruptFn)
 				mInterruptFn(false);
 		}
+
+		// if T1 flag is being disabled, we have to re-enable active T1
+		if (mask & kIF_T1)
+			UpdateT1Event();
 	}
 }
 
-void ATVIA6522Emulator::UpdateOutput() {
-	uint32 val = (((mORB | ~mDDRB) & 0xff) << 8) + ((mORA | ~mDDRA) & 0xff);
+uint32 ATVIA6522Emulator::ComputeOutput() const {
+	uint8 porta = mORA | ~mDDRA;
+	uint8 portb = mORB | ~mDDRB;
+
+	portb ^= (portb ^ mTimerPB7) & mTimerPB7Mask;
+
+	uint32 val = ((uint32)portb << 8) + porta;
 
 	if (mCA2)
 		val |= kATVIAOutputBit_CA2;
@@ -730,6 +892,108 @@ void ATVIA6522Emulator::UpdateOutput() {
 	if (mCB2)
 		val |= kATVIAOutputBit_CB2;
 
-	if (mpOutputFn)
-		mpOutputFn(mpOutputFnData, val);
+	return val;
+}
+
+void ATVIA6522Emulator::UpdateOutput() {
+	const uint32 val = ComputeOutput();
+
+	if (mCurrentOutput != val) {
+		mCurrentOutput = val;
+
+		if (mpOutputFn)
+			mpOutputFn(mpOutputFnData, val);
+	}
+}
+
+void ATVIA6522Emulator::UpdateT1Event() {
+	// If the T1 IRQ flag is already set and PB7 output is disabled, we don't
+	// need the timer.
+	if (!(mACR & 0x80) && (mIFR & kIF_T1)) {
+		mpScheduler->UnsetEvent(mpEventT1Update);
+		return;
+	}
+
+	UpdateT1State();
+	
+	// If an underflow is in progress, the counter is 0xFFFF and in the process
+	// of being reloaded from the latch. We have to distinguish this from an
+	// actual counter value of 0xFFFF loaded from a latch value of 0xFFFF.
+	mpScheduler->SetEvent(mbTimer1UnderflowInProgress ? mT1L + 2 : mT1C + 1, this, kEventId_T1Update, mpEventT1Update);
+}
+
+void ATVIA6522Emulator::UpdateT1State() {
+	const uint64 t = mpScheduler->GetTick64();
+	uint64 dt = t - mT1LastUpdate;
+	if (!dt)
+		return;
+
+	mT1LastUpdate = t;
+
+	// if not enough cycles have passed to underflow, just decrement the counter
+	// and return
+	if (mT1C >= dt) {
+		mT1C -= dt;
+		return;
+	}
+
+	// consume cycles to drop the counter to 0
+	dt -= mT1C;
+
+	// decrement 1 cycle for underflow
+	--dt;
+
+	// Decrement 1 cycle for underflow, then split the remaining cycles into
+	// whole loops and fractional loops. The behavior emulated here is that on
+	// an underflow, the counter steps one additional time to $FFFF before
+	// being reloaded from the latch. This means that for T1L = N, the period
+	// is N+2 cycles.
+	//
+	// Note that it is assumed that the counter is reloaded from the latch
+	// even in one-shot mode. This contradicts the MOS, Rockwell, and WDC
+	// datasheets which say it should begin counting down from $FFFF, but
+	// actual testing on Rockwell 6522s has confirmed reload from latch for
+	// both modes:
+	//
+	// http://forum.6502.org/viewtopic.php?f=4&t=2901
+
+	uint32 cycles = (uint32)(dt % (mT1C + 1));
+	uint32 loops = (uint32)(dt / (mT1C + 1));
+
+	// update counter
+	if (cycles) {
+		mbTimer1UnderflowInProgress = false;
+		mT1C = (uint16)(mT1L - (cycles - 1));
+	} else {
+		mbTimer1UnderflowInProgress = true;
+		mT1C = 0xFFFF;
+	}
+
+	// check if timer 1 is in one-shot or free-running mode
+	if (mACR & 0x40) {
+		// timer 1 is in free-run mode -- toggle PB7 according to number of
+		// underflows, which is cycles+1
+		if (!(loops & 1)) {
+			mTimerPB7 ^= 0x80;
+
+			if (mTimerPB7Mask)
+				UpdateOutput();
+		}
+
+		// assert timer /IRQ, since we're guaranteed that at least one underflow
+		// has occurred
+		SetIF(kIF_T1);
+	} else {
+		// timer 1 is in one-shot mode -- raise PB7
+		if (!(mTimerPB7 & 0x80)) {
+			mTimerPB7 |= 0x80;
+
+			if (mTimerPB7Mask)
+				UpdateOutput();
+
+			// assert timer /IRQ only if PB7 has changed, to mimic one-shot
+			// behavior
+			SetIF(kIF_T1);
+		}
+	}
 }

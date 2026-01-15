@@ -246,10 +246,8 @@ void ATHLEProgramLoader::Init(ATCPUEmulator *cpu, ATSimulatorEventManager *simEv
 void ATHLEProgramLoader::Shutdown() {
 	UnloadProgramSymbols();
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 
 	if (mpCPUHookMgr) {
 		mpCPUHookMgr->UnsetHook(mpLoadContinueHook);
@@ -288,7 +286,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 			throw MyError("Program load failed: this program is written for MS-DOS.");
 	}
 
-	mpSIOMgr->RemoveDevice(this);
+	mpSIOInterface = nullptr;
 	mbType3PollActive = false;
 	mbType3PollEnabled = false;
 	mbDiskBootEnabled = false;
@@ -297,7 +295,7 @@ void ATHLEProgramLoader::LoadProgram(const wchar_t *symbolHintPath, IATBlobImage
 		mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_KernelROMOnly, ATKernelSymbols::DSKINV, 10, this, &ATHLEProgramLoader::OnDSKINV);
 	else {
 		mpCPUHookMgr->SetHookMethod(mpLaunchHook, kATCPUHookMode_Always, 0x1FF, 0, this, &ATHLEProgramLoader::OnDeferredLaunch);
-		mpSIOMgr->AddDevice(this);
+		mpSIOInterface = mpSIOMgr->AddDevice(this);
 
 		if (launchMode == kATHLEProgramLoadMode_DiskBoot)
 			mbDiskBootEnabled = true;
@@ -384,11 +382,11 @@ ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const A
 			buf[2] = 0x7D;
 			buf[3] = 0x00;
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(buf, 4, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->SendData(buf, 4, true);
+			mpSIOInterface->EndCommand();
 
 			return kCmdResponse_Start;
 		} else if (cmd.mAUX[0] == 0x4F) {
@@ -425,11 +423,11 @@ ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const A
 					memcpy(buf + (sizeof(buf) - footerLen), it->mFooter.begin(), footerLen);
 			}
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(buf, 128, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->SendData(buf, 128, true);
+			mpSIOInterface->EndCommand();
 
 			return kCmdResponse_Start;
 		} else if (cmd.mCommand == 0x53) {	// status
@@ -438,11 +436,11 @@ ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const A
 			buf[2] = 0xE0;		// format timeout
 			buf[3] = 0;
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(buf, 4, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->SendData(buf, 4, true);
+			mpSIOInterface->EndCommand();
 
 			return kCmdResponse_Start;
 		}
@@ -464,11 +462,11 @@ ATHLEProgramLoader::CmdResponse ATHLEProgramLoader::OnSerialBeginCommand(const A
 			const uint32 offset = block * 128;
 			memcpy(buf, kHandlerData + offset, std::min<uint32>(128, sizeof(kHandlerData) - offset));
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->SendData(buf, 128, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->SendData(buf, 128, true);
+			mpSIOInterface->EndCommand();
 
 			return kCmdResponse_Start;
 		}
@@ -518,9 +516,7 @@ uint8 ATHLEProgramLoader::StartLoad() {
 	mpCPUHookMgr->UnsetHook(mpLaunchHook);
 
 	// detach serial device
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-	}
+	mpSIOInterface = nullptr;
 
 	// set COLDST so kernel doesn't think we were in the middle of init (required for
 	// some versions of Alley Cat)
@@ -634,7 +630,7 @@ launch:
 			kdb.RUNAD = start;
 
 		// load segment data into memory
-		ATConsolePrintf("EXE: Loading program %04X-%04X to %04X-%04X\n", src-src0, (src-src0)+len-1, start, end);
+		ATConsolePrintf("EXE: Loading program %04X-%04X to %04X-%04X\n", (unsigned)(src-src0), (unsigned)(src-src0)+len-1, start, end);
 
 		for(uint32 i=0; i<len; ++i)
 			mem->WriteByte(start + i, *src++);

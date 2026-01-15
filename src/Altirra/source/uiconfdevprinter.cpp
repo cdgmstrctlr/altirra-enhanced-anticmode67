@@ -22,15 +22,15 @@ bool ATUIConfDevPrinter(VDGUIHandle hParent, ATPropertySet& props) {
 	return ATUIShowDialogGenericConfig(hParent, props, L"820/1025/1029 Printer",
 		[](IATUIConfigView& view) {
 			auto& graphicsOption = view.AddCheckbox();
-			graphicsOption.SetText(L"Enable &Graphical Output").AsBoolView()->SetTag("graphics").SetLabel(L"Options");
+			graphicsOption.SetText(L"Enable &Graphical Output").SetTag("graphics").SetLabel(L"Options");
 
 			auto& accurateOption = view.AddCheckbox();
-			accurateOption.SetText(L"Enable Accurate &Timing").AsBoolView()->SetTag("accurate_timing").SetEnableExpr(
-				[&] { return graphicsOption.AsBoolView().GetValue(); }
+			accurateOption.SetText(L"Enable Accurate &Timing").SetTag("accurate_timing").SetEnableExpr(
+				[&] { return graphicsOption.GetValue(); }
 			);
 
-			view.AddCheckbox().SetText(L"Enable &Sound").AsBoolView()->SetTag("sound").SetEnableExpr(
-				[&] { return graphicsOption.AsBoolView().GetValue() && accurateOption.AsBoolView().GetValue(); }
+			view.AddCheckbox().SetText(L"Enable &Sound").SetTag("sound").SetEnableExpr(
+				[&] { return graphicsOption.GetValue() && accurateOption.GetValue(); }
 			);
 		}
 	);
@@ -43,7 +43,7 @@ bool ATUIConfDevPrinterHLE(VDGUIHandle hParent, ATPropertySet& props) {
 			translationModeOption.AddChoice(ATPrinterPortTranslationMode::Default, L"Default: Translate EOL -> CR");
 			translationModeOption.AddChoice(ATPrinterPortTranslationMode::Raw, L"Raw: No translation");
 			translationModeOption.AddChoice(ATPrinterPortTranslationMode::AtasciiToUtf8, L"ATASCII to UTF-8");
-			translationModeOption->SetTag("translation_mode").SetLabel(L"Port &Translation");
+			translationModeOption.SetTag("translation_mode").SetLabel(L"Port &Translation");
 		}
 	);
 }

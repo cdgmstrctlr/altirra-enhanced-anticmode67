@@ -122,20 +122,20 @@ ATDiskEmulator::~ATDiskEmulator() {
 	Shutdown();
 }
 
-void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSamplePlayer *mixer) {
+void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, IATSyncAudioSamplePlayer& mixer) {
 	mpDiskInterface = dif;
 	dif->AddClient(this);
 
-	mpAudioSyncMixer = mixer;
-	mpRotationSoundGroup = mixer->CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive));
-	mpStepSoundGroup = mixer->CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive).RemoveSupercededSounds());
+	mpAudioSyncMixer = &mixer;
+	mpRotationSoundGroup = mixer.CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive));
+	mpStepSoundGroup = mixer.CreateGroup(ATAudioGroupDesc().Mix(kATAudioMix_Drive).RemoveSupercededSounds());
 
 	mLastRotationUpdateCycle = ATSCHEDULER_GETTIME(sched);
 	mUnit = unit;
 	mpScheduler = sched;
 	mpSlowScheduler = slowsched;
 
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 
 	ComputeSupportedProfile();
 	Reset();
@@ -147,10 +147,8 @@ void ATDiskEmulator::Init(int unit, ATDiskInterface *dif, ATScheduler *sched, AT
 }
 
 void ATDiskEmulator::Shutdown() {
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 
 	if (mpDiskInterface) {
 		mpDiskInterface->RemoveClient(this);
@@ -332,6 +330,7 @@ public:
 		rw.Transfer("active_command_id", &mActiveCommandId);
 		rw.Transfer("active_command_state", &mActiveCommandState);
 		rw.Transfer("active_command_sector", &mActiveCommandSector);
+		rw.Transfer("active_command_phys_sector", &mActiveCommandPhysSectorPlus1);
 		rw.Transfer("active_command_timer", &mActiveCommandTimer);
 		rw.Transfer("active_command_buffered", &mActiveCommandTimer);
 		rw.Transfer("active_command_buffered_read_track", &mbActiveCommandReadTrack);
@@ -360,6 +359,7 @@ public:
 	uint8 mActiveCommandId = 0;
 	uint32 mActiveCommandState = 0;
 	uint16 mActiveCommandSector = 0;
+	uint32 mActiveCommandPhysSectorPlus1 = 0;
 	bool mbActiveCommandBuffered = false;
 	bool mbActiveCommandReadTrack = false;
 	bool mbActiveCommandReadError = false;
@@ -390,6 +390,7 @@ void ATDiskEmulator::SaveState(IATObjectState **pp) const {
 	state->mActiveCommandId = mActiveCommand;
 	state->mActiveCommandState = mActiveCommandState;
 	state->mActiveCommandSector = mActiveCommandSector;
+	state->mActiveCommandPhysSectorPlus1 = mActiveCommandPhysSector + 1;
 	state->mbActiveCommandBuffered = mbActiveCommandBufferingEnabled;
 	state->mbActiveCommandReadTrack = mbActiveCommandBufferingReadTrackDelay;
 	state->mbActiveCommandReadError = mbActiveCommandBufferingReadError;
@@ -399,7 +400,7 @@ void ATDiskEmulator::SaveState(IATObjectState **pp) const {
 	state->mBufferedTrack = mBufferedTrack;
 	state->mLastReadSector = mLastReadSector;
 
-	mpSIOMgr->SaveActiveCommandState(this, ~state->mpActiveCommand);
+	mpSIOInterface->SaveActiveCommandState(~state->mpActiveCommand);
 
 	*pp = state.release();
 }
@@ -428,6 +429,7 @@ void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	mActiveCommand = state.mActiveCommandId;
 	mActiveCommandState = state.mActiveCommandState;
 	mActiveCommandSector = state.mActiveCommandSector;
+	mActiveCommandPhysSector = (sint32)state.mActiveCommandPhysSectorPlus1 - 1;
 	mbActiveCommandBufferingEnabled = state.mbActiveCommandBuffered;
 	mbActiveCommandBufferingReadTrackDelay = state.mbActiveCommandReadTrack;
 	mbActiveCommandBufferingReadError = state.mbActiveCommandReadError;
@@ -439,7 +441,7 @@ void ATDiskEmulator::LoadState(const IATObjectState& state0) {
 	if (mActiveCommand)
 		mActiveCommandStartTime = t - state.mActiveCommandTimer;
 
-	mpSIOMgr->LoadActiveCommandState(this, state.mpActiveCommand);
+	mpSIOInterface->LoadActiveCommandState(state.mpActiveCommand);
 }
 
 void ATDiskEmulator::OnScheduledEvent(uint32 id) {
@@ -540,14 +542,15 @@ IATDeviceSIO::CmdResponse ATDiskEmulator::OnSerialBeginCommand(const ATDeviceSIO
 
 	mbMotorOffTimeSuspended = true;
 
-	mpSIOMgr->BeginCommand();
+	// must be before BeginCommand() as we will get some time skew there
+	mLastAccelTimeSkew = mpSIOInterface->GetAccelTimeSkew();
+
+	mpSIOInterface->BeginCommand();
 
 	// reject all high speed commands if not XF551 or generic
 
 	if (!mpProfile->mbSupportedCmdHighSpeed && (command & 0x80))
 		goto unsupported_command;
-
-	mLastAccelTimeSkew = mpSIOMgr->GetAccelTimeSkew();
 
 	switch(command) {
 		case 0x53:	// status
@@ -652,7 +655,7 @@ void ATDiskEmulator::OnSerialAbortCommand() {
 
 void ATDiskEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) {
 	if (!checksumOK) {
-		mpSIOMgr->FlushQueue();
+		mpSIOInterface->FlushQueue();
 		BeginTransferNAKData();
 		EndCommand();
 		return;
@@ -671,14 +674,14 @@ void ATDiskEmulator::OnSerialFence(uint32 id) {
 
 		if (mpTraceChannel) {
 			if (mOriginalCommand == 0x52) {
-				mpTraceChannel->AddTickEvent(mpSIOMgr->GetCommandDeassertTime(), mpScheduler->GetTick64(),
+				mpTraceChannel->AddTickEvent(mpSIOInterface->GetCommandDeassertTime(), mpScheduler->GetTick64(),
 					[sec = (uint16)mActiveCommandSector](VDStringW& s) {
 						s.sprintf(L"Read %u", sec);
 					},
 					kATTraceColor_IO_Read
 				);
 			} else {
-				mpTraceChannel->AddTickEvent(mpSIOMgr->GetCommandDeassertTime(), mpScheduler->GetTick64(),
+				mpTraceChannel->AddTickEvent(mpSIOInterface->GetCommandDeassertTime(), mpScheduler->GetTick64(),
 					[c = (uint8)mOriginalCommand, sec = (uint16)mActiveCommandSector](VDStringW& s) {
 						s.sprintf(L"%02X:%u", c, sec);
 					},
@@ -740,7 +743,7 @@ bool ATDiskEmulator::IsImageSupported(const IATDiskImage& image) const {
 }
 
 void ATDiskEmulator::UpdateAccelTimeSkew() {
-	uint32 ats = mpSIOMgr->GetAccelTimeSkew();
+	uint32 ats = mpSIOInterface->GetAccelTimeSkew();
 
 	if (mLastAccelTimeSkew != ats) {
 		mRotationalCounter += (ats - mLastAccelTimeSkew);
@@ -807,29 +810,29 @@ void ATDiskEmulator::SetupTransferSpeed(bool highSpeed) {
 		mCyclesPerSIOByteCurrent = mpProfile->mCyclesPerSIOByte;
 	}
 
-	mpSIOMgr->SetTransferRate(mCyclesPerSIOBitCurrent, mCyclesPerSIOByteCurrent);
+	mpSIOInterface->SetTransferRate(mCyclesPerSIOBitCurrent, mCyclesPerSIOByteCurrent);
 }
 
 void ATDiskEmulator::BeginTransferACKCmd() {
 	SetupTransferSpeed(mbCommandFrameHighSpeed);
-	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
-	mpSIOMgr->SendACK();
+	mpSIOInterface->Delay(mpProfile->mCyclesToACKSent);
+	mpSIOInterface->SendACK();
 }
 
 void ATDiskEmulator::BeginTransferACK() {
 	SetupTransferSpeed(mbActiveCommandHighSpeed);
-	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
-	mpSIOMgr->SendACK();
+	mpSIOInterface->Delay(mpProfile->mCyclesToACKSent);
+	mpSIOInterface->SendACK();
 }
 
 void ATDiskEmulator::BeginTransferComplete() {
 	SetupTransferSpeed(mbActiveCommandHighSpeed);
-	mpSIOMgr->SendComplete(false);
+	mpSIOInterface->SendComplete(false);
 }
 
 void ATDiskEmulator::BeginTransferError() {
 	SetupTransferSpeed(mbActiveCommandHighSpeed);
-	mpSIOMgr->SendError(false);
+	mpSIOInterface->SendError(false);
 }
 
 void ATDiskEmulator::BeginTransferNAKCommand() {
@@ -847,21 +850,21 @@ void ATDiskEmulator::BeginTransferNAKCommand() {
 	// (precisely, the last data bit) and from the command line deasserting
 	// and take the maximum of the two.
 	//
-	const uint64 t = mpSIOMgr->GetCommandQueueTime();
-	const uint64 targetTime = std::max<uint64>(mpSIOMgr->GetCommandFrameEndTime() + mpProfile->mCyclesToNAKFromFrameEnd, mpSIOMgr->GetCommandDeassertTime() + mpProfile->mCyclesToNAKFromCmdDeassert);
+	const uint64 t = mpSIOInterface->GetCommandQueueTime();
+	const uint64 targetTime = std::max<uint64>(mpSIOInterface->GetCommandFrameEndTime() + mpProfile->mCyclesToNAKFromFrameEnd, mpSIOInterface->GetCommandDeassertTime() + mpProfile->mCyclesToNAKFromCmdDeassert);
 
 	if (targetTime > t)
-		mpSIOMgr->Delay((uint32)(targetTime - t));
+		mpSIOInterface->Delay((uint32)(targetTime - t));
 
-	mpSIOMgr->SendNAK();
+	mpSIOInterface->SendNAK();
 }
 
 void ATDiskEmulator::BeginTransferNAKData() {
 	// NAKs are only sent in response to the command itself and therefore must be sent at
 	// command frame speed.
 	SetupTransferSpeed(mbCommandFrameHighSpeed);
-	mpSIOMgr->Delay(mpProfile->mCyclesToACKSent);
-	mpSIOMgr->SendNAK();
+	mpSIOInterface->Delay(mpProfile->mCyclesToACKSent);
+	mpSIOInterface->SendNAK();
 }
 
 void ATDiskEmulator::SendResult(bool successful, uint32 length) {
@@ -871,9 +874,9 @@ void ATDiskEmulator::SendResult(bool successful, uint32 length) {
 		BeginTransferError();
 
 	if (mbActiveCommandHighSpeed)
-		mpSIOMgr->Delay(mpProfile->mCyclesCEToDataFrameHighSpeed + ((length * mpProfile->mCyclesCEToDataFrameHighSpeedPBDiv256 + 128) >> 8));
+		mpSIOInterface->Delay(mpProfile->mCyclesCEToDataFrameHighSpeed + ((length * mpProfile->mCyclesCEToDataFrameHighSpeedPBDiv256 + 128) >> 8));
 	else
-		mpSIOMgr->Delay(mpProfile->mCyclesCEToDataFrame + ((length * mpProfile->mCyclesCEToDataFramePBDiv256 + 128) >> 8));
+		mpSIOInterface->Delay(mpProfile->mCyclesCEToDataFrame + ((length * mpProfile->mCyclesCEToDataFramePBDiv256 + 128) >> 8));
 
 	Send(length);
 }
@@ -883,7 +886,7 @@ void ATDiskEmulator::Send(uint32 length) {
 
 	if (length) {
 		SetupTransferSpeed(mbActiveCommandHighSpeed);
-		mpSIOMgr->SendData(mSendPacket, length, true);
+		mpSIOInterface->SendData(mSendPacket, length, true);
 	}
 
 	++mActiveCommandState;
@@ -891,7 +894,7 @@ void ATDiskEmulator::Send(uint32 length) {
 
 void ATDiskEmulator::BeginReceive(uint32 len) {
 	SetupTransferSpeed(mbActiveCommandHighSpeed);
-	mpSIOMgr->ReceiveData(0, len, true);
+	mpSIOInterface->ReceiveData(0, len, true);
 	++mActiveCommandState;
 }
 
@@ -909,7 +912,7 @@ void ATDiskEmulator::WarpOrDelay(uint32 cycles, uint32 minCycles) {
 		cycles = minCycles;
 	}
 
-	mpSIOMgr->Delay(cycles);
+	mpSIOInterface->Delay(cycles);
 }
 
 // This routine delays from the beginning of the stop bit of the last byte rather than
@@ -927,14 +930,14 @@ void ATDiskEmulator::WarpOrDelayFromStopBit(uint32 cycles) {
 
 void ATDiskEmulator::Wait(uint32 nextState) {
 	mbActiveCommandWait = true;
-	mpSIOMgr->InsertFence(nextState);
+	mpSIOInterface->InsertFence(nextState);
 }
 
 void ATDiskEmulator::EndCommand() {
 	mActiveCommand = 0;
 
-	mpSIOMgr->InsertFence((uint32)0 - 1);
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->InsertFence((uint32)0 - 1);
+	mpSIOInterface->EndCommand();
 }
 
 void ATDiskEmulator::AbortCommand() {
@@ -1637,7 +1640,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 
 				mbLastOpError = true;
 				SetupTransferSpeed(mbCommandFrameHighSpeed);
-				mpSIOMgr->SendNAK();
+				mpSIOInterface->SendNAK();
 				g_ATLCDisk("Error reading sector %d.\n", sector);
 				EndCommand();
 				return;
@@ -1651,7 +1654,7 @@ void ATDiskEmulator::ProcessCommandRead() {
 		case 20: {
 			IATDiskImage *image = mpDiskInterface->GetDiskImage();
 
-			if (!image)
+			if (!image || mActiveCommandPhysSector >= (sint32)image->GetPhysicalSectorCount())
 				mActiveCommandPhysSector = -1;
 
 			ATDiskPhysicalSectorInfo psi = {};
@@ -1739,10 +1742,12 @@ void ATDiskEmulator::ProcessCommandRead() {
 					UpdateRotationalCounter();
 
 					ATDiskVirtualSectorInfo vsi = {};
-					image->GetVirtualSectorInfo(mActiveCommandSector - 1, vsi);
+					if (mActiveCommandSector && mActiveCommandSector <= image->GetVirtualSectorCount())
+						image->GetVirtualSectorInfo(mActiveCommandSector - 1, vsi);
 
 					ATDiskPhysicalSectorInfo psi = {};
-					image->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
+					if (mActiveCommandPhysSector >= 0 && mActiveCommandPhysSector < (sint32)image->GetPhysicalSectorCount())
+						image->GetPhysicalSectorInfo(mActiveCommandPhysSector, psi);
 
 					g_ATLCDisk("Reading vsec=%3d (%d/%d) (trk=%d), psec=%3d, chk=%02X, rot=%.2f >> %.2f >> %.2f >> %.2f%s.\n"
 							, sector
@@ -1862,7 +1867,8 @@ void ATDiskEmulator::ProcessCommandWrite() {
 			}
 
 			// fail if we had an RNF error
-			if (mActiveCommandPhysSector < 0 || (uint32)mActiveCommandPhysSector >= image->GetPhysicalSectorCount()) {
+			if (mActiveCommandPhysSector < 0 || (uint32)mActiveCommandPhysSector >= image->GetPhysicalSectorCount()
+				|| mActiveCommandSector > image->GetVirtualSectorCount()) {
 				VDASSERT(mFDCStatus != 0xFF);
 				mbLastOpError = true;
 
@@ -2294,7 +2300,7 @@ void ATDiskEmulator::ProcessCommandExecuteIndusGT() {
 				case 15:
 				case 20:
 					BeginTransferACKCmd();
-					mpSIOMgr->Delay(1000);
+					mpSIOInterface->Delay(1000);
 					BeginTransferComplete();
 
 					if (mCustomCodeState == 6) {
@@ -2560,10 +2566,10 @@ void ATDiskEmulator::ProcessCommandFormat() {
 			mActiveCommandSector = 0;
 
 			if (mbAccurateSectorTiming) {
-				mpSIOMgr->Delay(1000);
+				mpSIOInterface->Delay(1000);
 				Wait(4);
 			} else {
-				mpSIOMgr->Delay(1000000);
+				mpSIOInterface->Delay(1000000);
 				Wait(5);
 			}
 			break;
@@ -2599,7 +2605,7 @@ void ATDiskEmulator::ProcessCommandFormat() {
 
 				delay = ((delay - 1) / mpProfile->mCyclesPerDiskRotation + 2) * mpProfile->mCyclesPerDiskRotation;
 
-				mpSIOMgr->Delay(delay);
+				mpSIOInterface->Delay(delay);
 				Wait(4);
 			}
 			break;
@@ -2688,6 +2694,11 @@ void ATDiskEmulator::ComputeSupportedProfile() {
 
 	if (mpProfile != newProfile) {
 		mpProfile = newProfile;
+
+		if (mpSIOInterface) {
+			mpSIOInterface->SetCommandDeassertCheckEnabled(newProfile->mbRequireCommandDeassertCheck);
+			mpSIOInterface->SetCommandTruncationEnabled(newProfile->mbSupportCommandTruncation);
+		}
 
 		// ensure that rotational counter is in range if the disk sped up
 		UpdateRotationalCounter();

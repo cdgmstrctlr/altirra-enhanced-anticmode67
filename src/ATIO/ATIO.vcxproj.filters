@@ -123,6 +123,9 @@
     <ClCompile Include="source\cassetteaudiofilters.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\audioreader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -179,9 +182,6 @@
     <ClInclude Include="h\at\atio\tapepiecetable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\at\atio\audioreader.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\at\atio\audioreaderwav.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -208,6 +208,9 @@
     </ClInclude>
     <ClInclude Include="h\at\atio\cassetteaudiofilters.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\atio\audioreader.h">
+      <Filter>Interface Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

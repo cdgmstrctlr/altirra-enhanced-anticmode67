@@ -280,7 +280,6 @@ private:
 	ATEvent *mpUpdateEvent;
 
 	ATProfileMode mProfileMode;
-	uint32 mFramePeriod;
 	uint32 mLastHistoryCounter;
 	bool mbDropFirstSample;
 

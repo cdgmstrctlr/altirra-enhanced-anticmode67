@@ -253,6 +253,40 @@ public:
 		return (int)l1 - (int)l2;
 	}
 
+	[[nodiscard]]
+	bool starts_with(char c) const {
+		return !empty() && front() == c;
+	}
+
+	[[nodiscard]]
+	bool starts_with(const VDStringSpanA& src) const {
+		size_t n = src.size();
+
+		return !n || (size() >= n && !memcmp(data(), src.data(), n));
+	}
+
+	[[nodiscard]]
+	bool starts_with(const char *s) {
+		return starts_with(VDStringSpanA(s));
+	}
+
+	[[nodiscard]]
+	bool ends_with(char c) const {
+		return !empty() && back() == c;
+	}
+
+	[[nodiscard]]
+	bool ends_with(const VDStringSpanA& src) const {
+		size_t n = src.size();
+
+		return !n || (size() >= n && !memcmp(&*(end() - n), src.data(), n));
+	}
+
+	[[nodiscard]]
+	bool ends_with(const char *s) {
+		return ends_with(VDStringSpanA(s));
+	}
+
 	[[nodiscard]] const VDStringSpanA trim(const value_type *s) const {
 		return trim(VDCharMaskA(s));
 	}
@@ -300,6 +334,18 @@ public:
 
 		value_type *p = mpBegin + pos;
 		return VDStringSpanA(p, p+n);
+	}
+
+	void remove_prefix(size_t n) {
+		VDASSERT(n <= size());
+
+		mpBegin += n;
+	}
+
+	void remove_suffix(size_t n) {
+		VDASSERT(n <= size());
+
+		mpEnd -= n;
 	}
 
 protected:

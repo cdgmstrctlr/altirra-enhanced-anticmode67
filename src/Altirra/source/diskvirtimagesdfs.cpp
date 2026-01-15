@@ -264,7 +264,7 @@ protected:
 		kSectorPoolLimit		= 65535
 	};
 
-	void TimerCallback();
+	void TimerCallback() override;
 	void InitRoot();
 	void InvalidateAll();
 	void InvalidatePartial();

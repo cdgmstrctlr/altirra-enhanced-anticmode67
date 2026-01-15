@@ -444,7 +444,7 @@ public:
 	void SetOverlayColors(const uint32 colors[256]);
 
 private:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
 	void OnSize();
 	void OnPaint();

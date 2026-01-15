@@ -84,7 +84,7 @@
     <ClCompile Include="source\minid3dx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\customshaderd3d9.cpp">
+    <ClCompile Include="source\customeffectimpld3d9.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\fontbitmap.cpp">
@@ -100,6 +100,24 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\bloom.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\displaytypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customeffectutils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customeffectbase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customeffectpassbase.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customeffectimpld3d11.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customeffectutilsd3d.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -161,7 +179,7 @@
     <ClInclude Include="..\h\vd2\VDDisplay\minid3dx.h">
       <Filter>Interface Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\vd2\VDDisplay\internal\customshaderd3d9.h">
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectd3d9.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\vd2\VDDisplay\internal\fontbitmap.h">
@@ -180,6 +198,33 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\vd2\VDDisplay\internal\bloom.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\vd2\VDDisplay\displaytypes.h">
+      <Filter>Interface Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectutils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffect.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectbase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectpassbase.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectd3d11.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectimpld3d11.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectutilsd3d.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vd2\VDDisplay\internal\customeffectimpld3d9.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

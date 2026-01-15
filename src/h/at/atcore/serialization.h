@@ -42,6 +42,7 @@ public:
 
 class ATSerializationCastException final : public ATSerializationException {};
 class ATSerializationNullReferenceException final : public ATSerializationException {};
+class ATSerializationTooComplexException final : public ATSerializationException {};
 
 // ATSnapObjectId
 //
@@ -128,6 +129,7 @@ public:
 	virtual void WriteUint64(uint64 v) = 0;
 	virtual void WriteDouble(double v) = 0;
 	virtual void WriteObject(IATSerializable *obj) = 0;
+	virtual void WriteNullInlineObject() = 0;
 	virtual void WriteBulkData(const void *data, uint32 len) = 0;
 };
 
@@ -144,6 +146,7 @@ public:
 	virtual bool ReadUint64(const char *key, uint64& value) = 0;
 	virtual bool ReadDouble(const char *key, double& value) = 0;
 	virtual bool ReadObject(const char *key, const ATSerializationTypeDef *def, IATSerializable *& value) = 0;
+	virtual bool ReadInlineObject(const char *key, const ATSerializationTypeDef *def, int depth, IATSerializable *& value) = 0;
 
 	virtual bool ReadFixedBulkData(void *data, uint32 len) = 0;
 	virtual bool ReadVariableBulkData(vdfastvector<uint8>& buf) = 0;
@@ -153,8 +156,9 @@ class ATDeserializer {
 public:
 	enum : bool { IsReader = true, IsWriter = false };
 
-	ATDeserializer(IATSerializationInput& input)
+	ATDeserializer(IATSerializationInput& input, int inlineDepth)
 		: mInput(input)
+		, mInlineDepth(inlineDepth)
 	{
 	}
 
@@ -295,13 +299,82 @@ public:
 		mInput.Close();
 	}
 
+	template<typename T>
+	void TransferInline(const char *key, T **p) {
+		*p = static_cast<T *>(ReadInlineReference(key, ATSerializationTypeRef<std::remove_cv_t<T>>));
+	}
+
+	template<typename T>
+	void TransferInline(const char *key, vdrefptr<T> *p) {
+		*p = static_cast<T *>(ReadInlineReference(key, ATSerializationTypeRef<std::remove_cv_t<T>>));
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, T **p, size_t n) {
+		if (key)
+			mInput.OpenArray(key);
+
+		while(n--)
+			TransferInline(nullptr, p++);
+
+		if (key)
+			mInput.Close();
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, vdrefptr<T> *p, size_t n) {
+		if (key)
+			mInput.OpenArray(key);
+
+		while(n--)
+			TransferInline(nullptr, p++);
+
+		if (key)
+			mInput.Close();
+	}
+
+	template<typename T, typename A>
+	void TransferInline(const char *key, vdfastvector<T, A> *p) {
+		uint32 n = mInput.OpenArray(key);
+
+		p->resize(n);
+		if (n)
+			TransferInline(nullptr, p->data(), n);
+
+		mInput.Close();
+	}
+
+	template<typename T, typename A>
+	void TransferInline(const char *key, vdvector<T, A> *p) {
+		uint32 n = mInput.OpenArray(key);
+
+		p->resize(n);
+		if (n)
+			TransferInline(nullptr, p->data(), n);
+
+		mInput.Close();
+	}
+
+	template<typename T, typename A>
+	void TransferInline(const char *key, vdblock<T, A> *p) {
+		uint32 n = mInput.OpenArray(key);
+
+		p->resize(n);
+		if (n)
+			TransferInline(nullptr, p->data(), n);
+
+		mInput.Close();
+	}
+
 private:
 	template<typename T>
 	void TransferIntegers(const char *key, T *p, size_t n);
 
 	IATSerializable *ReadReference(const char *key, const ATSerializationTypeDef *def);
+	IATSerializable *ReadInlineReference(const char *key, const ATSerializationTypeDef *def);
 
 	IATSerializationInput& mInput;
+	const int mInlineDepth;
 };
 
 template<> bool		ATDeserializer::Read<bool	>(const char *key);
@@ -386,6 +459,13 @@ public:
 		WriteEnum(key, *p);
 	}
 
+	template<ATExchangeable T>
+	void Transfer(const char *key, const T *p) {
+		mOutput.OpenObject(key);
+		const_cast<const T *>(p)->Exchange(*this);
+		mOutput.CloseObject();
+	}
+
 	void Transfer(const char *key, const char *p, size_t n);
 	void Transfer(const char *key, const wchar_t *p, size_t n);
 	void Transfer(const char *key, const uint8 *p, size_t n);
@@ -415,7 +495,7 @@ public:
 	}
 
 	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
-	void Transfer(const char *key, T *const *p, size_t n) {
+	void Transfer(const char *key, const T *const *p, size_t n) {
 		mOutput.CreateMember(key);
 		mOutput.OpenArray(false);
 
@@ -451,14 +531,57 @@ public:
 		Transfer(key, v->data(), v->size());
 	}
 
-	template<ATExchangeable T>
-	void Transfer(const char *key, const T *p) {
-		mOutput.OpenObject(key);
-		p->Exchange(*this);
-		mOutput.CloseObject();
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, T *const *p) {
+		WriteInlineReference(key, *p);
 	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, const vdrefptr<T> *p) {
+		WriteInlineReference(key, *p);
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, const T *const *p, size_t n) {
+		mOutput.CreateMember(key);
+		mOutput.OpenArray(false);
+
+		while(n--)
+			TransferInline(nullptr, p++);
+
+		mOutput.CloseArray();
+	}
+
+	template<typename T> requires std::is_convertible_v<T *, const IATSerializable *>
+	void TransferInline(const char *key, const vdrefptr<T> *p, size_t n) {
+		mOutput.CreateMember(key);
+		mOutput.OpenArray(false);
+
+		while(n--)
+			TransferInline(nullptr, p++);
+
+		mOutput.CloseArray();
+	}
+
+		template<typename T, typename A>
+	void TransferInline(const char *key, const vdfastvector<T, A> *v) {
+		TransferInline(key, v->data(), v->size());
+	}
+
+	template<typename T, typename A>
+	void TransferInline(const char *key, const vdvector<T, A> *v) {
+		TransferInline(key, v->data(), v->size());
+	}
+
+	template<typename T, typename A>
+	void TransferInline(const char *key, const vdblock<T, A> *v) {
+		TransferInline(key, v->data(), v->size());
+	}
+
 private:
 	void WriteReference(const char *key, IATSerializable *p);
+	void WriteInlineReference(const char *key, IATSerializable *p);
 
 	IATSerializationOutput& mOutput;
 };

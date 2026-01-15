@@ -74,33 +74,33 @@ public:
 	void End();
 
 public:
-	virtual const VDDisplayRendererCaps& GetCaps();
-	VDDisplayTextRenderer *GetTextRenderer() { return &mTextRenderer; }
+	const VDDisplayRendererCaps& GetCaps() override;
+	VDDisplayTextRenderer *GetTextRenderer() override { return &mTextRenderer; }
 
-	virtual void SetColorRGB(uint32 color);
-	virtual void FillRect(sint32 x, sint32 y, sint32 w, sint32 h);
-	virtual void MultiFillRect(const vdrect32 *rects, uint32 n);
+	void SetColorRGB(uint32 color) override;
+	void FillRect(sint32 x, sint32 y, sint32 w, sint32 h) override;
+	void MultiFillRect(const vdrect32 *rects, uint32 n) override;
 
-	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
-	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
+	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) override;
+	void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) override;
 
 	void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, uint32 numPts, bool alphaBlend) override;
 	void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, const vdfloat2 *uv, uint32 numPts, bool alphaBlend, bool filter, VDDisplayImageView& brush) override;
 
-	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
-	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
-	virtual void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts);
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) override;
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) override;
+	void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) override;
 
-	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
+	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) override;
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines) override;
 	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override;
 
-	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
-	virtual void PopViewport();
+	bool PushViewport(const vdrect32& r, sint32 x, sint32 y) override;
+	void PopViewport() override;
 
-	virtual IVDDisplayRenderer *BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache);
-	virtual void EndSubRender();
+	IVDDisplayRenderer *BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache) override;
+	void EndSubRender() override;
 
 protected:
 	struct FillVertex {
@@ -158,6 +158,10 @@ protected:
 	bool mbRenderLinear {};
 	float mSDRIntensity {};
 
+	sint32 mLastWidth = -1;
+	sint32 mLastHeight = -1;
+	float mLastSDRIntensity = -1.0f;
+
 	IVDTContext *mpContext {};
 	IVDTVertexProgram *mpVPFillLinear {};
 	IVDTVertexProgram *mpVPFillGamma {};
@@ -189,6 +193,17 @@ protected:
 	IVDTBlendState *mpBSStencil {};
 	IVDTBlendState *mpBSColor {};
 	IVDTRasterizerState *mpRS {};
+
+	struct RenderConstantBuffer {
+		float mScaleX = 0;
+		float mScaleY = 0;
+		float mOffsetX = 0;
+		float mOffsetY = 0;
+		float mSDRIntensity = 0;
+		float mUnused[3] {};
+	};
+
+	vdrefptr<IVDTConstantBuffer> mpConstantBuffer;
 
 	VDDisplayNodeContext3D *mpDCtx {};
 

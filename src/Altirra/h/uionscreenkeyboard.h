@@ -23,13 +23,13 @@ public:
 	void AutoSize();
 
 public:
-	virtual void OnCreate();
-	virtual void OnDestroy();
-	virtual void OnSize();
+	void OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
 
-	virtual void OnActionStart(uint32 id) override;
-	virtual void OnActionRepeat(uint32 id) override;
-	virtual void OnActionStop(uint32 id) override;
+	void OnActionStart(uint32 id) override;
+	void OnActionRepeat(uint32 id) override;
+	void OnActionStop(uint32 id) override;
 
 protected:
 	void OnButtonPressed(uint32 index);

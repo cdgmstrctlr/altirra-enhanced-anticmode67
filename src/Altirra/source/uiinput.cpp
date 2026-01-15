@@ -18,9 +18,11 @@
 #include <stdafx.h>
 #include <vd2/system/strutil.h>
 #include <at/atnativeui/dialog.h>
-#include "inputmanager.h"
-#include "inputcontroller.h"
 #include <at/atnativeui/uiproxies.h>
+#include "inputdefs.h"
+#include "inputmanager.h"
+#include "inputmap.h"
+#include "inputcontroller.h"
 #include "oshelper.h"
 #include "resource.h"
 #include "joystick.h"

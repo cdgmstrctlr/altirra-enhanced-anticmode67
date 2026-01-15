@@ -142,12 +142,19 @@ struct ATTraceContext {
 	ATTraceMemoryTracker mMemTracker;
 };
 
-struct ATTraceSettings {
-	bool mbTraceVideo;
-	uint32 mTraceVideoDivisor;
-	bool mbTraceCpuInsns;
-	bool mbTraceBasic;
-	bool mbAutoLimitTraceMemory;
+struct ATBaseTraceSettings {
+	bool mbAutoLimitTraceMemory = false;
+};
+
+struct ATTraceSettings : public ATBaseTraceSettings {
+	bool mbTraceVideo = false;
+	uint32 mTraceVideoDivisor = 0;
+	bool mbTraceCpuInsns = false;
+	bool mbTraceBasic = false;
+	uint32 mVideoFrameSize = 128;
+};
+
+struct ATNativeTraceSettings : public ATBaseTraceSettings {
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -278,6 +285,15 @@ public:
 		AddTickEvent(tickStart, tickEnd,
 			[=](VDStringW& s) {
 				s.sprintf(format, args...);
+			},
+			color
+		);
+	}
+
+	void AddTickEventM(uint64 tickStart, uint64 tickEnd, uint32 color, const wchar_t *msg) {
+		AddTickEvent(tickStart, tickEnd,
+			[=](VDStringW& s) {
+				s = msg;
 			},
 			color
 		);

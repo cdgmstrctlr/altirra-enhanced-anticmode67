@@ -70,7 +70,7 @@ class AT1450XLDiskDevice::FullEmulation final : public ATDiskDriveDebugTargetCon
 public:
 	FullEmulation(AT1450XLDiskDevice& parent, bool isTONG) : mParent(parent), mbIsTONG(isTONG) {}
 
-	void *AsInterface(uint32 iid) {
+	void *AsInterface(uint32 iid) override {
 		if (iid == ATFDCEmulator::kTypeID)
 			return &mFDC;
 

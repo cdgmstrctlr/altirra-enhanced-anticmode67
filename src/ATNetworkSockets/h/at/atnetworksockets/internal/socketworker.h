@@ -59,6 +59,8 @@ public:
 
 	ATSocketStatus GetSocketStatus() const override;
 	void CloseSocket(bool force) override;
+	
+	void PollSocket() override;
 
 	virtual void Update() {}
 	virtual void HandleSocketSignal() {}
@@ -126,6 +128,10 @@ public:
 	void SetOnEvent(IATAsyncDispatcher *dispatcher, vdfunction<void(const ATSocketStatus&)> fn, bool callIfReady) override {
 		ATNetSocket::SetOnEvent(dispatcher, std::move(fn), callIfReady);
 	}
+
+	void PollSocket() override {
+		ATNetSocket::PollSocket();
+	}
 };
 
 class ATNetStreamSocket final : public ATNetSocketT<IATStreamSocket> {
@@ -135,7 +141,7 @@ public:
 	~ATNetStreamSocket();
 
 	void Listen(const ATSocketAddress& socketAddress);
-	void Connect(const ATSocketAddress& socketAddress);
+	void Connect(const ATSocketAddress& socketAddress, bool dualStack);
 
 	ATSocketAddress GetLocalAddress() const override;
 	ATSocketAddress GetRemoteAddress() const override;
@@ -157,6 +163,7 @@ private:
 	void DoClose_Locked();
 
 	bool mbSocketRemoteClosed = false;
+	bool mbDualStack = false;
 
 	ATSocketAddress mLocalAddress;
 	ATSocketAddress mConnectAddress;
@@ -176,10 +183,10 @@ private:
 
 class ATNetListenSocket final : public ATNetSocketT<IATListenSocket> {
 public:
-	ATNetListenSocket(ATNetSocketSyncContext& syncContext, const ATSocketAddress& bindAddress);
+	ATNetListenSocket(ATNetSocketSyncContext& syncContext, const ATSocketAddress& bindAddress, bool dualStack);
 	~ATNetListenSocket();
 
-	vdrefptr<IATStreamSocket> Accept();
+	vdrefptr<IATStreamSocket> Accept() override;
 
 	void Shutdown() override;
 	void Update() override;
@@ -192,6 +199,7 @@ private:
 	ATSocketAddress mBindAddress;
 	ATSocketAddress mPendingAddress;
 	SOCKET mPendingSocket = INVALID_SOCKET;
+	bool mbDualStack = false;
 };
 
 class ATNetDatagramSocket final : public ATNetSocketT<IATDatagramSocket> {
@@ -219,8 +227,6 @@ private:
 	bool mbSocketCanRead = false;
 	bool mbSocketCanWrite = true;
 
-	IATAsyncDispatcher *mpOnEventDispatcher = nullptr;
-	uint64 mOnEventToken = 0;
 	vdfunction<void()> mpOnEventFn;
 
 	ATSocketAddress mBindAddress;
@@ -249,7 +255,7 @@ public:
 
 	vdrefptr<ATNetStreamSocket> CreateStreamSocket();
 	vdrefptr<ATNetStreamSocket> CreateStreamSocket(const ATSocketAddress& connectedAddress, SOCKET s);
-	vdrefptr<ATNetListenSocket> CreateListenSocket(const ATSocketAddress& bindAddress);
+	vdrefptr<ATNetListenSocket> CreateListenSocket(const ATSocketAddress& bindAddress, bool dualStack);
 	vdrefptr<ATNetDatagramSocket> CreateDatagramSocket(const ATSocketAddress& bindAddress, bool dualStack);
 
 	void RequestSocketUpdate_Locked(const ATNetSocket& socket);

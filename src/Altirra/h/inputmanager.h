@@ -24,8 +24,9 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/refcount.h>
-#include "inputtypes.h"
+#include "inputdefs.h"
 
+class ATInputMap;
 class ATPokeyEmulator;
 class ATPortInputController;
 class ATJoystickController;
@@ -37,6 +38,8 @@ class VDRegistryKey;
 class ATLightPenPort;
 class IATDevicePortManager;
 
+enum ATInputControllerType : uint32;
+
 class IATInputConsoleCallback {
 public:
 	virtual void SetConsoleTrigger(uint32 id, bool state) = 0;
@@ -45,194 +48,6 @@ public:
 class IATInputUnitNameSource {
 public:
 	virtual bool GetInputCodeName(uint32 id, VDStringW& name) const = 0;
-};
-
-enum ATInputCode : uint32 {
-	kATInputCode_None			= 0x00,
-
-	kATInputCode_KeyBack		= 0x08,		// VK_BACK
-	kATInputCode_KeyTab			= 0x09,		// VK_TAB
-	kATInputCode_KeyReturn		= 0x0D,		// VK_RETURN
-	kATInputCode_KeyEscape		= 0x1B,		// VK_ESCAPE
-	kATInputCode_KeySpace		= 0x20,		// VK_SPACE
-	kATInputCode_KeyPrior		= 0x21,		// VK_PRIOR
-	kATInputCode_KeyNext		= 0x22,		// VK_NEXT
-	kATInputCode_KeyEnd			= 0x23,		// VK_END
-	kATInputCode_KeyHome		= 0x24,		// VK_HOME
-	kATInputCode_KeyLeft		= 0x25,		// VK_LEFT
-	kATInputCode_KeyUp			= 0x26,		// VK_UP
-	kATInputCode_KeyRight		= 0x27,		// VK_RIGHT
-	kATInputCode_KeyDown		= 0x28,		// VK_DOWN
-	kATInputCode_KeyInsert		= 0x2D,		// VK_INSERT
-	kATInputCode_KeyDelete		= 0x2E,		// VK_DELETE
-	kATInputCode_Key0			= 0x30,		// VK_0
-	kATInputCode_Key1			= 0x31,		//
-	kATInputCode_Key2			= 0x32,		//
-	kATInputCode_Key3			= 0x33,		//
-	kATInputCode_Key4			= 0x34,		//
-	kATInputCode_Key5			= 0x35,		//
-	kATInputCode_Key6			= 0x36,		//
-	kATInputCode_Key7			= 0x37,		//
-	kATInputCode_Key8			= 0x38,		//
-	kATInputCode_Key9			= 0x39,		//
-	kATInputCode_KeyA			= 0x41,		// VK_A
-	kATInputCode_KeyB			= 0x42,		//
-	kATInputCode_KeyC			= 0x43,		//
-	kATInputCode_KeyD			= 0x44,		//
-	kATInputCode_KeyE			= 0x45,		//
-	kATInputCode_KeyF			= 0x46,		//
-	kATInputCode_KeyG			= 0x47,		//
-	kATInputCode_KeyH			= 0x48,		//
-	kATInputCode_KeyI			= 0x49,		//
-	kATInputCode_KeyJ			= 0x4A,		//
-	kATInputCode_KeyK			= 0x4B,		//
-	kATInputCode_KeyL			= 0x4C,		//
-	kATInputCode_KeyM			= 0x4D,		//
-	kATInputCode_KeyN			= 0x4E,		//
-	kATInputCode_KeyO			= 0x4F,		//
-	kATInputCode_KeyP			= 0x50,		//
-	kATInputCode_Keyq			= 0x51,		//
-	kATInputCode_KeyR			= 0x52,		//
-	kATInputCode_KeyS			= 0x53,		//
-	kATInputCode_KeyT			= 0x54,		//
-	kATInputCode_KeyU			= 0x55,		//
-	kATInputCode_KeyV			= 0x56,		//
-	kATInputCode_KeyW			= 0x57,		//
-	kATInputCode_KeyX			= 0x58,		//
-	kATInputCode_KeyY			= 0x59,		//
-	kATInputCode_KeyZ			= 0x5A,		//
-	kATInputCode_KeyNumpad0		= 0x60,		// VK_NUMPAD0
-	kATInputCode_KeyNumpad1		= 0x61,		// VK_NUMPAD1
-	kATInputCode_KeyNumpad2		= 0x62,		// VK_NUMPAD2
-	kATInputCode_KeyNumpad3		= 0x63,		// VK_NUMPAD3
-	kATInputCode_KeyNumpad4		= 0x64,		// VK_NUMPAD4
-	kATInputCode_KeyNumpad5		= 0x65,		// VK_NUMPAD5
-	kATInputCode_KeyNumpad6		= 0x66,		// VK_NUMPAD6
-	kATInputCode_KeyNumpad7		= 0x67,		// VK_NUMPAD7
-	kATInputCode_KeyNumpad8		= 0x68,		// VK_NUMPAD8
-	kATInputCode_KeyNumpad9		= 0x69,		// VK_NUMPAD9
-	kATInputCode_KeyMultiply	= 0x6A,		// VK_MULTIPLY
-	kATInputCode_KeyAdd			= 0x6B,		// VK_ADD
-	kATInputCode_KeySubtract	= 0x6D,		// VK_SUBTRACT
-	kATInputCode_KeyDecimal		= 0x6E,		// VK_DECIMAL
-	kATInputCode_KeyDivide		= 0x6F,		// VK_DIVIDE
-	kATInputCode_KeyF1			= 0x70,		// VK_F1
-	kATInputCode_KeyF2			= 0x71,		// VK_F2
-	kATInputCode_KeyF3			= 0x72,		// VK_F3
-	kATInputCode_KeyF4			= 0x73,		// VK_F4
-	kATInputCode_KeyF5			= 0x74,		// VK_F5
-	kATInputCode_KeyF6			= 0x75,		// VK_F6
-	kATInputCode_KeyF7			= 0x76,		// VK_F7
-	kATInputCode_KeyF8			= 0x77,		// VK_F8
-	kATInputCode_KeyF9			= 0x78,		// VK_F9
-	kATInputCode_KeyF10			= 0x79,		// VK_F10
-	kATInputCode_KeyF11			= 0x7A,		// VK_F11
-	kATInputCode_KeyF12			= 0x7B,		// VK_F12
-	kATInputCode_KeyLShift		= 0xA0,		// VK_LSHIFT
-	kATInputCode_KeyRShift		= 0xA1,		// VK_RSHIFT
-	kATInputCode_KeyLControl	= 0xA2,		// VK_LCONTROL
-	kATInputCode_KeyRControl	= 0xA3,		// VK_RCONTROL
-	kATInputCode_KeyOem1		= 0xBA,		// VK_OEM_1   // ';:' for US
-	kATInputCode_KeyOemPlus		= 0xBB,		// VK_OEM_PLUS   // '+' any country
-	kATInputCode_KeyOemComma	= 0xBC,		// VK_OEM_COMMA   // ',' any country
-	kATInputCode_KeyOemMinus	= 0xBD,		// VK_OEM_MINUS   // '-' any country
-	kATInputCode_KeyOemPeriod	= 0xBE,		// VK_OEM_PERIOD   // '.' any country
-	kATInputCode_KeyOem2		= 0xBF,		// VK_OEM_2   // '/?' for US
-	kATInputCode_KeyOem3		= 0xC0,		// VK_OEM_3   // '`~' for US
-	kATInputCode_KeyOem4		= 0xDB,		// VK_OEM_4  //  '[{' for US
-	kATInputCode_KeyOem5		= 0xDC,		// VK_OEM_5  //  '\|' for US
-	kATInputCode_KeyOem6		= 0xDD,		// VK_OEM_6  //  ']}' for US
-	kATInputCode_KeyOem7		= 0xDE,		// VK_OEM_7  //  ''"' for US
-	kATInputCode_KeyNumpadEnter	= 0x10D,	// VK_RETURN (extended)
-
-	kATInputCode_MouseClass		= 0x1000,
-	kATInputCode_MouseHoriz		= 0x1000,
-	kATInputCode_MouseVert		= 0x1001,
-	kATInputCode_MousePadX		= 0x1002,
-	kATInputCode_MousePadY		= 0x1003,
-	kATInputCode_MouseBeamX		= 0x1004,
-	kATInputCode_MouseBeamY		= 0x1005,
-	kATInputCode_MouseEmuStickX	= 0x1006,
-	kATInputCode_MouseEmuStickY	= 0x1007,
-	kATInputCode_MouseLeft		= 0x1100,
-	kATInputCode_MouseRight		= 0x1101,
-	kATInputCode_MouseUp		= 0x1102,
-	kATInputCode_MouseDown		= 0x1103,
-	kATInputCode_MouseWheelUp	= 0x1104,
-	kATInputCode_MouseWheelDown	= 0x1105,
-	kATInputCode_MouseWheel		= 0x1106,
-	kATInputCode_MouseHWheelLeft	= 0x1107,
-	kATInputCode_MouseHWheelRight	= 0x1108,
-	kATInputCode_MouseHWheel		= 0x1109,
-	kATInputCode_MouseLMB		= 0x1800,
-	kATInputCode_MouseMMB		= 0x1801,
-	kATInputCode_MouseRMB		= 0x1802,
-	kATInputCode_MouseX1B		= 0x1803,
-	kATInputCode_MouseX2B		= 0x1804,
-
-	kATInputCode_JoyClass		= 0x2000,
-	kATInputCode_JoyHoriz1		= 0x2000,
-	kATInputCode_JoyVert1		= 0x2001,
-	kATInputCode_JoyVert2		= 0x2002,
-	kATInputCode_JoyHoriz3		= 0x2003,
-	kATInputCode_JoyVert3		= 0x2004,
-	kATInputCode_JoyVert4		= 0x2005,
-	kATInputCode_JoyPOVHoriz	= 0x2006,
-	kATInputCode_JoyPOVVert		= 0x2007,
-	kATInputCode_JoyStick1Left	= 0x2100,
-	kATInputCode_JoyStick1Right	= 0x2101,
-	kATInputCode_JoyStick1Up	= 0x2102,
-	kATInputCode_JoyStick1Down	= 0x2103,
-	kATInputCode_JoyStick2Up	= 0x2104,
-	kATInputCode_JoyStick2Down	= 0x2105,
-	kATInputCode_JoyStick3Left	= 0x2106,
-	kATInputCode_JoyStick3Right	= 0x2107,
-	kATInputCode_JoyStick3Up	= 0x2108,
-	kATInputCode_JoyStick3Down	= 0x2109,
-	kATInputCode_JoyStick4Up	= 0x210A,
-	kATInputCode_JoyStick4Down	= 0x210B,
-	kATInputCode_JoyPOVLeft		= 0x210C,
-	kATInputCode_JoyPOVRight	= 0x210D,
-	kATInputCode_JoyPOVUp		= 0x210E,
-	kATInputCode_JoyPOVDown		= 0x210F,
-	kATInputCode_JoyButton0		= 0x2800,
-
-	kATInputCode_ClassMask		= 0xF000,
-	kATInputCode_IdMask			= 0xFFFF,
-
-	kATInputCode_FlagCheck0		= 0x00010000,
-	kATInputCode_FlagCheck1		= 0x00020000,
-	kATInputCode_FlagCheckMask	= 0x00030000,
-	kATInputCode_FlagValue0		= 0x00040000,
-	kATInputCode_FlagValue1		= 0x00080000,
-	kATInputCode_FlagValueMask	= 0x000C0000,
-	kATInputCode_FlagMask		= 0x000F0000,
-
-	kATInputCode_SpecificUnit	= 0x80000000,
-	kATInputCode_UnitScale		= 0x01000000,
-	kATInputCode_UnitShift		= 24
-};
-
-enum ATInputControllerType : uint32 {
-	kATInputControllerType_None,
-	kATInputControllerType_Joystick,
-	kATInputControllerType_Paddle,
-	kATInputControllerType_STMouse,
-	kATInputControllerType_Console,
-	kATInputControllerType_5200Controller,
-	kATInputControllerType_InputState,
-	kATInputControllerType_LightGun,
-	kATInputControllerType_Tablet,
-	kATInputControllerType_KoalaPad,
-	kATInputControllerType_AmigaMouse,
-	kATInputControllerType_Keypad,
-	kATInputControllerType_Trackball_CX80,
-	kATInputControllerType_5200Trackball,
-	kATInputControllerType_Driving,
-	kATInputControllerType_Keyboard,
-	kATInputControllerType_LightPen,
-	kATInputControllerType_PowerPad,
-	kATInputControllerType_LightPenStack
 };
 
 struct atfixedhash_basenode {
@@ -399,67 +214,6 @@ struct ATInputPointerInfo {
 	ATInputPointerCoordinateSpace mCoordSpace {};
 };
 
-class ATInputMap final : public vdrefcounted<IVDRefCount> {
-public:
-	struct Controller {
-		ATInputControllerType mType;
-		uint32 mIndex;
-	};
-
-	struct Mapping {
-		uint32 mInputCode;
-		uint32 mControllerId;
-		uint32 mCode;
-	};
-
-	ATInputMap();
-	~ATInputMap();
-
-	const wchar_t *GetName() const;
-	void SetName(const wchar_t *name);
-
-	bool IsQuickMap() const { return mbQuickMap; }
-	void SetQuickMap(bool q) { mbQuickMap = q; }
-
-	bool UsesPhysicalPort(int portIdx) const;
-
-	void Clear();
-
-	int GetSpecificInputUnit() const {
-		return mSpecificInputUnit;
-	}
-
-	void SetSpecificInputUnit(int index) {
-		mSpecificInputUnit = index;
-	}
-
-	uint32 GetControllerCount() const;
-	bool HasControllerType(ATInputControllerType type) const;
-	const Controller& GetController(uint32 i) const;
-	uint32 AddController(ATInputControllerType type, uint32 index);
-	void AddControllers(std::initializer_list<Controller> controllers);
-
-	uint32 GetMappingCount() const;
-	const Mapping& GetMapping(uint32 i) const;
-	void AddMapping(uint32 inputCode, uint32 controllerId, uint32 code);
-	void AddMappings(std::initializer_list<Mapping> mappings);
-
-	bool Load(VDRegistryKey& key, const char *name);
-	void Save(VDRegistryKey& key, const char *name);
-
-protected:
-	typedef vdfastvector<Controller> Controllers;
-	Controllers mControllers;
-
-	typedef vdfastvector<Mapping> Mappings;
-	Mappings mMappings;
-
-	VDStringW mName;
-	int mSpecificInputUnit;
-
-	bool mbQuickMap;
-};
-
 class ATInputManager {
 public:
 	ATInputManager();
@@ -497,6 +251,7 @@ public:
 	bool IsMouseAbsoluteMode() const { return mbMouseAbsMode; }
 	bool IsMouseActiveTarget() const { return mbMouseActiveTarget; }
 
+	void OnButtonChanged(int unit, int id, bool down);
 	void OnButtonDown(int unit, int id);
 	void OnButtonUp(int unit, int id);
 	void OnAxisInput(int unit, int axis, sint32 value, sint32 deadifiedValue);

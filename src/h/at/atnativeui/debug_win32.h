@@ -1,5 +1,5 @@
 //	Altirra - Atari 800/800XL/5200 emulator
-//	Copyright (C) 2009-2018 Avery Lee
+//	Copyright (C) 2025 Avery Lee
 //
 //	This program is free software; you can redistribute it and/or modify
 //	it under the terms of the GNU General Public License as published by
@@ -14,13 +14,9 @@
 //	You should have received a copy of the GNU General Public License along
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
-#ifndef f_AT_INPUTTYPES_H
-#define f_AT_INPUTTYPES_H
+#ifndef f_AT_ATNATIVEUI_DEBUG_WIN32_H
+#define f_AT_ATNATIVEUI_DEBUG_WIN32_H
 
-enum class ATInputPointerCoordinateSpace : uint8 {
-	None,
-	Normalized,
-	Beam
-};
+const char *ATGetNameForWindowMessageW32(uint32 msgId);
 
 #endif

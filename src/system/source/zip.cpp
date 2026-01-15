@@ -231,11 +231,15 @@ void VDDeflateBitReader::readbytes(void *dst, size_t len) {
 
 	// consume bytes directly
 	while(len) {
-		size_t tc = mpSrcLimit - mpSrc;
-		if (!tc) {
+		// The source pointer may be beyond the source limit, because
+		// the source limit is the farthest that the _beginning_ of the
+		// bit window is allowed.
+		if (mpSrc >= mpSrcLimit) {
 			RefillBuffer();
 			continue;
 		}
+		
+		size_t tc = mpSrcLimit - mpSrc;
 
 		if (tc > len)
 			tc = len;
@@ -731,16 +735,6 @@ uint32 VDAdler32Checker::Adler32(const void *src, size_t len) {
 	return chk.Adler32();
 }
 
-struct VDHuffmanHistoSorterData {
-	VDHuffmanHistoSorterData(const int pHisto[288]) {
-		for(int i=0; i<288; ++i) {
-			mHisto[i] = (pHisto[i] << 9) + 287 - i;
-		}
-	}
-
-	int mHisto[288];
-};
-
 ///////////////////////////////////////////////////////////////////////////
 
 class VDDeflateHuffmanTable {
@@ -753,27 +747,20 @@ public:
 		++mHistogram[c];
 	}
 
-	inline void Tally(int c, int count) {
-		mHistogram[c] += count;
-	}
-
 	void BuildCode(int depth_limit = 15);
-	void BuildEncodingTable(uint16 *p, int *l, int limit);
-	void BuildStaticLengthEncodingTable(uint16 *p, int *l);
-	void BuildStaticDistanceEncodingTable(uint16 *p, int *l);
+	void BuildEncodingTable(uint16 *p, uint8 *l, int limit);
+	void BuildStaticLengthEncodingTable(uint16 *p, uint8 *l);
+	void BuildStaticDistanceEncodingTable(uint16 *p, uint8 *l);
 
 	uint32 GetCodeCount(int limit) const;
 	uint32 GetOutputSize() const;
 	uint32 GetStaticOutputSize() const;
-
-	const uint16 *GetDHTSegment() { return mDHT; }
-	int GetDHTSegmentLen() const { return mDHTLength; }
+	uint32 GetLenExtraBits() const;
 
 private:
 	int mHistogram[288];
-	int mHistogram2[288];
-	uint16 mDHT[288+16];
-	int mDHTLength;
+	uint16 mCodesPerLen[16];
+	uint16 mSortedCodes[288];
 };
 
 VDDeflateHuffmanTable::VDDeflateHuffmanTable() {
@@ -785,26 +772,41 @@ void VDDeflateHuffmanTable::Init() {
 }
 
 void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
-	int i;
-	int nonzero_codes = 0;
+	uint16 *codes1 = std::begin(mSortedCodes);
+	uint16 *codes2 = std::end(mSortedCodes);
 
-	for(i=0; i<288; ++i) {
-		mDHT[i+16] = i;
+	// partition off nonzero codes
+	for(int i = 0; i < 288; ++i) {
 		if (mHistogram[i])
-			++nonzero_codes;
-		mHistogram2[i] = mHistogram[i];
+			*codes1++ = i;
+		else
+			*--codes2 = i;
+	}
+	
+	// Check for a special case of 0 or 1 codes. If only 1 code is used, assign it a length
+	// of 1. If no codes are used, force code 0 to be that code.
+	const int nonzero_codes = (int)(codes1 - mSortedCodes);
+
+	std::fill(std::begin(mCodesPerLen), std::end(mCodesPerLen), 0);
+
+	if (nonzero_codes < 2) {
+		if (!nonzero_codes)
+			mSortedCodes[0] = 0;
+
+		mCodesPerLen[0] = 1;
+		return;
 	}
 
-	// Codes are stored in the second half of the DHT segment in decreasing
-	// order of frequency.
-	std::sort(&mDHT[16], &mDHT[16+288], [&](int f1, int f2) { return mHistogram[f1] > mHistogram[f2]; });
-	mDHTLength = 16 + nonzero_codes;
+	// Sort codes by decreasing frequency.
 
-	// Sort histogram in increasing order.
+	std::sort(mSortedCodes, codes1, [h = mHistogram](int f1, int f2) { return h[f1] > h[f2]; });
 
-	std::sort(mHistogram, mHistogram+288);
+	// Sort histogram by increasing frequency. We already sorted the codes by histogram,
+	// so we can just do a translation.
 
-	int *A = mHistogram+288 - nonzero_codes;
+	int A[vdcountof(mHistogram)];
+	for(int i = 0; i < nonzero_codes; ++i)
+		A[i] = mHistogram[*--codes1];
 
 	// Begin merging process (from "In-place calculation of minimum redundancy codes" by A. Moffat and J. Katajainen)
 	//
@@ -822,21 +824,19 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 
 	A[0] += A[1];		// First merge is always two leaf nodes.
 	for(int next=1; next<nonzero_codes-1; ++next) {		// 'next' is the value that receives the next unattached internal node.
-		int a, b;
-
 		// Pick first node.
 		if (leaf < nonzero_codes && A[leaf] <= A[internal]) {
-			A[next] = a=A[leaf++];			// begin new internal node with P of smallest leaf node
+			A[next] = A[leaf++];			// begin new internal node with P of smallest leaf node
 		} else {
-			A[next] = a=A[internal];		// begin new internal node with P of smallest internal node
+			A[next] = A[internal];		// begin new internal node with P of smallest internal node
 			A[internal++] = next;					// hook smallest internal node as child of new node
 		}
 
 		// Pick second node.
 		if (internal >= next || (leaf < nonzero_codes && A[leaf] <= A[internal])) {
-			A[next] += b=A[leaf++];			// complete new internal node with P of smallest leaf node
+			A[next] += A[leaf++];			// complete new internal node with P of smallest leaf node
 		} else {
-			A[next] += b=A[internal];		// complete new internal node with P of smallest internal node
+			A[next] += A[internal];		// complete new internal node with P of smallest internal node
 			A[internal++] = next;					// hook smallest internal node as child of new node
 		}
 	}
@@ -847,8 +847,9 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 	// node with its depth in the tree.
 
 	A[nonzero_codes-2] = 0;		// root has height 0 (0 bits)
-	for(i = nonzero_codes-3; i>=0; --i)
+	for(int i = nonzero_codes-3; i>=0; --i) {
 		A[i] = A[A[i]]+1;		// child height is 1+height(parent).
+	}
 
 	// Compute canonical tree bit depths for first part of DHT segment.
 	// For each internal node at depth N, add two counts at depth N+1
@@ -856,12 +857,10 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 	// as we go.  We traverse backwards to ensure that no counts will drop
 	// below zero at any time.
 
-	std::fill(mDHT, mDHT+16, 0);
-
 	int overallocation = 0;
 
-	mDHT[0] = 2;		// 2 codes at depth 1 (1 bit)
-	for(i = nonzero_codes-3; i>=0; --i) {
+	mCodesPerLen[0] = 2;		// 2 codes at depth 1 (1 bit)
+	for(int i = nonzero_codes-3; i>=0; --i) {
 		int depth = A[i];
 
 		// The optimal Huffman tree for N nodes can have a depth of N-1,
@@ -870,18 +869,18 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 		// codespace, but we will compensate for that later.
 
 		if (depth >= depth_limit) {
-			++mDHT[depth_limit-1];
+			++mCodesPerLen[depth_limit-1];
 		} else {
-			--mDHT[depth-1];
-			++mDHT[depth];
-			++mDHT[depth];
+			--mCodesPerLen[depth-1];
+			++mCodesPerLen[depth];
+			++mCodesPerLen[depth];
 		}
 	}
 
 	// Remove the extra code point.
-	for(i=15; i>=0; --i) {
-		if (mDHT[i])
-			overallocation += mDHT[i] * (0x8000 >> i);
+	for(int i=15; i>=0; --i) {
+		if (mCodesPerLen[i])
+			overallocation += mCodesPerLen[i] * (0x8000 >> i);
 	}
 	overallocation -= 0x10000;
 
@@ -891,12 +890,14 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 	if (overallocation > 0) {
 		// Codespace is overallocated.  Begin lengthening codes from bit depth
 		// 15 down until we are under the limit.
+	
+		for(int i = depth_limit-2; overallocation > 0; ) {
+			if (i < 0)
+				__debugbreak();
 
-		i = depth_limit-2;
-		while(overallocation > 0) {
-			if (mDHT[i]) {
-				--mDHT[i];
-				++mDHT[i+1];
+			if (mCodesPerLen[i]) {
+				--mCodesPerLen[i];
+				++mCodesPerLen[i+1];
 				overallocation -= 0x4000 >> i;
 				if (i < depth_limit-2)
 					++i;
@@ -909,13 +910,14 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 
 		int underallocation = -overallocation;
 
-		i = 1;
-		while(underallocation > 0) {
-			if (mDHT[i] && (0x8000>>i) <= underallocation) {
+		for(int i = 1; underallocation > 0; ) {
+			if (i < 0 || i > 15)
+				__debugbreak();
+			if (mCodesPerLen[i] && (0x8000>>i) <= underallocation) {
 				underallocation -= (0x8000>>i);
-				--mDHT[i];
+				--mCodesPerLen[i];
 				--i;
-				++mDHT[i];
+				++mCodesPerLen[i];
 			} else {
 				++i;
 			}
@@ -924,18 +926,18 @@ void VDDeflateHuffmanTable::BuildCode(int depth_limit) {
 }
 
 uint32 VDDeflateHuffmanTable::GetOutputSize() const {
-	const uint16 *pCodes = mDHT+16;
+	const uint16 *pCodes = mSortedCodes;
 
 	uint32 size = 0;
 
 	for(int len=0; len<16; ++len) {
-		int count = mDHT[len];
+		int count = mCodesPerLen[len];
 
 		uint32 points = 0;
 		while(count--) {
 			int code = *pCodes++;
 
-			points += mHistogram2[code];
+			points += mHistogram[code];
 		}
 
 		size += points * (len + 1);
@@ -945,19 +947,28 @@ uint32 VDDeflateHuffmanTable::GetOutputSize() const {
 }
 
 uint32 VDDeflateHuffmanTable::GetCodeCount(int limit) const {
-	return std::accumulate(mHistogram2, mHistogram2+limit, 0);
+	return std::accumulate(mHistogram, mHistogram+limit, 0);
 }
 
 uint32 VDDeflateHuffmanTable::GetStaticOutputSize() const {
 	uint32 sum7 = 0;
 	uint32 sum8 = 0;
 	uint32 sum9 = 0;
-	sum8 = std::accumulate(mHistogram2+  0, mHistogram2+144, sum8);
-	sum9 = std::accumulate(mHistogram2+144, mHistogram2+256, sum9);
-	sum7 = std::accumulate(mHistogram2+256, mHistogram2+280, sum7);
-	sum8 = std::accumulate(mHistogram2+280, mHistogram2+288, sum8);
+	sum8 = std::accumulate(mHistogram+  0, mHistogram+144, sum8);
+	sum9 = std::accumulate(mHistogram+144, mHistogram+256, sum9);
+	sum7 = std::accumulate(mHistogram+256, mHistogram+280, sum7);
+	sum8 = std::accumulate(mHistogram+280, mHistogram+288, sum8);
 
 	return 7*sum7 + 8*sum8 + 9*sum9;
+}
+
+uint32 VDDeflateHuffmanTable::GetLenExtraBits() const {
+	uint32 bits = 0;
+
+	for(int i = 0; i < 31; ++i)
+		bits += nsVDDeflate::len_bits_tbl[i] * mHistogram[257 + i];
+
+	return bits;
 }
 
 static unsigned revword15(unsigned x) {
@@ -969,14 +980,14 @@ static unsigned revword15(unsigned x) {
 	return y;
 }
 
-void VDDeflateHuffmanTable::BuildEncodingTable(uint16 *p, int *l, int limit) {
-	const uint16 *pCodes = mDHT+16;
+void VDDeflateHuffmanTable::BuildEncodingTable(uint16 *p, uint8 *l, int limit) {
+	const uint16 *pCodes = mSortedCodes;
 
 	uint16 total = 0;
 	uint16 inc = 0x4000;
 
 	for(int len=0; len<16; ++len) {
-		int count = mDHT[len];
+		int count = mCodesPerLen[len];
 
 		while(count--) {
 			int code = *pCodes++;
@@ -994,13 +1005,13 @@ void VDDeflateHuffmanTable::BuildEncodingTable(uint16 *p, int *l, int limit) {
 	}
 }
 
-void VDDeflateHuffmanTable::BuildStaticLengthEncodingTable(uint16 *p, int *l) {
-	memset(mDHT, 0, sizeof(mDHT[0])*16);
-	mDHT[6] = 24;
-	mDHT[7] = 152;
-	mDHT[8] = 112;
+void VDDeflateHuffmanTable::BuildStaticLengthEncodingTable(uint16 *p, uint8 *l) {
+	memset(mCodesPerLen, 0, sizeof(mCodesPerLen[0])*16);
+	mCodesPerLen[6] = 24;
+	mCodesPerLen[7] = 152;
+	mCodesPerLen[8] = 112;
 
-	uint16 *dst = mDHT + 16;
+	uint16 *dst = mSortedCodes;
 	for(int i=256; i<280; ++i)
 		*dst++ = i;
 	for(int i=0; i<144; ++i)
@@ -1013,27 +1024,26 @@ void VDDeflateHuffmanTable::BuildStaticLengthEncodingTable(uint16 *p, int *l) {
 	BuildEncodingTable(p, l, 288);
 }
 
-void VDDeflateHuffmanTable::BuildStaticDistanceEncodingTable(uint16 *p, int *l) {
-	memset(mDHT, 0, sizeof(mDHT[0])*16);
-	mDHT[4] = 32;
+void VDDeflateHuffmanTable::BuildStaticDistanceEncodingTable(uint16 *p, uint8 *l) {
+	memset(mCodesPerLen, 0, sizeof(mCodesPerLen[0])*16);
+	mCodesPerLen[4] = 32;
 
 	for(int i=0; i<32; ++i)
-		mDHT[i+16] = i;
+		mSortedCodes[i] = i;
 
 	BuildEncodingTable(p, l, 32);
 }
 
-class VDDeflateEncoder {
+class VDDeflateEncoder final : public VDAlignedObject<16> {
 	VDDeflateEncoder(const VDDeflateEncoder&) = delete;
 	VDDeflateEncoder& operator=(const VDDeflateEncoder&) = delete;
 public:
 	VDDeflateEncoder() = default;
 
-	void SetCompressionLevel(VDDeflateCompressionLevel level);
-
-	void Init(bool quick, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn);
+	void Init(VDDeflateCompressionLevel level, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn);
 	void Write(const void *src, size_t len);
 	void ForceNewBlock();
+	void FlushToByteBoundary();
 	void Finish();
 
 protected:
@@ -1043,18 +1053,32 @@ protected:
 	template<VDDeflateCompressionLevel T_CompressionLevel>
 	void Compress2(bool flush);
 
+	void CompressStore(bool flush);
+
+	void TryShiftWindow();
+
 	void VDFORCEINLINE PutBits(uint32 encoding, int enclen);
 	void FlushBits();
 	void FlushOutput();
-	uint32 Flush(int n, int ndists, bool term, bool test);
+	void Flush(int n, int ndists, bool term);
+	void FlushAsStoredBlock(bool term);
+
+#if VD_PTR_SIZE >= 8
+	static constexpr uint32 kAccumBitSize = 64;
+	static constexpr uint32 kAccumByteSize = 8;
+
+	uint64	mAccum;
+#else
+	static constexpr uint32 kAccumBitSize = 32;
+	static constexpr uint32 kAccumByteSize = 4;
 
 	uint32	mAccum;
+#endif
+
 	int		mAccBits;
-	uint32	mHistoryPos;
-	uint32	mHistoryTail;
-	uint32	mHistoryBase;
-	uint32	mHistoryBlockStart;
-	uint32	mLenExtraBits;
+	uint32	mHistoryPos;			// history position of next byte to compress
+	uint32	mHistoryTail;			// history buffer offset for new writes
+	uint32	mHistoryBlockStart;		// history position of start of current block
 	uint32	mPendingLen;
 	uint8	*mpLen;
 	uint16	*mpCode;
@@ -1071,52 +1095,54 @@ protected:
 
 	// Block coding tables
 	uint16	mCodeEnc[288];
-	int		mCodeLen[288];
+	uint8	mCodeLen[288];
 
 	uint16	mDistEnc[32];
-	int		mDistLen[32];
+	uint8	mDistLen[32];
 
-	uint8	mHistoryBuffer[65536+6];
-	sint32	mHashNext[32768];
-	sint32	mHashTable[65536];
+	static constexpr uint32 kHistoryBufferMax = 65535;
+	// The extra length is to allow for overread when matching, so we don't have to be
+	// as strict on match length limiting -- we can auto-match up to the limit and then
+	// prune back if we would go beyond valid buffer.
+	uint8	mHistoryBuffer[65536+258+16];
+
+	alignas(16) uint16	mHashNext[65536];
+	alignas(16) uint16	mHashTable[65536];
 	uint8	mLenBuf[32769];
 	uint16	mCodeBuf[32769];
 	uint16	mDistBuf[32769];
 };
 
-void VDDeflateEncoder::SetCompressionLevel(VDDeflateCompressionLevel level) {
-	mCompressionLevel = level;
-}
+void VDDeflateEncoder::Init(VDDeflateCompressionLevel level, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn) {
+	std::fill(std::begin(mHashNext), std::end(mHashNext), 0);
+	std::fill(std::begin(mHashTable), std::end(mHashTable), 0);
 
-void VDDeflateEncoder::Init(bool quick, vdfunction<void(const void *, uint32)> preProcessFn, vdfunction<void(const void *, uint32)> writeFn) {
-	std::fill(mHashNext, mHashNext+32768, -0x20000);
-	std::fill(mHashTable, mHashTable+65536, -0x20000);
-
+	bool quick = false;
 	mWindowLimit = quick ? 1024 : 32768;
+	mCompressionLevel = level;
 
 	mpLen = mLenBuf;
 	mpCode = mCodeBuf;
 	mpDist = mDistBuf;
-	mHistoryPos = 0;
+	mHistoryPos = 16;
 	mHistoryTail = 0;
-	mHistoryBase = 0;
-	mHistoryBlockStart = 0;
-	mLenExtraBits = 0;
+	mHistoryBlockStart = 16;
 	mPendingLen = 0;
 	mAccum = 0;
 	mAccBits = 0;
 
 	mpOutputFn = std::move(writeFn);
 	mpPreProcessFn = std::move(preProcessFn);
+	mPreprocessPos = 16;
 
-	mOutputBuf[0] = 0x78;		// 32K window, Deflate
-	mOutputBuf[1] = 0xDA;		// maximum compression, no dictionary, check offset = 0x1A
 	mOutputLevel = 0;
 }
 
 void VDDeflateEncoder::Write(const void *src, size_t len) {
 	while(len > 0) {
-		uint32 tc = sizeof mHistoryBuffer - mHistoryTail;
+		// We don't want to write more than 64K-1 bytes in case we
+		// need to store.
+		uint32 tc = kHistoryBufferMax - mHistoryTail;
 
 		if (!tc) {
 			Compress(false);
@@ -1139,30 +1165,62 @@ void VDDeflateEncoder::ForceNewBlock() {
 	EndBlock(false);
 }
 
-#define HASH(pos) ((((uint32)hist[(pos)  ] << 8) + ((uint32)hist[(pos)+1] << 4) + ((uint32)hist[(pos)+2] << 0)) & 0xffff)
+void VDDeflateEncoder::FlushToByteBoundary() {
+	// finish whatever block we're currently in
+	while(mHistoryPos != mHistoryTail + 16)
+		Compress(true);
+
+	EndBlock(false);
+
+	// if necessary, sync to byte with a stored block
+	if (mAccBits & 7) {
+		PutBits(0, 1);
+		PutBits(0, 2);
+		PutBits(0, -mAccBits & 7);
+		PutBits(0x00000000, 16);
+		PutBits(0xFFFF0000, 16);
+	}
+
+	// flush bits from accumulator to output buffer
+	FlushBits();
+
+	// flush from output buffer to stream
+	FlushOutput();
+}
+
+#define HASHN(pos) ((((uint32)VDReadUnalignedLEU32(&hist[(pos)]) & 0xFFFFFF) * 0x1CA73U) >> 16)
+#define HASHQ(pos) (((uint32)VDReadUnalignedLEU32(&hist[(pos)]) * 0x1CA73271U) >> 16)
 
 void VDDeflateEncoder::EndBlock(bool term) {
 	if (mpCode > mCodeBuf) {
 		if (mPendingLen) {
-			const uint8 *hist = mHistoryBuffer - mHistoryBase;
+			const uint8 *hist = mHistoryBuffer;
 			int bestlen = mPendingLen - 1;
 			mPendingLen = 0;
 
-			while(bestlen-- > 0) {
-				int hval = HASH(mHistoryPos);
-				mHashNext[mHistoryPos & 0x7fff] = mHashTable[hval];
-				mHashTable[hval] = mHistoryPos;
-				++mHistoryPos;
+			if (mCompressionLevel == VDDeflateCompressionLevel::Quick) {
+				while(bestlen-- > 0) {
+					int hval = HASHQ(mHistoryPos);
+					mHashNext[mHistoryPos - 16] = mHashTable[hval];
+					mHashTable[hval] = mHistoryPos;
+					++mHistoryPos;
+				}
+			} else {
+				while(bestlen-- > 0) {
+					int hval = HASHN(mHistoryPos);
+					mHashNext[mHistoryPos - 16] = mHashTable[hval];
+					mHashTable[hval] = mHistoryPos;
+					++mHistoryPos;
+				}
 			}
 		}
 
 		*mpCode++ = 256;
-		Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), term, false);
+		Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), term);
 		mpCode = mCodeBuf;
 		mpDist = mDistBuf;
 		mpLen = mLenBuf;
 		mHistoryBlockStart = mHistoryPos;
-		mLenExtraBits = 0;
 	} else if (term) {
 		// We have no data pending, but need to emit the terminator -- this generally
 		// only occurs if the stream is empty. Emit an empty block. Our best bet
@@ -1174,13 +1232,16 @@ void VDDeflateEncoder::EndBlock(bool term) {
 }
 
 
-void VDDeflateEncoder::Compress(bool flush) {
+void VDNOINLINE VDDeflateEncoder::Compress(bool flush) {
 	switch(mCompressionLevel) {
 		case VDDeflateCompressionLevel::Best:
 			return Compress2<VDDeflateCompressionLevel::Best>(flush);
 
 		case VDDeflateCompressionLevel::Quick:
 			return Compress2<VDDeflateCompressionLevel::Quick>(flush);
+
+		case VDDeflateCompressionLevel::Store:
+			return CompressStore(flush);
 	}
 }
 
@@ -1192,14 +1253,21 @@ void VDDeflateEncoder::Compress2(bool flush) {
 	uint16	*codeptr = mpCode;
 	uint16	*distptr = mpDist;
 
-	const uint8 *hist = mHistoryBuffer - mHistoryBase;
+	const uint8 *hist = mHistoryBuffer - 16;
 
 	uint32 pos = mHistoryPos;
-	const uint32 len = mHistoryBase + mHistoryTail;
-	const uint32 maxpos = flush ? len : len > 258+3 ? len - (258+3) : 0;		// +6 is for the 3-byte hash.
+	const uint32 len = mHistoryTail + 16;
+
+	static constexpr uint32 kHashLen = (T_CompressionLevel == VDDeflateCompressionLevel::Quick)
+		? 4 : 3;
+
+	static constexpr uint32 kMatchMask = (T_CompressionLevel == VDDeflateCompressionLevel::Quick)
+		? 0xFFFFFFFF : 0x00FFFFFF;
+
+	const uint32 maxpos = flush ? len : len > 258+kHashLen ? len - (258+kHashLen) : 0;
 
 	if (mPreprocessPos < len) {
-		mpPreProcessFn(mHistoryBuffer + (mPreprocessPos - mHistoryBase), len - mPreprocessPos);
+		mpPreProcessFn(mHistoryBuffer + (mPreprocessPos - 16), len - mPreprocessPos);
 		mPreprocessPos = len;
 	}
 
@@ -1217,31 +1285,33 @@ void VDDeflateEncoder::Compress2(bool flush) {
 
 			// Note that it's possible for the EndBlock() to have flushed out a pending
 			// run and pushed us all the way to maxpos.
-			VDASSERT(pos <= mHistoryBase + mHistoryTail);
+			VDASSERT(pos <= 16 + mHistoryTail);
 			continue;
 		}
 
-		uint8 c = hist[pos];
-		uint32 hcode = HASH(pos);
+		uint32 hcode;
+		
+		if constexpr (T_CompressionLevel == VDDeflateCompressionLevel::Quick)
+			hcode = HASHQ(pos);
+		else
+			hcode = HASHN(pos);
 
-		sint32 hpos = mHashTable[hcode];
+		uint32 hpos = mHashTable[hcode];
 		uint32 limit = 258;
 		if (limit > len-pos)
 			limit = len-pos;
 
-		sint32 hlimit = pos - mWindowLimit;		// note that our initial hash table values are low enough to avoid colliding with this.
-		if (hlimit < 0)
-			hlimit = 0;
+		uint32 hlimit = pos >= mWindowLimit ? pos - mWindowLimit : 0;		// note that our initial hash table values are low enough to avoid colliding with this.
+		if (hlimit < 16)
+			hlimit = 16;
 
-		uint32 minmatch = mPendingLen > 3 ? mPendingLen : 3;
+		uint32 minmatch = mPendingLen > kHashLen ? mPendingLen : kHashLen;
 		size_t bestlen = minmatch - 1;
 		uint32 bestoffset = 0;
 
 		if (hpos >= hlimit && limit >= minmatch) {
-			sint32 hstart = hpos;
 			const unsigned char *s2 = hist + pos;
-			const uint16 matchWord1 = *(const uint16 *)s2;
-			const uint8 matchWord2 = *(const uint8 *)(s2 + 2);
+			const uint32 matchWord = *(const uint32 *)s2;
 			ptrdiff_t hoffsetneg = 0;
 
 			[[maybe_unused]] uint32 patience = 16;
@@ -1256,14 +1326,45 @@ void VDDeflateEncoder::Compress2(bool flush) {
 					, s2[-hoffsetneg]
 					, s2[-hoffsetneg+1]
 					, s2[-hoffsetneg+2]
-					, HASH(hpos)
-					, HASH(pos - hoffsetneg)
+					, HASH2(hpos)
+					, HASH2(pos - hoffsetneg)
 				);
 
-				if (s1[bestlen] == s2[bestlen] && *(const uint16 *)s1 == matchWord1 && s1[2] == matchWord2) {
-					uint32 mlen = 3;
-					while(mlen < limit && s1[mlen] == s2[mlen])
-						++mlen;
+				if (s1[bestlen] == s2[bestlen] && ((*(const uint32 *)s1 ^ matchWord) & kMatchMask) == 0) {
+					uint32 mlen = kHashLen;
+
+#if VD_PTR_SIZE >= 8
+					do {
+						uint64 v1;
+						uint64 v2;
+						memcpy(&v1, &s1[mlen], 8);
+						memcpy(&v2, &s2[mlen], 8);
+
+						if (v1 != v2) {
+							mlen += VDFindLowestSetBitFast64(v1 ^ v2) >> 3;
+							break;
+						}
+
+						mlen += 8;
+					} while(mlen < limit);
+#else
+					do {
+						uint32 v1;
+						uint32 v2;
+						memcpy(&v1, &s1[mlen], 4);
+						memcpy(&v2, &s2[mlen], 4);
+
+						if (v1 != v2) {
+							mlen += VDFindLowestSetBitFast(v1 ^ v2) >> 3;
+							break;
+						}
+
+						mlen += 4;
+					} while(mlen < limit);
+#endif
+
+					if (mlen > limit)
+						mlen = limit;
 
 					// Check for a suboptimal match.
 					//
@@ -1304,35 +1405,6 @@ void VDDeflateEncoder::Compress2(bool flush) {
 
 						if (mlen >= limit)
 							break;
-
-						if (mlen > 3) {
-							// hop hash chains!
-#if 1
-							const uint32 diff = (mlen - 3) + hoffsetneg;
-
-							hlimit += diff;
-							hpos += diff;
-							if (hpos == pos)
-								hpos = hstart;
-							else
-								hpos = mHashNext[hpos & 0x7fff];
-
-							hoffsetneg = 3 - (ptrdiff_t)mlen;
-#else
-							const uint32 diff = (mlen - 2) + hoffsetneg;
-
-							hlimit += diff;
-							hoffsetneg = 2 - (ptrdiff_t)mlen;
-							hpos = mHashTable[HASH(pos - hoffsetneg)];
-#endif
-
-						} else {
-							hoffsetneg = -1;
-							++hlimit;
-
-							hpos = mHashTable[HASH(pos + 1)];
-						}
-						continue;
 					}
 				}
 
@@ -1341,7 +1413,7 @@ void VDDeflateEncoder::Compress2(bool flush) {
 						break;
 				}
 
-				hpos = mHashNext[hpos & 0x7fff];
+				hpos = mHashNext[hpos - 16];
 			} while(hpos >= hlimit);
 		}
 
@@ -1352,7 +1424,7 @@ void VDDeflateEncoder::Compress2(bool flush) {
 			VDASSERT(!memcmp(hist+pos, hist+pos-bestoffset, bestlen));
 			VDASSERT(pos >= bestoffset);
 			VDASSERT(pos+bestlen <= len);
-			VDASSERT(pos-bestoffset >= mHistoryBase);
+			VDASSERT(pos-bestoffset >= 16);
 
 			unsigned lcode = 0;
 			while(bestlen >= len_pack_tbl[lcode+1])
@@ -1361,11 +1433,11 @@ void VDDeflateEncoder::Compress2(bool flush) {
 			*codeptr++ = lcode + 257;
 			*distptr++ = bestoffset;
 			*lenptr++ = bestlen - 3;
-			mLenExtraBits += len_bits_tbl[lcode];
 
 			VDDEBUG_DEFLATE("%u match: (%u, %u)\n", pos, bestoffset, bestlen);
 		} else {
 			VDDEBUG_DEFLATE("%u literal %02X\n", pos, c);
+			uint8 c = hist[pos];
 			*codeptr++ = c;
 			bestlen = 1;
 		}
@@ -1379,71 +1451,163 @@ void VDDeflateEncoder::Compress2(bool flush) {
 		//	match	lit						retire
 		//	match	match		shorter		retire
 		//	match	match		longer		obsolete
-		VDASSERT(pos+bestlen <= mHistoryBase + mHistoryTail);
+		VDASSERT(pos+bestlen <= 16 + mHistoryTail);
 
-		if (!mPendingLen) {
-			// no pending match -- make the new match pending if we have one
-			if (bestlen > 1) {
-				mPendingLen = bestlen;
-				bestlen = 1;
-			}
-		} else {
-			// 
-			if (bestlen > mPendingLen) {
-				// new match is better than the pending match -- truncate the previous
-				// match in favor of the new one
-				codeptr[-2] = hist[pos - 1];
-				distptr[-2] = distptr[-1];
-				--distptr;
-				lenptr[-2] = lenptr[-1];
-				--lenptr;
-				mPendingLen = bestlen;
-				bestlen = 1;
-			} else {
-				// pending match is better -- keep that and discard the one we just found
-				--codeptr;
+		if constexpr (T_CompressionLevel == VDDeflateCompressionLevel::Best) {
+			if (!mPendingLen) {
+				// no pending match -- make the new match pending if we have one
 				if (bestlen > 1) {
-					--distptr;
-					--lenptr;
+					mPendingLen = bestlen;
+					bestlen = 1;
 				}
+			} else {
+				// 
+				if (bestlen > mPendingLen) {
+					// new match is better than the pending match -- truncate the previous
+					// match in favor of the new one
+					codeptr[-2] = hist[pos - 1];
+					distptr[-2] = distptr[-1];
+					--distptr;
+					lenptr[-2] = lenptr[-1];
+					--lenptr;
+					mPendingLen = bestlen;
+					bestlen = 1;
+				} else {
+					// pending match is better -- keep that and discard the one we just found
+					--codeptr;
+					if (bestlen > 1) {
+						--distptr;
+						--lenptr;
+					}
 
-				bestlen = mPendingLen - 1;
-				mPendingLen = 0;
+					bestlen = mPendingLen - 1;
+					mPendingLen = 0;
+				}
 			}
 		}
 
-		VDASSERT(pos+bestlen <= mHistoryBase + mHistoryTail);
+		VDASSERT(pos+bestlen <= 16 + mHistoryTail);
 
 		if (bestlen > 0) {
-			mHashNext[pos & 0x7fff] = mHashTable[hcode];
+			mHashNext[pos - 16] = mHashTable[hcode];
 			mHashTable[hcode] = pos;
 			++pos;
 
 			while(--bestlen) {
-				uint32 hcode = HASH(pos);
-				mHashNext[pos & 0x7fff] = mHashTable[hcode];
+				uint32 hcode;
+
+				if constexpr (T_CompressionLevel == VDDeflateCompressionLevel::Quick)
+					hcode = HASHQ(pos);
+				else
+					hcode = HASHN(pos);
+
+				mHashNext[pos - 16] = mHashTable[hcode];
 				mHashTable[hcode] = pos;
 				++pos;
 			}
 		}
 	}
 
-	// shift down by 32K
-	if (pos - mHistoryBase >= 49152) {
-		uint32 delta = (pos - 32768) - mHistoryBase;
-		memmove(mHistoryBuffer, mHistoryBuffer + delta, mHistoryTail - delta);
-		mHistoryBase += delta;
-		mHistoryTail -= delta;
-	}
-
 	mHistoryPos = pos;
 	mpLen = lenptr;
 	mpCode = codeptr;
 	mpDist = distptr;
+
+	// shift down by 16K
+	TryShiftWindow();
+}
+
+void VDDeflateEncoder::CompressStore(bool flush) {
+	if (!mHistoryTail)
+		return;
+
+	const uint32 len = 16 + mHistoryTail;
+
+	if (mPreprocessPos < len) {
+		mpPreProcessFn(mHistoryBuffer + (mPreprocessPos - 16), len - mPreprocessPos);
+		mPreprocessPos = len;
+	}
+
+	mHistoryPos = len;
+	FlushAsStoredBlock(false);
+
+	mHistoryBlockStart = len;
+
+	TryShiftWindow();
+}
+
+void VDDeflateEncoder::TryShiftWindow() {
+	if (mHistoryPos >= 49152 + 16) {
+		uint32 delta = 16384;
+		memmove(mHistoryBuffer, mHistoryBuffer + delta, mHistoryTail - delta);
+		mHistoryTail -= delta;
+		mHistoryPos -= delta;
+
+#ifdef VD_CPU_ARM64
+		uint16 *p, *q;
+
+		p = mHashTable;
+
+		uint16x8_t vdelta = vdupq_n_u16(delta);
+		for(size_t i = 0; i < 65536; i += 8) {
+			vst1q_u16(p, vqsubq_u16(vld1q_u16(p), vdelta));
+			p += 8;
+		}
+
+		p = mHashNext;
+		q = mHashNext + 16384;
+
+		for(size_t i = 0; i < 49152; i += 8) {
+			uint16x8_t b = vqsubq_u16(vld1q_u16(q), vdelta);
+
+			vst1q_u16(p, b);
+
+			p += 8;
+			q += 8;
+		}
+#elif defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
+		__m128i *p, *q;
+
+		p = (__m128i *)mHashTable;
+
+		__m128i vdelta = _mm_set1_epi16(delta);
+		for(size_t i = 0; i < 65536; i += 8) {
+			_mm_store_si128(p, _mm_subs_epu16(_mm_load_si128(p), vdelta));
+			++p;
+		}
+
+		p = (__m128i *)mHashNext;
+		q = (__m128i *)(mHashNext + 16384);
+
+		for(size_t i = 0; i < 49152; i += 8) {
+			_mm_store_si128(p, _mm_subs_epu16(_mm_load_si128(q), vdelta));
+
+			++p;
+			++q;
+		}
+#else
+		std::rotate(mHashNext, mHashNext + 16384, mHashNext + 65536);
+
+		for(uint16& v : mHashNext) {
+			v = (v > delta) ? v - delta : 0;
+		}
+
+		for(uint16& v : mHashTable) {
+			v = (v > delta) ? v - delta : 0;
+		}
+#endif
+
+		mPreprocessPos -= delta;
+
+		if (mHistoryBlockStart < delta)
+			mHistoryBlockStart = 0;
+		else
+			mHistoryBlockStart -= delta;
+	}
 }
 
 void VDDeflateEncoder::Finish() {
-	while(mHistoryPos != mHistoryBase + mHistoryTail)
+	while(mHistoryPos != 16 + mHistoryTail)
 		Compress(true);
 
 	// we may get here with no codes in the unique case of an empty stream
@@ -1454,15 +1618,35 @@ void VDDeflateEncoder::Finish() {
 }
 
 void VDFORCEINLINE VDDeflateEncoder::PutBits(uint32 encoding, int enclen) {
+#if VD_PTR_SIZE >= 8
+	mAccum >>= enclen;
+	mAccum += (uint64)encoding << 32;
+	mAccBits += enclen;
+
+	VDASSERT(mAccBits >= -16 && mAccBits < 64);
+
+	if (mAccBits >= 32) {
+		mAccBits -= 32;
+
+		if (vdcountof(mOutputBuf) - mOutputLevel < 4) [[unlikely]] {
+			mpOutputFn(mOutputBuf, mOutputLevel);
+			mOutputLevel = 0;
+		}
+
+		VDWriteUnalignedLEU32(&mOutputBuf[mOutputLevel], (uint32)(mAccum >> (32 - mAccBits)));
+		mOutputLevel += 4;
+	}		
+#else
 	mAccum >>= enclen;
 	mAccum += encoding;
 	mAccBits += enclen;
+
 	VDASSERT(mAccBits >= -16 && mAccBits < 32);
 
 	if (mAccBits >= 16) {
 		mAccBits -= 16;
 
-		if (vdcountof(mOutputBuf) - mOutputLevel < 2) {
+		if (vdcountof(mOutputBuf) - mOutputLevel < 2) [[unlikely]] {
 			mpOutputFn(mOutputBuf, mOutputLevel);
 			mOutputLevel = 0;
 		}
@@ -1470,14 +1654,20 @@ void VDFORCEINLINE VDDeflateEncoder::PutBits(uint32 encoding, int enclen) {
 		mOutputBuf[mOutputLevel++] = mAccum >> (16-mAccBits);
 		mOutputBuf[mOutputLevel++] = mAccum >> (24-mAccBits);
 	}		
+#endif
 }
 
 void VDDeflateEncoder::FlushBits() {
+#if VD_PTR_SIZE >= 8
+	if (vdcountof(mOutputBuf) - mOutputLevel < kAccumByteSize)
+		FlushOutput();
+#else
 	if (vdcountof(mOutputBuf) - mOutputLevel < 4)
 		FlushOutput();
+#endif
 
 	while(mAccBits > 0) {
-		mOutputBuf[mOutputLevel++] = (uint8)(mAccum >> (32-mAccBits));
+		mOutputBuf[mOutputLevel++] = (uint8)(mAccum >> (kAccumBitSize-mAccBits));
 		mAccBits -= 8;
 	}
 }
@@ -1489,7 +1679,7 @@ void VDDeflateEncoder::FlushOutput() {
 	}
 }
 
-uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
+void VDDeflateEncoder::Flush(int n, int ndists, bool term) {
 	using namespace nsVDDeflate;
 
 	const uint16 *codes = mCodeBuf;
@@ -1504,6 +1694,8 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 	for(i=0; i<n; ++i)
 		htcodes.Tally(codes[i]);
+
+	const uint32 lenExtraBits = htcodes.GetLenExtraBits();
 
 	htcodes.BuildCode(15);
 
@@ -1544,16 +1736,8 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 
 	for(i=0; i<ndists; ++i) {
-#if 0
-		uint16 dist = dists[i];
-
-		int c=0;
-		while(dist >= dist_tbl[c+1])
-			++c;
-#else
 		size_t distm1 = (size_t)dists[i] - 1;
 		const int c = distm1 >= 256 ? kDistTab.v[distm1 >> 7] + 14 : kDistTab.v[distm1];
-#endif
 
 		htdists.Tally(c);
 	}
@@ -1618,50 +1802,56 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 	htlens.BuildCode(7);
 
-	// compute bits for dynamic encoding
+	// Compute bits for the three block encodings.
+	//
+	// Stored:
+	//	- 1-7 bits for byte alignment
+	//	- 32 bits for the size and inverted size
+	//	- 8*N for the uncompressed data
+	//
+	// Static:
+	//	- 7-9 bits for each literal
+	//	- 5 bits for each distance
+	//	- 7-8 bits for each length
+	//
+	// Dynamic:
+	//	- 14 bits of header
+	//	- [4..19]*3 bits for tree length table
+	//	- Bits for the encoded trees
+	//	- Literal/distance/length bits
+
+	uint16 hlenc[19];
+	uint8 hllen[19]={0};
+	htlens.BuildEncodingTable(hlenc, hllen, 19);
+
+	int ltblCount = 19;
+	while(ltblCount > 4 && hllen[nsVDDeflate::hclen_tbl[ltblCount - 1]] == 0)
+		--ltblCount;
+
 	uint32 blockSize = mHistoryPos - mHistoryBlockStart;
 	uint32 alignBits = -(mAccBits+3) & 7;
-	uint32 dynamicBlockBits = htcodes.GetOutputSize() + htdists.GetOutputSize() + mLenExtraBits + htlens.GetOutputSize() + 14 + 19*3 + treeExtraBits;
-	uint32 staticBlockBits = htcodes.GetStaticOutputSize() + htdists.GetCodeCount(32)*5 + mLenExtraBits;
+	uint32 dynamicBlockBits = htcodes.GetOutputSize() + htdists.GetOutputSize() + lenExtraBits + htlens.GetOutputSize() + 14 + ltblCount*3 + treeExtraBits;
+	uint32 staticBlockBits = htcodes.GetStaticOutputSize() + htdists.GetCodeCount(32)*5 + lenExtraBits;
 	uint32 storeBlockBits = blockSize*8 + 32 + alignBits;
 
-	if (storeBlockBits < dynamicBlockBits && storeBlockBits < staticBlockBits) {
-		if (test)
-			return storeBlockBits;
-
-		PutBits((term ? 0x20000000 : 0) + (0 << 30), 3);
-
-		// align to byte boundary
-		PutBits(0, alignBits);
-
-		// write block size
-		PutBits((blockSize << 16) & 0xffff0000, 16);
-		PutBits((~blockSize << 16) & 0xffff0000, 16);
-
-		// write the block.
-		FlushBits();
-		FlushOutput();
-
-		const uint8 *base = &mHistoryBuffer[mHistoryBlockStart - mHistoryBase];
-		if (blockSize)
-			mpOutputFn(base, blockSize);
+	// It is possible for the dynamic block code to have compressed more than 64K-1 bytes,
+	// in which case the additional bytes have already scrolled off the history buffer.
+	// In that case, we can no longer store the block as we don't have all of the
+	// original data. However, it's also extremely unlikely that we'd come out behind and
+	// need to store the block.
+	if (storeBlockBits < dynamicBlockBits && storeBlockBits < staticBlockBits && mHistoryBlockStart > 0) {
+		FlushAsStoredBlock(term);
 	} else {
 		if (dynamicBlockBits < staticBlockBits) {
-			if (test)
-				return dynamicBlockBits;
-
 			PutBits((term ? 0x20000000 : 0) + (2 << 30), 3);
 
 			PutBits((totalcodes - 257) << 27, 5);	// code count - 257
 			PutBits((totaldists - 1) << 27, 5);	// dist count - 1
-			PutBits(0xf0000000, 4);	// ltbl count - 4
 
-			uint16 hlenc[19];
-			int hllen[19]={0};
-			htlens.BuildEncodingTable(hlenc, hllen, 19);
+			PutBits((ltblCount - 4) << 28, 4);	// ltbl count - 4
 
-			for(i=0; i<19; ++i) {
-				int k = hclen_tbl[i];
+			for(i=0; i<ltblCount; ++i) {
+				int k = nsVDDeflate::hclen_tbl[i];
 
 				PutBits(hllen[k] << 29, 3);
 			}
@@ -1679,9 +1869,6 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 					PutBits((uint32)*rlesrc++ << 25, 7);
 			}
 		} else {
-			if (test)
-				return staticBlockBits;
-
 			PutBits((term ? 0x20000000 : 0) + (1 << 30), 3);
 
 			memset(mCodeLen, 0, sizeof(mCodeLen));
@@ -1708,14 +1895,8 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 
 				unsigned dist = *dists++;
 
-#if 0
-				int dcode=0;
-				while(dist >= dist_tbl[dcode+1])
-					++dcode;
-#else
 				size_t distm1 = dist - 1;
 				const int dcode = distm1 >= 256 ? kDistTab.v[distm1 >> 7] + 14 : kDistTab.v[distm1];
-#endif
 
 				PutBits((uint32)mDistEnc[dcode] << 16, mDistLen[dcode]);
 
@@ -1726,8 +1907,27 @@ uint32 VDDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
 			}
 		}
 	}
+}
 
-	return 0;
+void VDDeflateEncoder::FlushAsStoredBlock(bool term) {
+	PutBits((term ? 0x20000000 : 0) + (0 << 30), 3);
+
+	// align to byte boundary
+	const uint32 alignBits = -mAccBits & 7;
+	PutBits(0, alignBits);
+
+	// write block size
+	const uint32 blockSize = mHistoryPos - mHistoryBlockStart;
+	PutBits((blockSize << 16) & 0xffff0000, 16);
+	PutBits((~blockSize << 16) & 0xffff0000, 16);
+
+	// write the block.
+	FlushBits();
+	FlushOutput();
+
+	const uint8 *base = &mHistoryBuffer[mHistoryBlockStart - 16];
+	if (blockSize)
+		mpOutputFn(base, blockSize);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1990,6 +2190,25 @@ VDNOINLINE void VDInflateStream<T_Enhanced>::InflateBlock() {
 					} while(copyOffset < 0);
 #else
 #error Unaligned access not implemented
+#endif
+				} else if (dist == 1) {
+					// Repeating with dist 1 -- memset
+					uint8 v = copySrcEnd[copyOffset];
+
+#if VD_PTR_SIZE >= 8
+					uint64 v64 = v * UINT64_C(0x0101010101010101);
+
+					do {
+						memcpy(&copyDstEnd[copyOffset], &v64, 8);
+						copyOffset += 8;
+					} while(copyOffset < 0);
+#else
+					uint32 v32 = v * 0x01010101;
+
+					do {
+						memcpy(&copyDstEnd[copyOffset], &v32, 4);
+						copyOffset += 4;
+					} while(copyOffset < 0);
 #endif
 				} else {
 					// Repeating -- must copy a byte at a time
@@ -2276,12 +2495,8 @@ void VDInflateStream<T_Enhanced>::ParseBlockHeader() {
 			// decompress length table tree
 			memset(ltbl_lengths, 0, sizeof ltbl_lengths);
 
-			static const unsigned char hclen_tbl[]={
-				16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15
-			};
-
 			for(unsigned i=0; i<ltbl_count; ++i) {
-				ltbl_lengths[hclen_tbl[i]] = mBits.getbits(3);
+				ltbl_lengths[nsVDDeflate::hclen_tbl[i]] = mBits.getbits(3);
 			}
 
 			if (!InflateExpandTable256(ltbl_decode, ltbl_lengths, 20))
@@ -2832,34 +3047,27 @@ void VDGUnzipStream::Init(IVDStream *pSrc, uint64 limit) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-VDDeflateStream::VDDeflateStream(IVDStream& dest, VDDeflateChecksumMode checksumMode)
+VDDeflateStream::VDDeflateStream(IVDStream& dest, VDDeflateChecksumMode checksumMode, VDDeflateCompressionLevel compressionLevel)
 	: mDestStream(dest)
+	, mCompressionLevel(compressionLevel)
 	, mChecksumMode(checksumMode)
 	, mCRCChecker(VDCRCTable::CRC32)
 {
-	Reset();
+	Reset(compressionLevel);
 }
 
 VDDeflateStream::~VDDeflateStream() {
 	delete mpEncoder;
 }
 
-void VDDeflateStream::SetCompressionLevel(VDDeflateCompressionLevel level) {
-	mCompressionLevel = level;
-
-	if (mpEncoder)
-		mpEncoder->SetCompressionLevel(level);
-}
-
-void VDDeflateStream::Reset() {
+void VDDeflateStream::Reset(VDDeflateCompressionLevel compressionLevel) {
 	mPos = 0;
+	mCompressionLevel = compressionLevel;
 	
 	mCRCChecker.Init();
 
-	delete mpEncoder;
-	mpEncoder = nullptr;
-	mpEncoder = new VDDeflateEncoder;
-	mpEncoder->SetCompressionLevel(mCompressionLevel);
+	if (!mpEncoder)
+		mpEncoder = new VDDeflateEncoder;
 
 	vdfunction<void(const void *, uint32)> preprocessFn;
 	switch(mChecksumMode) {
@@ -2878,10 +3086,14 @@ void VDDeflateStream::Reset() {
 
 	}
 
-	mpEncoder->Init(false,
+	mpEncoder->Init(mCompressionLevel,
 		preprocessFn,
 		[this](const void *p, uint32 n) { WriteOutput(p, n); }
 	);
+}
+
+void VDDeflateStream::FlushToByteBoundary() {
+	mpEncoder->FlushToByteBoundary();
 }
 
 void VDDeflateStream::Finalize() {
@@ -3005,6 +3217,7 @@ VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path, VDDeflateCom
 
 	// bits 8-9: compression level (Deflate only)
 	switch(compressionLevel) {
+		case VDDeflateCompressionLevel::Store:
 		case VDDeflateCompressionLevel::Quick:
 			// specify Fast
 			de.mFlags |= 0x04;
@@ -3045,8 +3258,7 @@ VDDeflateStream& VDZipArchiveWriter::BeginFile(const wchar_t *path, VDDeflateCom
 
 	mFileStart = mDestStream.Pos();
 
-	mDeflateStream.SetCompressionLevel(compressionLevel);
-	mDeflateStream.Reset();
+	mDeflateStream.Reset(compressionLevel);
 
 	return mDeflateStream;
 }

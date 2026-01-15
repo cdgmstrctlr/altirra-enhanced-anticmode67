@@ -32,9 +32,23 @@ struct ATAudioFilterKernel63To44 {
 
 extern "C" const ATAudioFilterKernel63To44 gATAudioResamplingKernel63To44;
 
+// Low-level audio final mixing routines.
+//
+// - Mono16: Filter mono -> mono.
+// - MonoToStereo16: Filter mono -> double to stereo.
+// - Stereo16: Filter separated stereo -> interleaved stereo.
+// - Add16 variants: Add auxiliary inputs (sint16 encoded in float).
+//
+// interp=true increases quality by linearly interpolating between filter phases.
+//
+// Interpolation position is passed as 32.32 fixed point. Position-after is
+// returned.
+
 uint64 ATFilterResampleMono16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc, bool interp);
 uint64 ATFilterResampleMonoToStereo16(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc, bool interp);
+uint64 ATFilterResampleMonoToStereoAdd16(sint16 *d, const float *s, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc, bool interp);
 uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc, bool interp);
+uint64 ATFilterResampleStereoAdd16(sint16 *d, const float *s1, const float *s2, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc, bool interp);
 
 void ATFilterComputeSymmetricFIR_8_32F(float *dst, size_t n, const float *kernel);
 

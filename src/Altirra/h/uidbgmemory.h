@@ -40,11 +40,15 @@ public:
 	bool OnLoaded() override;
 
 private:
+	void AddToHistory(const wchar_t *s);
+
 	bool mbExpanded = false;
 
 	VDUIProxyButtonControl mExpandView;
-	VDUIProxyComboBoxExControl mAddressView;
-	VDUIProxyComboBoxExControl mColumnsView;
+	VDUIProxyComboBoxControl mAddressView;
+	VDUIProxyComboBoxControl mColumnsView;
+
+	vdvector<VDStringW> mAddressHistory;
 
 	vdfunction<void()> mpOnRelayout;
 	vdfunction<void(const wchar_t *)> mpOnAddressSet;
@@ -81,8 +85,8 @@ public:
 	ATMemoryWindow(uint32 id = kATUIPaneId_Memory);
 	~ATMemoryWindow();
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId);
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override;
 
 	void SetPosition(uint32 addr);
 	void SetColumns(uint32 cols, bool updateUI);
@@ -93,17 +97,18 @@ public:
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
 	void RecreateContentFont();
 	void UpdateContentFontMetrics();
 	void UpdateLineHeight();
 	void UpdateScrollRange();
+	void UpdateContentWidth();
 	void UpdateHScrollRange();
 	void AdjustColumnCount();
-	void OnThemeUpdated();
+	void OnThemeUpdated() override;
 	void OnMouseWheel(uint32 keyMask, float clicks);
 	void OnPaint();
 	void OnViewScroll(sint32 pos, bool tracking);
@@ -128,6 +133,12 @@ protected:
 	uint32	mCharHeight = 16;
 	uint32	mLineHeight = 16;
 	uintptr	mLastTarget = 0;
+
+	// Total width in pixels of displayed content (address + hex + interpreted).
+	// Affected by changes to the address format, column count, display modes,
+	// and font.
+	sint32	mContentWidth = 0;
+
 	sint32	mHScrollPos = 0;
 	sint32	mCompletelyVisibleRows = 0;
 	sint32	mPartiallyVisibleRows = 1;

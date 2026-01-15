@@ -58,6 +58,7 @@ private:
 	void QueuePreload(const uint8 *data, size_t len);
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 
 	VDStringW mPath;
 	bool mbAutoDisableBasic = false;

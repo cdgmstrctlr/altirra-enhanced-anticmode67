@@ -1,6 +1,7 @@
 #include <stdafx.h>
 #include <windows.h>
 #include <at/atnativeui/dialog.h>
+#include "inputdefs.h"
 #include "inputmanager.h"
 #include "inputcontroller.h"
 #include "resource.h"

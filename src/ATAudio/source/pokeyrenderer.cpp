@@ -369,7 +369,7 @@ void ATPokeyRenderer::SetChannelDeferredEvents(int channel, uint32 start, uint32
 }
 
 void ATPokeyRenderer::SetChannelDeferredEventsLinked(int channel, uint32 loStart, uint32 loPeriod, uint32 hiStart, uint32 hiPeriod, uint32 loOffset) {
-	VDASSERT(hiStart - loStart - 1 < 0x7FFFFFFFU);		// wrapped(hiStart > loStart)
+	VDASSERT(ATWrapTime{hiStart} >= loStart);
 	VDASSERT(loPeriod < 30000);
 	VDASSERT(hiPeriod < 7500000);
 

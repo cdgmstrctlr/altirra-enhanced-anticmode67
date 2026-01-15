@@ -51,6 +51,7 @@ private:
 
 	MyError *mpPendingException = nullptr;
 	bool mbPal = false;
+	bool mbStereo = false;
 	bool mbSilencePassed = false;
 	uint32 mFrames = 0;
 
@@ -75,6 +76,7 @@ void ATSAPWriter::Init(ATSimulatorEventManager *evtMgr, ATPokeyEmulator *pokey, 
 		mSimEvtRegId = mpSimEvtMgr->AddEventCallback(kATSimEvent_VBLANK, [this] { OnVBlank(); });
 
 		mpPokey = pokey;
+		mbStereo = pokey->IsStereoEnabled();
 		mpUIRenderer = uir;
 
 		mbPal = pal;
@@ -90,6 +92,9 @@ void ATSAPWriter::Init(ATSimulatorEventManager *evtMgr, ATPokeyEmulator *pokey, 
 
 		if (!pal)
 			Write("NTSC\r\n", 6);
+
+		if (mbStereo)
+			Write("STEREO\r\n", 8);
 
 		static const char kHeader2[] =
 			"TYPE R\r\n"
@@ -164,8 +169,7 @@ void ATSAPWriter::Shutdown() {
 
 void ATSAPWriter::CheckExceptions() {
 	if (mpPendingException) {
-		MyError tmp;
-		tmp.TransferFrom(*mpPendingException);
+		VDException tmp(std::move(*mpPendingException));
 
 		vdsafedelete <<= mpPendingException;
 
@@ -181,7 +185,10 @@ void ATSAPWriter::OnVBlank() {
 	mpPokey->GetRegisterState(rstate);
 
 	if (!mbSilencePassed) {
-		const uint8 volumes = rstate.mReg[1] | rstate.mReg[3] | rstate.mReg[5] | rstate.mReg[7];
+		uint8 volumes = rstate.mReg[1] | rstate.mReg[3] | rstate.mReg[5] | rstate.mReg[7];
+
+		if (mbStereo)
+			volumes |= rstate.mReg[0x11] | rstate.mReg[0x13] | rstate.mReg[0x15] | rstate.mReg[0x17];
 
 		if (!(volumes & 15))
 			return;
@@ -191,9 +198,12 @@ void ATSAPWriter::OnVBlank() {
 
 	Write(rstate.mReg, 9);
 
+	if (mbStereo)
+		Write(rstate.mReg + 0x10, 9);
+
 	++mFrames;
 
-	mpUIRenderer->SetRecordingPosition((float)mFrames / (mbPal ? 49.8607f : 59.9227f), mFlushedSize + mWriteLevel);
+	mpUIRenderer->SetRecordingPosition((float)mFrames / (mbPal ? 49.8607f : 59.9227f), mFlushedSize + mWriteLevel, false);
 }
 
 void ATSAPWriter::Write(const void *buf, uint32 len) {

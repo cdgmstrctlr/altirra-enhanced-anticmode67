@@ -949,7 +949,7 @@ void ATConsoleWrite(const char *s) {
 	}
 }
 
-void ATConsolePrintf(const char *format, ...) {
+void ATConsolePrintfImpl(const char *format, ...) {
 	if (g_pConsoleWindow) {
 		char buf[3072];
 		va_list val;
@@ -963,7 +963,7 @@ void ATConsolePrintf(const char *format, ...) {
 	}
 }
 
-void ATConsoleTaggedPrintf(const char *format, ...) {
+void ATConsoleTaggedPrintfImpl(const char *format, ...) {
 	if (g_pConsoleWindow) {
 		ATAnticEmulator& antic = g_sim.GetAntic();
 		char buf[3072];

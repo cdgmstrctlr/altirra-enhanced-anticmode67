@@ -30,8 +30,6 @@ extern ATSimulator g_sim;
 ATDebugDisplayWindow::ATDebugDisplayWindow(uint32 id)
 	: ATUIDebuggerPaneWindow(id, L"Debug Display")
 	, mhwndDisplay(NULL)
-	, mhwndDLAddrCombo(NULL)
-	, mhwndPFAddrCombo(NULL)
 	, mhmenu(LoadMenu(VDGetLocalModuleHandleW32(), MAKEINTRESOURCE(IDR_DEBUGDISPLAY_CONTEXT_MENU)))
 	, mComboResizeInProgress(0)
 	, mpThunkDLEditCombo(NULL)
@@ -42,6 +40,9 @@ ATDebugDisplayWindow::ATDebugDisplayWindow(uint32 id)
 
 	mpThunkDLEditCombo = VDCreateFunctionThunkFromMethod(this, &ATDebugDisplayWindow::DLAddrEditWndProc, true);
 	mpThunkPFEditCombo = VDCreateFunctionThunkFromMethod(this, &ATDebugDisplayWindow::PFAddrEditWndProc, true);
+
+	mDLAddrCombo.SetOnSelectionChanged(std::bind_front(&ATDebugDisplayWindow::OnDLAddrChanged, this));
+	mPFAddrCombo.SetOnSelectionChanged(std::bind_front(&ATDebugDisplayWindow::OnPFAddrChanged, this));
 }
 
 ATDebugDisplayWindow::~ATDebugDisplayWindow() {
@@ -92,36 +93,7 @@ LRESULT ATDebugDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case WM_COMMAND:
-			if (lParam) {
-				if (lParam == (LPARAM)mhwndDLAddrCombo) {
-					if (HIWORD(wParam) == CBN_SELCHANGE) {
-						int sel = (int)SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
-
-						switch(sel) {
-							case 0:
-								mDebugDisplay.SetMode(ATDebugDisplay::kMode_AnticHistory);
-								break;
-
-							case 1:
-								mDebugDisplay.SetMode(ATDebugDisplay::kMode_AnticHistoryStart);
-								break;
-						}
-
-						mDebugDisplay.Update();
-						return 0;
-					}
-				} else if (lParam == (LPARAM)mhwndPFAddrCombo) {
-					if (HIWORD(wParam) == CBN_SELCHANGE) {
-						int sel = (int)SendMessageW(mhwndDLAddrCombo, CB_GETCURSEL, 0, 0);
-
-						if (sel >= 0)
-							mDebugDisplay.SetPFAddrOverride(-1);
-
-						mDebugDisplay.Update();
-						return 0;
-					}
-				}
-			} else {
+			if (!lParam) {
 				switch(LOWORD(wParam)) {
 					case ID_CONTEXT_FORCEUPDATE:
 						mDebugDisplay.Update();
@@ -163,30 +135,38 @@ bool ATDebugDisplayWindow::OnCreate() {
 	if (!ATUIDebuggerPaneWindow::OnCreate())
 		return false;
 
-	mhwndDLAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
-	if (mhwndDLAddrCombo) {
-		SendMessageW(mhwndDLAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
-		SendMessageW(mhwndDLAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto DL (History)");
-		SendMessageW(mhwndDLAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto DL (History start)");
-		SendMessageW(mhwndDLAddrCombo, CB_SETCURSEL, 0, 0);
-		SendMessageW(mhwndDLAddrCombo, CB_SETEDITSEL, 0, MAKELONG(-1, 0));
+	HWND hwndDLAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)102, VDGetLocalModuleHandleW32(), NULL);
+	if (hwndDLAddrCombo) {
+		SendMessageW(hwndDLAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
+
+		mDLAddrCombo.Attach(hwndDLAddrCombo);
+		mMsgDispatcher.AddControl(&mDLAddrCombo);
+
+		mDLAddrCombo.AddItem(L"Auto DL (History)");
+		mDLAddrCombo.AddItem(L"Auto DL (History start)");
+		mDLAddrCombo.SetSelection(0);
+		mDLAddrCombo.DeselectText();
 
 		COMBOBOXINFO cbi = {sizeof(COMBOBOXINFO)};
-		if (mpThunkDLEditCombo && GetComboBoxInfo(mhwndDLAddrCombo, &cbi)) {
+		if (mpThunkDLEditCombo && GetComboBoxInfo(hwndDLAddrCombo, &cbi)) {
 			mWndProcDLAddrEdit = (WNDPROC)GetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC);
 			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpThunkDLEditCombo));
 		}
 	}
 
-	mhwndPFAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
-	if (mhwndPFAddrCombo) {
-		SendMessageW(mhwndPFAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
-		SendMessageW(mhwndPFAddrCombo, CB_ADDSTRING, 0, (LPARAM)L"Auto PF Address");
-		SendMessageW(mhwndPFAddrCombo, CB_SETCURSEL, 0, 0);
-		SendMessageW(mhwndPFAddrCombo, CB_SETEDITSEL, 0, MAKELONG(-1, 0));
+	HWND hwndPFAddrCombo = CreateWindowExW(0, WC_COMBOBOXW, L"", WS_VISIBLE|WS_CHILD|WS_CLIPSIBLINGS|CBS_DROPDOWN|CBS_HASSTRINGS|CBS_AUTOHSCROLL, 0, 0, 0, 0, mhwnd, (HMENU)103, VDGetLocalModuleHandleW32(), NULL);
+	if (hwndPFAddrCombo) {
+		SendMessageW(hwndPFAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
+
+		mPFAddrCombo.Attach(hwndPFAddrCombo);
+		mMsgDispatcher.AddControl(&mPFAddrCombo);
+
+		mPFAddrCombo.AddItem(L"Auto PF Address");
+		mPFAddrCombo.SetSelection(0);
+		mPFAddrCombo.DeselectText();
 
 		COMBOBOXINFO cbi = {sizeof(COMBOBOXINFO)};
-		if (mpThunkPFEditCombo && GetComboBoxInfo(mhwndPFAddrCombo, &cbi)) {
+		if (mpThunkPFEditCombo && GetComboBoxInfo(hwndPFAddrCombo, &cbi)) {
 			mWndProcPFAddrEdit = (WNDPROC)GetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC);
 			SetWindowLongPtrW(cbi.hwndItem, GWLP_WNDPROC, (LONG_PTR)VDGetThunkFunction<WNDPROC>(mpThunkPFEditCombo));
 		}
@@ -214,8 +194,6 @@ void ATDebugDisplayWindow::OnDestroy() {
 	mDebugDisplay.Shutdown();
 	mpDisplay = NULL;
 	mhwndDisplay = NULL;
-	mhwndDLAddrCombo = NULL;
-	mhwndPFAddrCombo = NULL;
 
 	ATGetDebugger()->RemoveClient(this);
 	ATUIDebuggerPaneWindow::OnDestroy();
@@ -226,10 +204,11 @@ void ATDebugDisplayWindow::OnSize() {
 	if (!GetClientRect(mhwnd, &r))
 		return;
 
-	RECT rCombo;
 	int comboHeight = 0;
-	if (mhwndDLAddrCombo && GetWindowRect(mhwndDLAddrCombo, &rCombo)) {
-		comboHeight = rCombo.bottom - rCombo.top;
+
+	const vdrect32& dlComboArea = mDLAddrCombo.GetWindowArea();
+	{
+		comboHeight = dlComboArea.bottom - dlComboArea.top;
 
 		// The Win32 combo box has bizarre behavior where it will highlight and reselect items
 		// when it is resized. This has to do with the combo box updating the listbox drop
@@ -239,11 +218,8 @@ void ATDebugDisplayWindow::OnSize() {
 
 		++mComboResizeInProgress;
 
-		SetWindowPos(mhwndDLAddrCombo, NULL, 0, 0, r.right >> 1, comboHeight * 5, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-		if (mhwndPFAddrCombo) {
-			SetWindowPos(mhwndPFAddrCombo, NULL, r.right >> 1, 0, (r.right + 1) >> 1, comboHeight * 5, SWP_NOZORDER | SWP_NOACTIVATE);
-		}
+		mDLAddrCombo.SetArea(vdrect32(0, 0, r.right >> 1, comboHeight * 5));
+		mPFAddrCombo.SetArea(vdrect32(r.right >> 1, 0, r.right, comboHeight * 5));
 
 		--mComboResizeInProgress;
 	}
@@ -278,11 +254,11 @@ void ATDebugDisplayWindow::OnSize() {
 }
 
 void ATDebugDisplayWindow::OnFontsUpdated() {
-	if (mhwndDLAddrCombo)
-		SendMessage(mhwndDLAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
+	if (mDLAddrCombo.IsValid())
+		SendMessage(mDLAddrCombo.GetHandle(), WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
 
-	if (mhwndPFAddrCombo)
-		SendMessage(mhwndPFAddrCombo, WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
+	if (mPFAddrCombo.IsValid())
+		SendMessage(mPFAddrCombo.GetHandle(), WM_SETFONT, (WPARAM)ATConsoleGetPropFontW32(), TRUE);
 
 	OnSize();
 }
@@ -307,7 +283,8 @@ LRESULT ATDebugDisplayWindow::DLAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wPar
 				mDebugDisplay.SetMode(ATDebugDisplay::kMode_AnticHistoryStart);
 				mDebugDisplay.SetDLAddrOverride(addr);
 				mDebugDisplay.Update();
-				SendMessageW(mhwndDLAddrCombo, CB_SETEDITSEL, 0, MAKELONG(0, -1));
+
+				mDLAddrCombo.DeselectText();
 			}
 			return 0;
 		}
@@ -335,7 +312,8 @@ LRESULT ATDebugDisplayWindow::PFAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wPar
 			else {
 				mDebugDisplay.SetPFAddrOverride(addr);
 				mDebugDisplay.Update();
-				SendMessageW(mhwndPFAddrCombo, CB_SETEDITSEL, 0, MAKELONG(0, -1));
+
+				mPFAddrCombo.DeselectText();
 			}
 			return 0;
 		}
@@ -354,6 +332,29 @@ void ATDebugDisplayWindow::OnDebuggerEvent(ATDebugEvent eventId) {
 void ATDebugDisplayWindow::OnDeferredUpdate() {
 	mDebugDisplay.Update();
 }
+
+void ATDebugDisplayWindow::OnDLAddrChanged(int idx) {
+	switch(idx) {
+		case 0:
+			mDebugDisplay.SetMode(ATDebugDisplay::kMode_AnticHistory);
+			break;
+
+		case 1:
+			mDebugDisplay.SetMode(ATDebugDisplay::kMode_AnticHistoryStart);
+			break;
+	}
+
+	mDebugDisplay.Update();
+}
+
+void ATDebugDisplayWindow::OnPFAddrChanged(int idx) {
+	if (idx >= 0)
+		mDebugDisplay.SetPFAddrOverride(-1);
+
+	mDebugDisplay.Update();
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 void ATUIDebuggerRegisterDebugDisplayPane() {
 	ATRegisterUIPaneType(kATUIPaneId_DebugDisplay, VDRefCountObjectFactory<ATDebugDisplayWindow, ATUIPane>);

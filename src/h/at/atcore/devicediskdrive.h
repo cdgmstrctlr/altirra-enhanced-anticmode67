@@ -31,12 +31,15 @@
 #define f_AT_ATCORE_DEVICEDISKDRIVE_H
 
 #include <vd2/system/vdtypes.h>
+#include <vd2/system/unknown.h>
 
 class ATDiskInterface;
 class IATDiskImage;
 
 class IATDiskDriveManager {
 public:
+	static constexpr auto kTypeID = "IATDiskDriveManager"_vdtypeid;
+
 	virtual ATDiskInterface *GetDiskInterface(uint32 index) = 0;
 };
 

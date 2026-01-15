@@ -28,6 +28,7 @@
 #include <vd2/system/unknown.h>
 
 class IATDeviceCIO;
+class IATDeviceCIODeviceList;
 
 class IATDeviceCIOManager {
 public:
@@ -64,7 +65,7 @@ public:
 
 	// Get a list of which CIO devices are supported, as the device letters
 	// to register in HATABS.
-	virtual void GetCIODevices(char *buf, size_t len) const = 0;
+	virtual void GetCIODevices(IATDeviceCIODeviceList& deviceList) const = 0;
 
 	// CIO entry points.
 	//
@@ -91,6 +92,15 @@ public:
 	// WarmReset() is unspecified.
 	//
 	virtual void OnCIOAbortAsync() = 0;
+};
+
+class IATDeviceCIODeviceList {
+public:
+	// Report a device from GetCIODevices(), with CIO device name and unit mask.
+	// The unit mask has a bit set for each unit that is supported. For
+	// instance, for a device X, bit 1 is set if X1: is supported. (This means
+	// that bit 0 is not typically useful.)
+	virtual void AddDevice(uint8 name, uint32 unitMask = ~UINT32_C(0)) = 0;
 };
 
 #endif

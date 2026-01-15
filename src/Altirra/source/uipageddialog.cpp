@@ -562,6 +562,6 @@ void ATUIPagedDialog::SelectPage(int index) {
 void ATUIPagedDialog::OnTreeSelectedItemChanged() {
 	PageTreeItem *pti = mPageTreeView.GetSelectedVirtualItem<PageTreeItem>();
 
-	if (pti && pti->mPage >= 0)
+	if (pti)
 		SelectPage(pti->mPage);
 }

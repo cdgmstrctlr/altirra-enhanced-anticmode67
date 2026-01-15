@@ -38,7 +38,7 @@
 	#include <vd2/system/win32/intrin.h>
 
 	inline constexpr uint16 VDSwizzleU16(uint16 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return (value >> 8) + (value << 8);
 		} else {
 			return (uint16)_byteswap_ushort((unsigned short)value);
@@ -46,7 +46,7 @@
 	}
 	
 	inline constexpr sint16 VDSwizzleS16(sint16 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return (sint16)(((uint16)value >> 8) + ((uint16)value << 8));
 		} else {
 			return (sint16)_byteswap_ushort((unsigned short)value);
@@ -54,7 +54,7 @@
 	}
 
 	inline constexpr uint32 VDSwizzleU32(uint32 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return (value >> 24) + (value << 24) + ((value&0xff00)<<8) + ((value&0xff0000)>>8);
 		} else {
 			return (uint32)_byteswap_ulong((unsigned long)value);
@@ -62,7 +62,7 @@
 	}
 
 	inline constexpr sint32 VDSwizzleS32(sint32 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return (sint32)(((uint32)value >> 24) + ((uint32)value << 24) + (((uint32)value&0xff00)<<8) + (((uint32)value&0xff0000)>>8));
 		} else {
 			return (sint32)_byteswap_ulong((unsigned long)value);
@@ -70,7 +70,7 @@
 	}
 
 	inline constexpr uint64 VDSwizzleU64(uint64 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return	((value & 0xFF00000000000000) >> 56) +
 					((value & 0x00FF000000000000) >> 40) +
 					((value & 0x0000FF0000000000) >> 24) +
@@ -85,7 +85,7 @@
 	}
 
 	inline constexpr sint64 VDSwizzleS64(sint64 value) {
-		if (std::is_constant_evaluated()) {
+		if consteval {
 			return (sint64)((((uint64)value & 0xFF00000000000000) >> 56) +
 							(((uint64)value & 0x00FF000000000000) >> 40) +
 							(((uint64)value & 0x0000FF0000000000) >> 24) +

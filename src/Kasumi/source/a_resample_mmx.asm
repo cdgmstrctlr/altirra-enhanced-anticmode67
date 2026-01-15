@@ -510,7 +510,7 @@ ccint_col_SSE2_odd:
 	pmaddwd		mm2,mm5
 	pmaddwd		mm3,mm5
 	paddd		mm0,mm6
-	paddd		mm2,mm6
+	paddd		mm1,mm6
 	paddd		mm0,mm2
 	paddd		mm1,mm3
 	psrad		mm0,14

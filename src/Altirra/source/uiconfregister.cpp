@@ -20,6 +20,7 @@
 
 bool ATUIConfDevHardDisk(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevBlackBox(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevBlackBoxFloppy(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevModem(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevDragonCart(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPCLink(VDGUIHandle hParent, ATPropertySet& props);
@@ -59,10 +60,15 @@ bool ATUIConfDevVideoStillImage(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevNetSerial(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPrinter(VDGUIHandle hParent, ATPropertySet& props);
 bool ATUIConfDevPrinterHLE(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev850Full(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDev1020(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevMultiplexer(VDGUIHandle hParent, ATPropertySet& props);
+bool ATUIConfDevPipeSerial(VDGUIHandle hParent, ATPropertySet& props);
 
 void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("harddisk", ATUIConfDevHardDisk);
 	dev.AddDeviceConfigurer("blackbox", ATUIConfDevBlackBox);
+	dev.AddDeviceConfigurer("blackboxfloppy", ATUIConfDevBlackBoxFloppy);
 	dev.AddDeviceConfigurer("modem", ATUIConfDevModem);
 	dev.AddDeviceConfigurer("dragoncart", ATUIConfDevDragonCart);
 	dev.AddDeviceConfigurer("pclink", ATUIConfDevPCLink);
@@ -105,6 +111,10 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 	dev.AddDeviceConfigurer("1025", ATUIConfDevPrinter);
 	dev.AddDeviceConfigurer("1029", ATUIConfDevPrinter);
 	dev.AddDeviceConfigurer("printer", ATUIConfDevPrinterHLE);
+	dev.AddDeviceConfigurer("850full", ATUIConfDev850Full);
+	dev.AddDeviceConfigurer("1020", ATUIConfDev1020);
+	dev.AddDeviceConfigurer("multiplexer", ATUIConfDevMultiplexer);
+	dev.AddDeviceConfigurer("pipeserial", ATUIConfDevPipeSerial);
 
 	static const char *const kDiskDriveFullTypes[]={
 		"diskdrive810",
@@ -124,6 +134,7 @@ void ATRegisterDeviceConfigurers(ATDeviceManager& dev) {
 		"diskdriveindusgt",
 		"diskdrivexf551",
 		"diskdrive810turbo",
+		"diskdrivespeedyxf",
 	};
 
 	for(const char *s : kDiskDriveFullTypes) {

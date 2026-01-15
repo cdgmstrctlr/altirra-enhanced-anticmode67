@@ -60,20 +60,20 @@ public:
 	vdfunction<void(sint32)>& OnItemActivatedEvent() { return mItemActivatedEvent; }
 
 public:
-	virtual void OnMouseDownL(sint32 x, sint32 y) override;
-	virtual void OnMouseDblClkL(sint32 x, sint32 y) override;
-	virtual bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) override;
+	void OnMouseDownL(sint32 x, sint32 y) override;
+	void OnMouseDblClkL(sint32 x, sint32 y) override;
+	bool OnMouseWheel(sint32 x, sint32 y, float delta, bool doPages) override;
 
-	virtual void OnActionStart(uint32 id) override;
-	virtual void OnActionRepeat(uint32 id) override;
+	void OnActionStart(uint32 id) override;
+	void OnActionRepeat(uint32 id) override;
 
-	virtual void OnCreate() override;
-	virtual void OnDestroy() override;
-	virtual void OnSize() override;
-	virtual void OnSetFocus() override;
-	virtual void OnKillFocus() override;
+	void OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnSetFocus() override;
+	void OnKillFocus() override;
 
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 protected:
 	void OnScroll(sint32 pos);

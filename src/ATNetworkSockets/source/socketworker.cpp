@@ -168,6 +168,11 @@ void ATNetSocket::CloseSocket(bool force) {
 	}
 }
 
+void ATNetSocket::PollSocket() {
+	QueueEvent();
+	FlushEvent();
+}
+
 void ATNetSocket::QueueEvent() {
 	vdsynchronized(mpSyncContext->mMutex) {
 		QueueEvent_Locked();
@@ -191,7 +196,6 @@ void ATNetSocket::FlushEvent() {
 	ATSocketStatus status = GetSocketStatus();
 
 	// issue callback
-	bool doNotify = false;
 	vdsynchronized(mpSyncContext->mCallbackMutex) {
 		if (mpOnEventFn) {
 			if (mpOnEventDispatcher) {
@@ -204,15 +208,9 @@ void ATNetSocket::FlushEvent() {
 					}
 				);
 			} else {
-				doNotify = true;
+				if (mpOnEventFn)
+					mpOnEventFn(status);
 			}
-		}
-	}
-
-	if (doNotify) {
-		vdsynchronized(mpSyncContext->mCallbackMutex) {
-			if (mpOnEventFn)
-				mpOnEventFn(status);
 		}
 	}
 }
@@ -277,11 +275,12 @@ void ATNetStreamSocket::Listen(const ATSocketAddress& socketAddress) {
 	}
 }
 
-void ATNetStreamSocket::Connect(const ATSocketAddress& socketAddress) {
+void ATNetStreamSocket::Connect(const ATSocketAddress& socketAddress, bool dualStack) {
 	vdsynchronized(mpSyncContext->mMutex) {
 		if (mState == State::Created) {
 			mState = State::Connect;
 
+			mbDualStack = dualStack;
 			mConnectAddress = socketAddress;
 
 			if (mpSyncContext->mpWorker)
@@ -310,6 +309,9 @@ sint32 ATNetStreamSocket::Recv(void *buf, uint32 len) {
 		uint32 avail;
 
 		vdsynchronized(mpSyncContext->mMutex) {
+			if (mState == State::Connect)
+				return 0;
+
 			if (mState != State::Connecting && mState != State::Connected && mState != State::Closing)
 				return -1;
 
@@ -446,9 +448,13 @@ void ATNetStreamSocket::Update() {
 
 			if (mConnectAddress.mType == ATSocketAddressType::IPv4)
 				mSocketHandle = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-			else if (mConnectAddress.mType == ATSocketAddressType::IPv6)
+			else if (mConnectAddress.mType == ATSocketAddressType::IPv6) {
 				mSocketHandle = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
-			else
+
+				DWORD v6only = 0;
+				if (mbDualStack)
+					VDVERIFY(0 == setsockopt(mSocketHandle, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&v6only, sizeof v6only));
+			} else
 				QueueError_Locked(ATSocketError::Unknown);
 
 			if (mSocketHandle == INVALID_SOCKET) {
@@ -770,9 +776,10 @@ void ATNetStreamSocket::DoClose_Locked() {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-ATNetListenSocket::ATNetListenSocket(ATNetSocketSyncContext& syncContext, const ATSocketAddress& bindAddress)
+ATNetListenSocket::ATNetListenSocket(ATNetSocketSyncContext& syncContext, const ATSocketAddress& bindAddress, bool dualStack)
 	: ATNetSocketT(syncContext)
 	, mBindAddress(bindAddress)
+	, mbDualStack(dualStack)
 {
 	vdsynchronized(mpSyncContext->mMutex) {
 		mState = State::Listen;
@@ -842,7 +849,10 @@ void ATNetListenSocket::Update() {
 				QueueWinsockError_Locked();
 			} else {
 				ATSocketNativeAddress nativeBindAddress(mBindAddress);
-				if (0 != bind(mSocketHandle, nativeBindAddress.GetSockAddr(), nativeBindAddress.GetSockAddrLen())) {
+				DWORD v6only = 0;
+				if (mbDualStack && 0 != setsockopt(mSocketHandle, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&v6only, sizeof v6only)) {
+					QueueWinsockError_Locked();
+				} else if (0 != bind(mSocketHandle, nativeBindAddress.GetSockAddr(), nativeBindAddress.GetSockAddrLen())) {
 					QueueWinsockError_Locked();
 				} else if (0 != listen(mSocketHandle, SOMAXCONN)) {
 					QueueWinsockError_Locked();
@@ -1441,8 +1451,8 @@ vdrefptr<ATNetStreamSocket> ATNetSocketWorker::CreateStreamSocket(const ATSocket
 	return s;
 }
 
-vdrefptr<ATNetListenSocket> ATNetSocketWorker::CreateListenSocket(const ATSocketAddress& bindAddress) {
-	vdrefptr<ATNetListenSocket> s(new ATNetListenSocket(*mpSyncContext, bindAddress));
+vdrefptr<ATNetListenSocket> ATNetSocketWorker::CreateListenSocket(const ATSocketAddress& bindAddress, bool dualStack) {
+	vdrefptr<ATNetListenSocket> s(new ATNetListenSocket(*mpSyncContext, bindAddress, dualStack));
 
 	vdsynchronized(mpSyncContext->mMutex) {
 		if (!RegisterSocket_Locked(*s)) {

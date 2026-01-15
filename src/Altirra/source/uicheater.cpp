@@ -20,8 +20,10 @@
 #include <vd2/system/registry.h>
 #include <vd2/Dita/services.h>
 #include <at/atnativeui/dialog.h>
+#include <at/atnativeui/messageloop.h>
 #include "resource.h"
 #include "cheatengine.h"
+#include "oshelper.h"
 #include "uifilefilters.h"
 
 ///////////////////////////////////////////////////////////////////////////
@@ -103,10 +105,12 @@ public:
 	~ATUIDialogCheater();
 
 protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnDataExchange(bool write);
-	bool OnCommand(uint32 id, uint32 extcode);
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	bool PreNCDestroy() override;
+	void OnDataExchange(bool write) override;
+	bool OnCommand(uint32 id, uint32 extcode) override;
+
 	void OnResultDblClk(VDUIProxyListView *sender, int index);
 	void OnResultSelChanged(VDUIProxyListView *sender, int index);
 	void OnCheatDblClk(VDUIProxyListView *sender, int index);
@@ -202,6 +206,8 @@ protected:
 	};
 };
 
+ATUIDialogCheater *g_pATUIDialogCheater;
+
 ATUIDialogCheater::ATUIDialogCheater(ATCheatEngine *engine)
 	: VDDialogFrameW32(IDD_CHEATER)
 	, mpEngine(engine)
@@ -217,9 +223,29 @@ ATUIDialogCheater::~ATUIDialogCheater() {
 }
 
 bool ATUIDialogCheater::OnLoaded() {
+	g_pATUIDialogCheater = this;
+
+	SetCurrentSizeAsMinSize();
+	ATUIRegisterModelessDialog(mhdlg);
+
 	AddProxy(&mResultView, IDC_RESULTS);
 	AddProxy(&mActiveView, IDC_ACTIVE);
 	AddProxy(&mModeView, IDC_MODE);
+
+	mResizer.Add(mModeView.GetHandle(), mResizer.kTC);
+	mResizer.Add(IDC_UPDATE, mResizer.kTR);
+	mResizer.Add(mResultView.GetHandle(), mResizer.kHLeftHalf | mResizer.kM | mResizer.kAvoidFlicker);
+	mResizer.Add(IDC_STATIC_CHEATS, mResizer.kHCenter | mResizer.kT);
+	mResizer.Add(mActiveView.GetHandle(), mResizer.kHRightHalf | mResizer.kM | mResizer.kAvoidFlicker);
+	mResizer.Add(IDC_TRANSFER, mResizer.kHCenter | mResizer.kVMiddle);
+	mResizer.Add(IDC_TRANSFERALL, mResizer.kHCenter | mResizer.kVMiddle);
+	mResizer.Add(IDC_VALUE, mResizer.kTC);
+	mResizer.Add(IDC_ADD, mResizer.kHCenter | mResizer.kB);
+	mResizer.Add(IDC_DELETE, mResizer.kHCenter | mResizer.kB);
+	mResizer.Add(IDC_EDIT, mResizer.kHCenter | mResizer.kB);
+	mResizer.Add(IDC_LOAD, mResizer.kBL);
+	mResizer.Add(IDC_SAVE, mResizer.kBL);
+	mResizer.Add(IDOK, mResizer.kBR);
 
 	mResultView.SetFullRowSelectEnabled(true);
 	mResultView.InsertColumn(0, L"Address", 0);
@@ -238,15 +264,29 @@ bool ATUIDialogCheater::OnLoaded() {
 	mModeView.AddItem(L"> : Values going up");
 	mModeView.AddItem(L">= : Values sometimes going up");
 	mModeView.AddItem(L"=X : Find an exact value");
-
+	
 	OnDataExchange(false);
 	SetFocusToControl(IDC_MODE);
+
+	ATUIRestoreWindowPlacement(mhdlg, "Cheater");
+	Show();
 	return true;
 }
 
 void ATUIDialogCheater::OnDestroy() {
+	g_pATUIDialogCheater = nullptr;
+
 	mResultView.Clear();
 	mActiveView.Clear();
+
+	ATUISaveWindowPlacement(mhdlg, "Cheater");
+	ATUIUnregisterModelessDialog(mhdlg);
+
+	VDDialogFrameW32::OnDestroy();
+}
+
+bool ATUIDialogCheater::PreNCDestroy() {
+	return true;
 }
 
 void ATUIDialogCheater::OnDataExchange(bool write) {
@@ -441,7 +481,7 @@ void ATUIDialogCheater::OnResultDblClk(VDUIProxyListView *sender, int index) {
 		cheat.mAddress = vi->mAddress;
 		cheat.mValue = vi->mValue;
 		cheat.mb16Bit = vi->mb16Bit;
-		cheat.mbEnabled = true;
+		cheat.mbEnabled = false;
 		mpEngine->AddCheat(cheat);
 		UpdateActiveView();
 	}
@@ -538,7 +578,10 @@ void ATUIDialogCheater::UpdateValueEnable() {
 /////////////////////////////////////////////////////////////////////////////
 
 void ATUIShowDialogCheater(VDGUIHandle hParent, ATCheatEngine *engine) {
-	ATUIDialogCheater dlg(engine);
+	if (!g_pATUIDialogCheater) {
+		g_pATUIDialogCheater = new ATUIDialogCheater(engine);
 
-	dlg.ShowDialog(hParent);
+		g_pATUIDialogCheater->Create(hParent);
+	} else
+		g_pATUIDialogCheater->Focus();
 }

@@ -166,3 +166,14 @@ void VDResamplerSwizzleTable(sint32 *dst, unsigned pairs) {
 		dst += 2;
 	} while(--pairs);
 }
+
+bool VDResamplerFilterHasNoOvershoot(const sint32 *filter, size_t n) {
+	while(n--) {
+		sint32 v = *filter++;
+
+		if (v < 0 || v > 0x4000)
+			return false;
+	}
+
+	return true;
+}

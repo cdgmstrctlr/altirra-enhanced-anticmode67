@@ -104,7 +104,7 @@
           </xsl:if>
         </xsl:if>
         <xsl:text xml:space="preserve">. </xsl:text>
-        <xsl:apply-templates/>
+        <xsl:apply-templates select="text()" />
       </xsl:element>
       <xsl:if test="key('toc-prev', generate-id())">
         <ul>

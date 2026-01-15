@@ -102,7 +102,7 @@ protected:
 
 	void UpdateDriveMotorState();
 
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(bool polarity);
 	void AddCommandEdge(uint32 polarity);

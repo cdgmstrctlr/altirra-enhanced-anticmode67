@@ -344,6 +344,11 @@ vdrefptr<T> vdmakerefptr(T *p) {
 	return vdrefptr<T>(p);
 }
 
+template<typename T, typename... Args> requires(requires { new T(std::declval<Args>()...); })
+vdrefptr<T> vdmakerefcounted(Args&&... args) {
+	return vdrefptr<T>(new T(std::forward<Args>(args)...));
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 template<class T, class U>

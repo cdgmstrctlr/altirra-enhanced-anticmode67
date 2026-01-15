@@ -48,8 +48,8 @@ public:
 	void OnScheduledEvent(uint32 id) override;
 
 public:
-	bool RequiresStereoMixingNow() const;
-	void WriteAudio(const ATSyncAudioMixInfo& mixInfo);
+	bool RequiresStereoMixingNow() const override;
+	void WriteAudio(const ATSyncAudioMixInfo& mixInfo) override;
 
 private:
 	uint8 ComputeDirBus() const;

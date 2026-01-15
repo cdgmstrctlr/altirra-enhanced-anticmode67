@@ -29,24 +29,144 @@
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstl.h>
 
-template<class T, class S, class A = vdallocator<T> >
-class vdfastvector_base : public vdspan<T> {
-protected:
-	using vdspan<T>::mpBegin;
-	using vdspan<T>::mpEnd;
+template<class T>
+class vdfastvector_core {
+public:
+	typedef	T					value_type;
+	typedef	T*					pointer;
+	typedef	const T*			const_pointer;
+	typedef	T&					reference;
+	typedef	const T&			const_reference;
+	typedef	size_t				size_type;
+	typedef	ptrdiff_t			difference_type;
+	typedef	pointer				iterator;
+	typedef const_pointer		const_iterator;
+	typedef std::reverse_iterator<iterator>		reverse_iterator;
+	typedef std::reverse_iterator<const_iterator>	const_reverse_iterator;
+
+	VDTINLINE vdfastvector_core();
+
+	template<size_t N>
+	VDTINLINE vdfastvector_core(T (&arr)[N]);
+
+	VDTINLINE vdfastvector_core(T *p1, T *p2);
+	VDTINLINE vdfastvector_core(T *p1, size_type len);
 
 public:
-	typedef typename vdspan<T>::value_type value_type;
-	typedef typename vdspan<T>::pointer pointer;
-	typedef typename vdspan<T>::const_pointer const_pointer;
-	typedef typename vdspan<T>::reference reference;
-	typedef typename vdspan<T>::const_reference const_reference;
-	typedef typename vdspan<T>::size_type size_type;
-	typedef typename vdspan<T>::difference_type difference_type;
-	typedef typename vdspan<T>::iterator iterator;
-	typedef typename vdspan<T>::const_iterator const_iterator;
-	typedef typename vdspan<T>::reverse_iterator reverse_iterator;
-	typedef typename vdspan<T>::const_reverse_iterator const_reverse_iterator;
+	VDTINLINE bool					empty() const;
+	VDTINLINE size_type				size() const;
+
+	VDTINLINE pointer				data();
+	VDTINLINE const_pointer			data() const;
+
+	VDTINLINE const_iterator		cbegin() const;
+	VDTINLINE const_iterator		cend() const;
+
+	VDTINLINE iterator				begin();
+	VDTINLINE const_iterator			begin() const;
+	VDTINLINE iterator				end();
+	VDTINLINE const_iterator			end() const;
+
+	VDTINLINE reverse_iterator		rbegin();
+	VDTINLINE const_reverse_iterator	rbegin() const;
+	VDTINLINE reverse_iterator		rend();
+	VDTINLINE const_reverse_iterator	rend() const;
+
+	VDTINLINE reference				front();
+	VDTINLINE const_reference		front() const;
+	VDTINLINE reference				back();
+	VDTINLINE const_reference		back() const;
+
+	VDTINLINE reference				operator[](size_type n);
+	VDTINLINE const_reference		operator[](size_type n) const;
+
+protected:
+	T *mpBegin;
+	T *mpEnd;
+};
+
+#ifdef VD_ACCELERATE_TEMPLATES
+	VDTEXTERN template class vdfastvector_core<char>;
+	VDTEXTERN template class vdfastvector_core<uint8>;
+	VDTEXTERN template class vdfastvector_core<uint16>;
+	VDTEXTERN template class vdfastvector_core<uint32>;
+	VDTEXTERN template class vdfastvector_core<uint64>;
+	VDTEXTERN template class vdfastvector_core<sint8>;
+	VDTEXTERN template class vdfastvector_core<sint16>;
+	VDTEXTERN template class vdfastvector_core<sint32>;
+	VDTEXTERN template class vdfastvector_core<sint64>;
+	VDTEXTERN template class vdfastvector_core<float>;
+	VDTEXTERN template class vdfastvector_core<double>;
+	VDTEXTERN template class vdfastvector_core<wchar_t>;
+#endif
+
+template<class T> VDTINLINE vdfastvector_core<T>::vdfastvector_core() : mpBegin(NULL), mpEnd(NULL) {}
+template<class T> template<size_t N> VDTINLINE vdfastvector_core<T>::vdfastvector_core(T (&arr)[N]) : mpBegin(&arr[0]), mpEnd(&arr[N]) {}
+template<class T> VDTINLINE vdfastvector_core<T>::vdfastvector_core(T *p1, T *p2) : mpBegin(p1), mpEnd(p2) {}
+template<class T> VDTINLINE vdfastvector_core<T>::vdfastvector_core(T *p, size_type len) : mpBegin(p), mpEnd(p+len) {}
+template<class T> VDTINLINE bool					vdfastvector_core<T>::empty() const { return mpBegin == mpEnd; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::size_type				vdfastvector_core<T>::size() const { return size_type(mpEnd - mpBegin); }
+template<class T> VDTINLINE typename vdfastvector_core<T>::pointer				vdfastvector_core<T>::data() { return mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_pointer			vdfastvector_core<T>::data() const { return mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_iterator		vdfastvector_core<T>::cbegin() const { return mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_iterator		vdfastvector_core<T>::cend() const { return mpEnd; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::iterator				vdfastvector_core<T>::begin() { return mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_iterator		vdfastvector_core<T>::begin() const { return mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::iterator				vdfastvector_core<T>::end() { return mpEnd; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_iterator		vdfastvector_core<T>::end() const { return mpEnd; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::reverse_iterator		vdfastvector_core<T>::rbegin() { return reverse_iterator(mpEnd); }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_reverse_iterator vdfastvector_core<T>::rbegin() const { return const_reverse_iterator(mpEnd); }
+template<class T> VDTINLINE typename vdfastvector_core<T>::reverse_iterator		vdfastvector_core<T>::rend() { return reverse_iterator(mpBegin); }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_reverse_iterator vdfastvector_core<T>::rend() const { return const_reverse_iterator(mpBegin); }
+template<class T> VDTINLINE typename vdfastvector_core<T>::reference				vdfastvector_core<T>::front() { return *mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_reference		vdfastvector_core<T>::front() const { return *mpBegin; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::reference				vdfastvector_core<T>::back() { VDASSERT(mpBegin != mpEnd); return mpEnd[-1]; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_reference		vdfastvector_core<T>::back() const { VDASSERT(mpBegin != mpEnd); return mpEnd[-1]; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::reference				vdfastvector_core<T>::operator[](size_type n) { VDASSERT(n < size_type(mpEnd - mpBegin)); return mpBegin[n]; }
+template<class T> VDTINLINE typename vdfastvector_core<T>::const_reference		vdfastvector_core<T>::operator[](size_type n) const { VDASSERT(n < size_type(mpEnd - mpBegin)); return mpBegin[n]; }
+
+///////////////////////////////////////////////////////////////////////////////
+
+template<class T>
+bool operator==(const vdfastvector_core<T>& x, const vdfastvector_core<T>& y) {
+	auto len = x.size();
+	if (len != y.size())
+		return false;
+
+	const T *px = x.data();
+	const T *py = y.data();
+
+	for(decltype(len) i=0; i<len; ++i) {
+		if (px[i] != py[i])
+			return false;
+	}
+
+	return true;
+}
+
+template<class T>
+inline bool operator!=(const vdfastvector_core<T>& x, const vdfastvector_core<T>& y) { return !(x == y); }
+
+///////////////////////////////////////////////////////////////////////////////
+
+template<class T, class S, class A = vdallocator<T> >
+class vdfastvector_base : public vdfastvector_core<T> {
+protected:
+	using vdfastvector_core<T>::mpBegin;
+	using vdfastvector_core<T>::mpEnd;
+
+public:
+	using value_type				= typename vdfastvector_core<T>::value_type;
+	using pointer					= typename vdfastvector_core<T>::pointer;
+	using const_pointer				= typename vdfastvector_core<T>::const_pointer;
+	using reference					= typename vdfastvector_core<T>::reference;
+	using const_reference			= typename vdfastvector_core<T>::const_reference;
+	using size_type					= typename vdfastvector_core<T>::size_type;
+	using difference_type			= typename vdfastvector_core<T>::difference_type;
+	using iterator					= typename vdfastvector_core<T>::iterator;
+	using const_iterator			= typename vdfastvector_core<T>::const_iterator;
+	using reverse_iterator			= typename vdfastvector_core<T>::reverse_iterator;
+	using const_reverse_iterator	= typename vdfastvector_core<T>::const_reverse_iterator;
 
 	~vdfastvector_base() {
 		static_assert(std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T>);
@@ -87,6 +207,11 @@ public:
 			*dst++ = *it1;
 			++it1;
 		}
+	}
+
+	template<typename R>
+	void assign_range(R&& r) {
+		assign(std::begin(r), std::end(r));
 	}
 
 	void clear() {
@@ -166,6 +291,16 @@ public:
 		mpEnd += elementsToCopy;
 		VDASSERT(mpEnd <= m.eos);
 		return it;
+	}
+
+	template<typename R>
+	iterator insert_range(iterator it, R&& r) {
+		return insert(it, std::begin(r), std::end(r));
+	}
+
+	template<typename R>
+	void append_range(R&& r) {
+		insert(this->end(), std::begin(r), std::end(r));
 	}
 
 	reference push_back() {

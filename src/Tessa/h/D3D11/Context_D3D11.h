@@ -1,3 +1,19 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2009-2025 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_D3D11_CONTEXT_D3D11_H
 #define f_D3D11_CONTEXT_D3D11_H
 
@@ -76,7 +92,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format);
 	void Shutdown();
 
-	bool Restore();
 	bool Lock(VDTLockData2D& lockData);
 	void Unlock();
 
@@ -89,24 +104,42 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
+class VDTConstantBufferD3D11 final : public vdrefcounted<IVDTConstantBuffer>, VDTResourceD3D11 {
+public:
+	VDTConstantBufferD3D11();
+	~VDTConstantBufferD3D11();
+
+	void *AsInterface(uint32 iid) override { return nullptr; }
+
+	bool Init(VDTContextD3D11& parent, uint32 size, const void *initDataOpt);
+	void Shutdown() override;
+
+	void Load(const void *newData) override;
+
+private:
+	friend class VDTContextD3D11;
+
+	ID3D11Buffer *mpD3DBuffer = nullptr;
+};
+
+///////////////////////////////////////////////////////////////////////////////
 class VDTSurfaceD3D11 final : public vdrefcounted<IVDTSurface>, VDTResourceD3D11 {
 public:
 	VDTSurfaceD3D11();
 	VDTSurfaceD3D11(IVDTTexture& owner);
 	~VDTSurfaceD3D11();
 
-	void *AsInterface(uint32 iid) { return NULL; }
+	void *AsInterface(uint32 iid) override { return NULL; }
 
 	bool Init(VDTContextD3D11 *parent, uint32 width, uint32 height, VDTFormat format, VDTUsage usage);
 	bool Init(VDTContextD3D11 *parent, IVDTTexture *owner, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, uint32 mipLevel, VDTUsage usage, bool onlyMip, bool forceSRGB);
-	void Shutdown();
+	void Shutdown() override;
 
-	bool Restore();
-	bool Readback(IVDTReadbackBuffer *target);
+	bool Readback(IVDTReadbackBuffer *target) override;
 	void Load(uint32 dx, uint32 dy, const VDTInitData2D& srcData, uint32 bpr, uint32 h);
-	void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h);
-	void GetDesc(VDTSurfaceDesc& desc);
-	IVDTTexture *GetTexture() const { return mpParentTexture; }
+	void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h) override;
+	void GetDesc(VDTSurfaceDesc& desc) override;
+	IVDTTexture *GetTexture() const override { return mpParentTexture; }
 	IVDTUnorderedAccessView *GetUnorderedAccessView() override { return &mUAView; }
 
 	bool Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData);
@@ -148,7 +181,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, ID3D11Texture2D *tex, ID3D11Texture2D *texsys, bool forceSRGB);
 	void Shutdown();
 
-	bool Restore();
 	void GetDesc(VDTTextureDesc& desc);
 	IVDTSurface *GetLevelSurface(uint32 level);
 	void Load(uint32 mip, uint32 x, uint32 y, const VDTInitData2D& srcData, uint32 w, uint32 h);
@@ -180,7 +212,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, uint32 size, bool dynamic, const void *initData);
 	void Shutdown();
 
-	bool Restore();
 	bool Load(uint32 offset, uint32 size, const void *data);
 
 protected:
@@ -202,7 +233,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, uint32 size, bool index32, bool dynamic, const void *initData);
 	void Shutdown();
 
-	bool Restore();
 	bool Load(uint32 offset, uint32 size, const void *data);
 
 protected:
@@ -227,8 +257,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, const VDTVertexElement *elements, uint32 count, VDTVertexProgramD3D11 *vp);
 	void Shutdown();
 
-	bool Restore();
-
 protected:
 	friend class VDTContextD3D11;
 
@@ -245,8 +273,6 @@ public:
 
 	bool Init(VDTContextD3D11 *parent, VDTProgramFormat format, const void *data, uint32 size);
 	void Shutdown();
-
-	bool Restore();
 
 protected:
 	friend class VDTContextD3D11;
@@ -267,8 +293,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, VDTProgramFormat format, const void *data, uint32 size);
 	void Shutdown();
 
-	bool Restore();
-
 protected:
 	friend class VDTContextD3D11;
 
@@ -286,8 +310,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, VDTProgramFormat format, const void *data, uint32 size);
 	void Shutdown();
 
-	bool Restore();
-
 protected:
 	friend class VDTContextD3D11;
 
@@ -304,8 +326,6 @@ public:
 
 	bool Init(VDTContextD3D11 *parent, const VDTBlendStateDesc& desc);
 	void Shutdown();
-
-	bool Restore();
 
 protected:
 	friend class VDTContextD3D11;
@@ -325,8 +345,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, const VDTRasterizerStateDesc& desc);
 	void Shutdown();
 
-	bool Restore();
-
 protected:
 	friend class VDTContextD3D11;
 
@@ -345,8 +363,6 @@ public:
 	bool Init(VDTContextD3D11 *parent, const VDTSamplerStateDesc& desc);
 	void Shutdown();
 
-	bool Restore();
-
 protected:
 	friend class VDTContextD3D11;
 
@@ -360,12 +376,10 @@ public:
 	VDTSwapChainD3D11();
 	~VDTSwapChainD3D11();
 
-	void *AsInterface(uint32 iid) { return NULL; }
+	void *AsInterface(uint32 iid) override { return NULL; }
 
 	bool Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& desc);
-	void Shutdown();
-
-	bool Restore() { return true; }
+	void Shutdown() override;
 
 	void SetPresentCallback(IVDTAsyncPresent *callback) override;
 
@@ -384,7 +398,7 @@ public:
 
 	void Present() override;
 
-	void PresentVSync(void *monitor, bool adaptive) override;
+	void PresentVSync(void *monitor) override;
 	void PresentVSyncRestart() override;
 	bool PresentVSyncComplete() override;
 	void PresentVSyncAbort() override;
@@ -404,7 +418,7 @@ protected:
 
 	void UpdateCompositionStatus(DXGI_FRAME_PRESENTATION_MODE dxgiPresentationMode);
 
-	void ThreadRun();
+	void ThreadRun() override;
 
 	IDXGISwapChain *mpSwapChain = nullptr;
 	IDXGISwapChain1 *mpSwapChain1 = nullptr;
@@ -436,7 +450,6 @@ protected:
 	VDCriticalSection mVSyncMutex;
 	void	*mhVSyncMonitor = nullptr;
 	bool	mbVSyncPollPending = false;
-	bool	mbVSyncPollAdaptive = false;
 
 	VSyncRequest mVSyncRequest = VSyncRequest::None;
 	uint64	mVSyncRequestTime = 0;
@@ -485,14 +498,51 @@ protected:
 };
 
 ///////////////////////////////////////////////////////////////////////////////
+
+class VDTQueryD3D11 : public VDTResourceD3D11 {
+public:
+	VDTQueryD3D11(vdrefptr<ID3D11Query>&& query);
+	~VDTQueryD3D11();
+
+	void Shutdown() override;
+
+	bool IsPending() const;
+
+protected:
+	vdrefptr<ID3D11Query> mpQuery;
+};
+
+class VDTTimestampQueryD3D11 final : public VDTQueryD3D11, public vdrefcounted<IVDTTimestampQuery> {
+public:
+	using VDTQueryD3D11::VDTQueryD3D11;
+
+	void *AsInterface(uint32 id) override;
+	void Issue() override;
+	bool IsPending() const override;
+	uint64 GetTimestamp() const override;
+};
+
+class VDTTimestampFrequencyQueryD3D11 final : public VDTQueryD3D11, public vdrefcounted<IVDTTimestampFrequencyQuery> {
+public:
+	using VDTQueryD3D11::VDTQueryD3D11;
+
+	void *AsInterface(uint32 id) override;
+	void Begin() override;
+	void End() override;
+	bool IsPending() const override;
+	double GetTimestampFrequency() const override;
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
 class VDTContextD3D11 final : public IVDTContext, public VDTResourceManagerD3D11, public VDAlignedObject<16> {
 public:
 	VDTContextD3D11();
 	~VDTContextD3D11();
 
-	int AddRef();
-	int Release();
-	void *AsInterface(uint32 id);
+	int AddRef() override;
+	int Release() override;
+	void *AsInterface(uint32 id) override;
 
 	bool Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGIAdapter1 *adapter, IDXGIFactory *factory, VDD3D11Holder *dllHolder);
 	void Shutdown();
@@ -505,62 +555,63 @@ public:
 
 	void SetImplicitSwapChain(VDTSwapChainD3D11 *sc);
 
-	const VDTDeviceCaps& GetDeviceCaps() { return mCaps; }
-	bool IsFormatSupportedTexture2D(VDTFormat format);
+	const VDTDeviceCaps& GetDeviceCaps() override { return mCaps; }
+	bool IsFormatSupportedTexture2D(VDTFormat format) override;
 	bool IsFormatSupportedRenderTarget2D(VDTFormat format);
-	bool IsMonitorHDREnabled(void *monitor, bool& systemSupport);
+	bool IsMonitorHDREnabled(void *monitor, bool& systemSupport) override;
 
-	bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer);
-	bool CreateSurface(uint32 width, uint32 height, VDTFormat format, VDTUsage usage, IVDTSurface **surface);
-	bool CreateTexture2D(uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData, IVDTTexture2D **tex);
-	bool CreateVertexProgram(VDTProgramFormat format, VDTData data, IVDTVertexProgram **tex);
-	bool CreateFragmentProgram(VDTProgramFormat format, VDTData data, IVDTFragmentProgram **tex);
-	bool CreateComputeProgram(VDTProgramFormat format, VDTData data, IVDTComputeProgram **tex);
-	bool CreateVertexFormat(const VDTVertexElement *elements, uint32 count, IVDTVertexProgram *vp, IVDTVertexFormat **format);
-	bool CreateVertexBuffer(uint32 size, bool dynamic, const void *initData, IVDTVertexBuffer **buffer);
-	bool CreateIndexBuffer(uint32 size, bool index32, bool dynamic, const void *initData, IVDTIndexBuffer **buffer);
+	bool CreateReadbackBuffer(uint32 width, uint32 height, VDTFormat format, IVDTReadbackBuffer **buffer) override;
+	bool CreateSurface(uint32 width, uint32 height, VDTFormat format, VDTUsage usage, IVDTSurface **surface) override;
+	bool CreateTexture2D(uint32 width, uint32 height, VDTFormat format, uint32 mipcount, VDTUsage usage, const VDTInitData2D *initData, IVDTTexture2D **tex) override;
+	bool CreateVertexProgram(VDTProgramFormat format, VDTData data, IVDTVertexProgram **tex) override;
+	bool CreateFragmentProgram(VDTProgramFormat format, VDTData data, IVDTFragmentProgram **tex) override;
+	bool CreateComputeProgram(VDTProgramFormat format, VDTData data, IVDTComputeProgram **tex) override;
+	bool CreateVertexFormat(const VDTVertexElement *elements, uint32 count, IVDTVertexProgram *vp, IVDTVertexFormat **format) override;
+	bool CreateVertexBuffer(uint32 size, bool dynamic, const void *initData, IVDTVertexBuffer **buffer) override;
+	bool CreateIndexBuffer(uint32 size, bool index32, bool dynamic, const void *initData, IVDTIndexBuffer **buffer) override;
+	vdrefptr<IVDTConstantBuffer> CreateConstantBuffer(uint32 size, const void *initDataOpt) override;
 
-	bool CreateBlendState(const VDTBlendStateDesc& desc, IVDTBlendState **state);
-	bool CreateRasterizerState(const VDTRasterizerStateDesc& desc, IVDTRasterizerState **state);
-	bool CreateSamplerState(const VDTSamplerStateDesc& desc, IVDTSamplerState **state);
+	bool CreateBlendState(const VDTBlendStateDesc& desc, IVDTBlendState **state) override;
+	bool CreateRasterizerState(const VDTRasterizerStateDesc& desc, IVDTRasterizerState **state) override;
+	bool CreateSamplerState(const VDTSamplerStateDesc& desc, IVDTSamplerState **state) override;
 
-	bool CreateSwapChain(const VDTSwapChainDesc& desc, IVDTSwapChain **swapChain);
+	bool CreateSwapChain(const VDTSwapChainDesc& desc, IVDTSwapChain **swapChain) override;
 
-	IVDTSurface *GetRenderTarget(uint32 index) const;
-	bool GetRenderTargetBypass(uint32 index) const;
+	IVDTSurface *GetRenderTarget(uint32 index) const override;
+	bool GetRenderTargetBypass(uint32 index) const override;
 
-	void SetVertexFormat(IVDTVertexFormat *format);
-	void SetVertexProgram(IVDTVertexProgram *program);
-	void SetFragmentProgram(IVDTFragmentProgram *program);
-	void SetVertexStream(uint32 index, IVDTVertexBuffer *buffer, uint32 offset, uint32 stride);
-	void SetIndexStream(IVDTIndexBuffer *buffer);
-	void SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion);
+	void SetVertexFormat(IVDTVertexFormat *format) override;
+	void SetVertexProgram(IVDTVertexProgram *program) override;
+	void SetFragmentProgram(IVDTFragmentProgram *program) override;
+	void SetVertexStream(uint32 index, IVDTVertexBuffer *buffer, uint32 offset, uint32 stride) override;
+	void SetIndexStream(IVDTIndexBuffer *buffer) override;
+	void SetRenderTarget(uint32 index, IVDTSurface *surface, bool bypassConversion) override;
 
-	void SetBlendState(IVDTBlendState *state);
-	void SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states);
-	void SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures);
-	void ClearTexturesStartingAt(uint32 baseIndex);
+	void SetBlendState(IVDTBlendState *state) override;
+	void SetSamplerStates(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) override;
+	void SetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) override;
+	void ClearTexturesStartingAt(uint32 baseIndex) override;
 
 	// rasterizer
-	void SetRasterizerState(IVDTRasterizerState *state);
-	VDTViewport GetViewport();
-	void SetViewport(const VDTViewport& vp);
-	vdrect32 GetScissorRect();
-	void SetScissorRect(const vdrect32& r);
+	void SetRasterizerState(IVDTRasterizerState *state) override;
+	VDTViewport GetViewport() override;
+	void SetViewport(const VDTViewport& vp) override;
+	vdrect32 GetScissorRect() override;
+	void SetScissorRect(const vdrect32& r) override;
 
-	void SetVertexProgramConstCount(uint32 count);
-	void SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data);
-	void SetFragmentProgramConstCount(uint32 count);
-	void SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data);
+	void VsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) override;
+	void VsClearConstantBuffersStartingAt(uint32 index) override;
 
-	void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil);
-	void DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount);
-	void DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount);
+	void PsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) override;
+	void PsClearConstantBuffersStartingAt(uint32 index) override;
+
+	void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) override;
+	void DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount) override;
+	void DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount) override;
 
 	// compute
 	void CsSetProgram(IVDTComputeProgram *program) override;
-	void CsSetConstCount(uint32 count) override;
-	void CsSetConstF(uint32 baseIndex, uint32 count, const float *data) override;
+	void CsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) override;
 	void CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) override;
 	void CsSetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) override;
 	void CsClearTexturesStartingAt(uint32 baseIndex) override;
@@ -569,21 +620,24 @@ public:
 	void CsDispatch(uint32 x, uint32 y, uint32 z) override;
 
 	// misc
-	uint32 InsertFence();
-	bool CheckFence(uint32 id);
+	uint32 InsertFence() override;
+	bool CheckFence(uint32 id) override;
 
-	bool RecoverDevice();
-	bool OpenScene();
-	bool CloseScene();
-	bool IsDeviceLost() const { return false; }
-	uint32 GetDeviceLossCounter() const;
-	void Present();
+	vdrefptr<IVDTTimestampQuery> CreateTimestampQuery() override;
+	vdrefptr<IVDTTimestampFrequencyQuery> CreateTimestampFrequencyQuery() override;
 
-	void SetGpuPriority(int priority) {}
+	bool RecoverDevice() override;
+	bool OpenScene() override;
+	bool CloseScene() override;
+	bool IsDeviceLost() const override { return false; }
+	uint32 GetDeviceLossCounter() const override;
+	void Present() override;
+
+	void SetGpuPriority(int priority) override {}
 
 public:
-	void BeginScope(uint32 color, const char *message);
-	void EndScope();
+	void BeginScope(uint32 color, const char *message) override;
+	void EndScope() override;
 
 public:
 	void UnsetVertexFormat(IVDTVertexFormat *format);
@@ -592,6 +646,7 @@ public:
 	void UnsetComputeProgram(IVDTComputeProgram *program);
 	void UnsetVertexBuffer(IVDTVertexBuffer *buffer);
 	void UnsetIndexBuffer(IVDTIndexBuffer *buffer);
+	void UnsetConstantBuffer(IVDTConstantBuffer& buffer);
 	void UnsetRenderTarget(IVDTSurface *surface);
 
 	void UnsetBlendState(IVDTBlendState *state);
@@ -602,9 +657,6 @@ public:
 	void ProcessHRESULT(uint32 hr);
 
 protected:
-	void UpdateConstants();
-	void CsUpdateConstants();
-
 	struct PrivateData;
 
 	VDAtomicInt	mRefCount { 0 };
@@ -616,19 +668,11 @@ protected:
 	ID3D11Device *mpD3DDevice = nullptr;
 	ID3D11DeviceContext *mpD3DDeviceContext = nullptr;
 
-	static const uint32 kConstBaseShift = 4;
-	static const uint32 kConstMaxShift = 5;
-	static const uint8 kConstLookup[17];
+	static constexpr uint32 kMaxConstantBuffers = 4;
 
-	ID3D11Buffer *mpVSConstBuffers[kConstMaxShift] = {};
-	ID3D11Buffer *mpPSConstBuffers[kConstMaxShift] = {};
-	ID3D11Buffer *mpCSConstBuffers[kConstMaxShift] = {};
-	uint32 mVSConstShift = 0;
-	uint32 mPSConstShift = 0;
-	uint32 mCSConstShift = 0;
-	bool mbVSConstDirty = true;
-	bool mbPSConstDirty = true;
-	bool mbCSConstDirty = true;
+	IVDTConstantBuffer *mpVsConstBuffers[kMaxConstantBuffers] {};
+	IVDTConstantBuffer *mpPsConstBuffers[kMaxConstantBuffers] {};
+	IVDTConstantBuffer *mpCsConstBuffers[kMaxConstantBuffers] {};
 
 	int mLastPrimitiveType = -1;
 
@@ -663,10 +707,6 @@ protected:
 
 	ID3DUserDefinedAnnotation *mpD3DAnnotation {};
 	VDStringW mProfBuffer;
-
-	alignas(16) float mVSConsts[16][4] = {};
-	alignas(16) float mPSConsts[16][4] = {};
-	alignas(16) float mCSConsts[16][4] = {};
 };
 
 bool VDTCreateContextD3D11(IVDTContext **ppctx);

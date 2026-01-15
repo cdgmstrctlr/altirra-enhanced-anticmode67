@@ -1023,10 +1023,10 @@ void AVIOutputFile::partialWriteIndexedChunkBegin(int nStream, uint32 flags, uin
 			uint32 idxblocks = (s.mChunkCount + idxblocksize - 1) / idxblocksize;
 
 			mIndexSize += idxblocks * (sizeof(AVISTDINDEX) + 8*idxblocksize);
-			mIndexSize += 8*stream.mChunkCount;
+			mIndexSize += 8*chunkCount;
 		}
 
-		mIndexSize += 16*stream.mChunkCount;
+		mIndexSize += 16*chunkCount;
 	}
 	
 	// Give ourselves ~4K of headroom...

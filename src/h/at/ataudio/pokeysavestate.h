@@ -57,6 +57,10 @@ public:
 
 	bool mbSerClockPhase = false;
 
+	uint32 mPotChargeLevels[8] {};
+	uint32 mPotMasterCounter = 0;
+	bool mbPotScanActive = false;
+
 	uint32 mTraceByteIndex = 0;
 
 	ATSaveStatePokeyRenderer mRendererState;
@@ -76,6 +80,8 @@ public:
 	uint8 mSKSTAT = 0;
 	uint8 mALLPOT = 0;
 	uint8 mKBCODE = 0;
+	uint8 mPOT[8] {};
+
 	vdrefptr<ATSaveStatePokeyInternal> mpInternalState;
 	vdrefptr<IATObjectState> mpStereoPair;
 };

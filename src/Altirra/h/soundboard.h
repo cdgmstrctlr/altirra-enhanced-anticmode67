@@ -56,7 +56,7 @@ public:
 
 public:
 	void InitMemMap(ATMemoryManager *memmap) override;
-	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:
 	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;

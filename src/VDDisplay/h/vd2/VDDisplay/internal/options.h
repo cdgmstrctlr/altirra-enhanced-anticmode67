@@ -20,6 +20,7 @@
 struct VDDInternalOptions {
 	static bool sbD3D9LimitPS1_1;
 	static bool sbD3D9LimitPS2_0;
+	static bool sbShowCustomShaderStats;
 };
 
 #endif

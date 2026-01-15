@@ -109,11 +109,11 @@ namespace ATTestSystemFunction {
 			TEST_ASSERT(src.mpThis == this);
 			
 			mId = src.mId;
-			return *this;
 			LOG_ME();
+			return *this;
 		}
 
-		MovableObject& operator=(const MovableObject&& src) vdnoexcept_false {
+		MovableObject& operator=(MovableObject&& src) vdnoexcept_false {
 			TEST_ASSERT(&src != this);
 			TEST_ASSERT(mpThis == this);
 			TEST_ASSERT(src.mpThis == this);
@@ -121,8 +121,8 @@ namespace ATTestSystemFunction {
 			mId = src.mId;
 			src.mId = 0;
 
-			return *this;
 			LOG_ME();
+			return *this;
 		}
 
 		int GetId() const {

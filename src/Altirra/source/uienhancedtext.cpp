@@ -41,22 +41,22 @@ public:
 	ATUIEnhancedTextEngine();
 	~ATUIEnhancedTextEngine();
 
-	void Init(IATUIEnhancedTextOutput *output, ATSimulator *sim);
-	void Shutdown();
+	void Init(IATUIEnhancedTextOutput *output, ATSimulator *sim) override;
+	void Shutdown() override;
 
-	bool IsRawInputEnabled() const;
-	IATDeviceVideoOutput *GetVideoOutput();
+	bool IsRawInputEnabled() const override;
+	IATDeviceVideoOutput *GetVideoOutput() override;
 
-	void SetFont(const LOGFONTW *font);
+	void SetFont(const LOGFONTW *font) override;
 
 	void OnSize(uint32 w, uint32 h) override;
 	void OnChar(int ch) override;
 	bool OnKeyDown(uint32 keyCode) override;
 	bool OnKeyUp(uint32 keyCode) override;
 
-	void Paste(const wchar_t *s, size_t);
+	void Paste(const wchar_t *s, size_t) override;
 
-	void Update(bool forceInvalidate);
+	void Update(bool forceInvalidate) override;
 
 public:
 	const char *GetName() const override;

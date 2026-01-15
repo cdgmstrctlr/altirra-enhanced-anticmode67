@@ -514,7 +514,7 @@ public:
 	ATDeviceSX212();
 	~ATDeviceSX212();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -535,7 +535,7 @@ public:	// IATAudioOutput
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
-	void GetCIODevices(char *buf, size_t len) const override;
+	void GetCIODevices(IATDeviceCIODeviceList& deviceList) const override;
 	sint32 OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) override;
 	sint32 OnCIOClose(int channel, uint8 deviceNo) override;
 	sint32 OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) override;
@@ -559,6 +559,7 @@ protected:
 	IATDeviceIndicatorManager *mpUIRenderer {};
 	IATDeviceCIOManager *mpCIOMgr {};
 	IATDeviceSIOManager *mpSIOMgr {};
+	IATDeviceSIOInterface *mpSIOInterface = nullptr;
 	IATAudioMixer *mpAudioMixer {};
 
 	ATRS232ChannelSX212 *mpChannel {};
@@ -626,10 +627,13 @@ bool ATDeviceSX212::SetSettings(const ATPropertySet& settings) {
 			}
 
 			if (mpSIOMgr) {
-				if (newLevel == kAT850SIOEmulationLevel_None)
-					mpSIOMgr->RemoveDevice(this);
-				else if (mEmulationLevel == kAT850SIOEmulationLevel_None)
-					mpSIOMgr->AddDevice(this);
+				if (newLevel == kAT850SIOEmulationLevel_None) {
+					mpSIOMgr->RemoveRawDevice(this);
+					mpSIOInterface = nullptr;
+				} else if (mEmulationLevel == kAT850SIOEmulationLevel_None) {
+					mpSIOMgr->AddRawDevice(this);
+					mpSIOInterface = mpSIOMgr->AddDevice(this);
+				}
 			}
 
 			mEmulationLevel = newLevel;
@@ -649,9 +653,10 @@ void ATDeviceSX212::Shutdown() {
 		mpCIOMgr = nullptr;
 	}
 
+	mpSIOInterface = nullptr;
+
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
-		mpSIOMgr->RemoveDevice(this);
 		mpSIOMgr = nullptr;
 	}
 
@@ -672,7 +677,7 @@ void ATDeviceSX212::ColdReset() {
 	if (mpChannel)
 		mpChannel->ColdReset();
 
-	mbSIOMotorState = false;
+	mbSIOMotorState = mpSIOMgr->IsSIOMotorAsserted();
 }
 
 void ATDeviceSX212::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
@@ -695,8 +700,8 @@ void ATDeviceSX212::InitCIO(IATDeviceCIOManager *mgr) {
 		mpCIOMgr->AddCIODevice(this);
 }
 
-void ATDeviceSX212::GetCIODevices(char *buf, size_t len) const {
-	vdstrlcpy(buf, "R", len);
+void ATDeviceSX212::GetCIODevices(IATDeviceCIODeviceList& deviceList) const {
+	deviceList.AddDevice('R');
 }
 
 sint32 ATDeviceSX212::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {

@@ -33,7 +33,7 @@ public:
 	ATSnapObjectSerializer(const wchar_t *rootFileName);
 
 	void SetCompressionLevel(VDDeflateCompressionLevel level) override { mCompressionLevel = level; }
-	void SetProgressFn(vdfunction<void(int, int)> fn);
+	void SetProgressFn(vdfunction<void(int, int)> fn) override;
 
 	void Serialize(IVDStream& stream, IATSerializable& object, const wchar_t *packageType) override;
 	void Serialize(IVDZipArchiveWriter& zip, IATSerializable& snapshot) override;
@@ -55,6 +55,7 @@ public:
 	void WriteUint64(uint64 v) override;
 	void WriteDouble(double v) override;
 	void WriteObject(IATSerializable *obj) override;
+	void WriteNullInlineObject() override;
 	void WriteBulkData(const void *data, uint32 len) override;
 
 private:
@@ -260,6 +261,10 @@ void ATSnapObjectSerializer::WriteObject(IATSerializable *obj) {
 	mWriter.WriteIntSafe(AddObject(obj));
 }
 
+void ATSnapObjectSerializer::WriteNullInlineObject() {
+	mWriter.WriteNull();
+}
+
 void ATSnapObjectSerializer::WriteBulkData(const void *data, uint32 len) {
 }
 
@@ -391,7 +396,7 @@ class ATSnapObjectDeserializer final : public IATSaveStateDeserializer {
 public:
 	ATSnapObjectDeserializer(const wchar_t *rootFileName);
 
-	void SetProgressFn(vdfunction<void(int, int)> fn);
+	void SetProgressFn(vdfunction<void(int, int)> fn) override;
 
 	void Deserialize(IVDRandomAccessStream& stream, IATSerializable **snapshot) override;
 	void Deserialize(VDZipArchive& zip, IATSerializable **saveState, IVDRefCount *deferredZip = nullptr) override;
@@ -408,6 +413,7 @@ public:
 	bool ReadUint64(const char *key, uint64& value) override;
 	bool ReadDouble(const char *key, double& value) override;
 	bool ReadObject(const char *key, const ATSerializationTypeDef *type, IATSerializable*& value) override;
+	bool ReadInlineObject(const char *key, const ATSerializationTypeDef *type, int depth, IATSerializable*& value) override;
 
 	bool ReadFixedBulkData(void *data, uint32 len) override;
 	bool ReadVariableBulkData(vdfastvector<uint8>& buf) override;
@@ -507,7 +513,7 @@ void ATSnapObjectDeserializer::Deserialize(const void *data, uint32 len, const v
 			} else {
 				mParentValue = objectInfo;
 
-				ATDeserializer reader(*this);
+				ATDeserializer reader(*this, 0);
 				obj->Deserialize(reader);
 			}
 		}
@@ -719,6 +725,35 @@ bool ATSnapObjectDeserializer::ReadObject(const char *key, const ATSerialization
 	return true;
 }
 
+bool ATSnapObjectDeserializer::ReadInlineObject(const char *key, const ATSerializationTypeDef *type, int depth, IATSerializable*& value) {
+	VDJSONValueRef child = GetNextChild(key);
+
+	if (child.IsNull()) {
+		value = nullptr;
+		return true;
+	}
+
+	if (!child.IsObject())
+		return false;
+
+	VDJSONValueRef typeRef = child["_type"];
+	if (!typeRef.IsString())
+		return false;
+
+	const ATSerializationTypeDef *def = ATSerializationFindType(VDTextWToA(typeRef.AsString()).c_str());
+	if (!def)
+		return false;
+
+	value = ATSerializationCreateObject(*def).release();
+	if (!value)
+		return false;
+
+	ATDeserializer reader(*this, depth + 1);
+	value->Deserialize(reader);
+
+	return true;
+}
+	
 bool ATSnapObjectDeserializer::ReadFixedBulkData(void *data, uint32 len) {
 	return false;
 }

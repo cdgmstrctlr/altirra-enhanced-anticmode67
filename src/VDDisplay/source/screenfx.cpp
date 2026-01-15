@@ -15,8 +15,10 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <vd2/system/cpuaccel.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/VDDisplay/displaytypes.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 
 void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, float outputGamma, float gammaAdjust) {
@@ -102,6 +104,496 @@ void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, ui
 	if (dstH < texSize)
 		std::fill(scanlineTex + dstH, scanlineTex + texSize, scanlineTex[dstH - 1]); 
 }
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplayApertureGrilleParams::VDDisplayApertureGrilleParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW) {
+	mPixelsPerTriad = maskParams.mSourcePixelsPerDot * dstW / srcW;
+	mRedCenter = 1.0f / 6.0f;
+	mGrnCenter = 3.0f / 6.0f;
+	mBluCenter = 5.0f / 6.0f;
+	mRedWidth = 10.0f / 60.0f * maskParams.mOpenness;
+	mGrnWidth = 10.0f / 60.0f * maskParams.mOpenness;
+	mBluWidth = 10.0f / 60.0f * maskParams.mOpenness;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+void VDDisplayRenderApertureGrilleChannel(
+	uint32 *tex,
+	uint32 w,
+	uint32 channelMask,
+	float pixelsPerDot,
+	float dotCenter,
+	float dotWidth,
+	float dstX)
+{
+	float x1 = (dotCenter - dotWidth) * pixelsPerDot;
+	float x2 = (dotCenter + dotWidth) * pixelsPerDot;
+	uint32 channelScale = 0x010101 & channelMask;
+
+	x1 += dstX;
+	x2 += dstX;
+
+	float offsetX = floorf(x2 / pixelsPerDot) * pixelsPerDot;
+	x1 -= offsetX;
+	x2 -= offsetX;
+
+	float intensity4 = 0;
+	float intensity3 = 0;
+	float intensity2 = 0;
+
+	while(w--) {
+		float intensity = intensity2;
+		intensity2 = intensity3;
+		intensity3 = intensity4;
+		intensity4 = 0;
+
+		while(x1 < 1.0f) {
+			float xn1 = std::min(1.0f, x1);
+			float xn2 = std::min(1.0f, x2);
+
+			xn1 = std::max(0.0f, xn1);
+			xn2 = std::max(0.0f, xn2);
+
+			// accumulate left half triangle filter
+			const float tri = xn2*xn2 - xn1*xn1;
+			const float linear = xn2 - xn1;
+
+			intensity4 += tri;
+			intensity3 += tri + linear*2;
+
+			// accumulate right half triangle filter
+			intensity2 += linear*4 - tri;
+			intensity += linear*2 - tri;
+
+			if (x2 >= 1.0f)
+				break;
+
+			x1 += pixelsPerDot;
+			x2 += pixelsPerDot;
+		}
+
+		x1 -= 1.0f;
+		x2 -= 1.0f;
+
+		*tex++ |= channelScale * (int)(0.5f + intensity * (255.0f * 0.125f));
+	}
+}
+
+void VDDisplayCreateApertureGrilleTexture(uint32 *tex, uint32 w, float dstX, const VDDisplayApertureGrilleParams& params) {
+	memset(tex, 0, sizeof(tex[0]) * w);
+
+	const float ppt = params.mPixelsPerTriad;
+
+	VDDisplayRenderApertureGrilleChannel(
+		tex,
+		w,
+		0xFF0000,
+		ppt,
+		params.mRedCenter,
+		params.mRedWidth,
+		dstX
+	);
+
+	VDDisplayRenderApertureGrilleChannel(
+		tex,
+		w,
+		0x00FF00,
+		ppt,
+		params.mGrnCenter,
+		params.mGrnWidth,
+		dstX
+	);
+
+	VDDisplayRenderApertureGrilleChannel(
+		tex,
+		w,
+		0x0000FF,
+		ppt,
+		params.mBluCenter,
+		params.mBluWidth,
+		dstX
+	);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplaySlotMaskParams::VDDisplaySlotMaskParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW) {
+	const float scale = maskParams.mSourcePixelsPerDot * dstW / (float)srcW;
+
+	mPixelsPerBlockH = scale;
+	mPixelsPerBlockV = scale;
+
+	mRedCenter = scale * (0.5f / 3.0f);
+	mGrnCenter = scale * (1.5f / 3.0f);
+	mBluCenter = scale * (2.5f / 3.0f);
+
+	const float slotHalfWidth = scale * (0.5f / 3.0f) * maskParams.mOpenness;
+	mRedWidth = slotHalfWidth;
+	mGrnWidth = slotHalfWidth;
+	mBluWidth = slotHalfWidth;
+
+	const float slotHalfHeight = mPixelsPerBlockV * 0.5f * ((2.0f + maskParams.mOpenness)/3.0f);
+	mRedHeight = slotHalfHeight;
+	mGrnHeight = slotHalfHeight;
+	mBluHeight = slotHalfHeight;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+void VDDisplayBlendMasks_Scalar(uint32 *dst0, const uint32 *src00, const uint32 *src10, uint32 w, float weight0, float weight1) {
+	const uint32 iweight0 = VDRoundToInt32(weight0 * 256.0f);
+	const uint32 iweight1 = VDRoundToInt32(weight1 * 256.0f);
+
+	const uint32 *VDRESTRICT src0 = src00;
+	const uint32 *VDRESTRICT src1 = src10;
+	uint32 *VDRESTRICT dst = dst0;
+
+	for(uint32 x = 0; x < w; ++ x) {
+		const uint32 px0 = src0[x];
+		const uint32 px1 = src1[x];
+		const uint32 rb0 = px0 & 0xFF00FF;
+		const uint32 rb1 = px1 & 0xFF00FF;
+		const uint32 g0 = px0 & 0xFF00;
+		const uint32 g1 = px1 & 0xFF00;
+
+		const uint32 rb = (rb0 * iweight0 + rb1 * iweight1 + 0x800080) & 0xFF00FF00;
+		const uint32 g = (g0 * iweight0 + g1 * iweight1 + 0x8000) & 0xFF0000;
+
+		dst[x] = (rb + g) >> 8;
+	}
+}
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+VD_CPU_TARGET("ssse3")
+void VDDisplayBlendMasks_SSSE3(uint32 *dst0, const uint32 *src00, const uint32 *src10, uint32 w, float weight0, float weight1) {
+	const uint32 iweight0 = VDRoundToInt32(weight0 * 128.0f);
+	const uint32 iweight1 = VDRoundToInt32(weight1 * 128.0f);
+
+	const uint32 *VDRESTRICT src0 = src00;
+	const uint32 *VDRESTRICT src1 = src10;
+	uint32 *VDRESTRICT dst = dst0;
+
+	uint32 w4 = w >> 2;
+	w &= 3;
+
+	const __m128i factors = _mm_set1_epi16(((0U-iweight0) & 0xFF) + ((0U-iweight1 & 0xFF) << 8));
+	const __m128i round = _mm_set1_epi16(64);
+
+	for(uint32 x4 = 0; x4 < w4; ++x4) {
+		const __m128i px0 = _mm_loadu_si128((const __m128i *)src0);
+		const __m128i px1 = _mm_loadu_si128((const __m128i *)src1);
+
+		src0 += 4;
+		src1 += 4;
+
+		const __m128i ra = _mm_srai_epi16(_mm_sub_epi16(round, _mm_maddubs_epi16(_mm_unpacklo_epi8(px0, px1), factors)), 7);
+		const __m128i rb = _mm_srai_epi16(_mm_sub_epi16(round, _mm_maddubs_epi16(_mm_unpackhi_epi8(px0, px1), factors)), 7);
+		const __m128i r = _mm_packus_epi16(ra, rb);
+
+		_mm_storeu_si128((__m128i *)dst, r);
+		dst += 4;
+	}
+
+	for(uint32 x = 0; x < w; ++x) {
+		const __m128i px0 = _mm_loadu_si32(src0++);
+		const __m128i px1 = _mm_loadu_si32(src1++);
+
+		const __m128i ra = _mm_srai_epi16(_mm_sub_epi16(round, _mm_maddubs_epi16(_mm_unpacklo_epi8(px0, px1), factors)), 7);
+		const __m128i r = _mm_packus_epi16(ra, ra);
+
+		*dst++ = _mm_cvtsi128_si32(r);
+	}
+}
+#elif defined(VD_CPU_ARM64)
+void VDDisplayBlendMasks_NEON(uint32 *dst0, const uint32 *src00, const uint32 *src10, uint32 w, float weight0, float weight1) {
+	const uint32 iweight0 = VDRoundToInt32(weight0 * 128.0f);
+	const uint32 iweight1 = VDRoundToInt32(weight1 * 128.0f);
+
+	const uint32 *VDRESTRICT src0 = src00;
+	const uint32 *VDRESTRICT src1 = src10;
+	uint32 *VDRESTRICT dst = dst0;
+
+	uint32 w4 = w >> 2;
+	w &= 3;
+
+	const uint8x16_t factor0 = vdupq_n_u8(iweight0);
+	const uint8x16_t factor1 = vdupq_n_u8(iweight1);
+
+	for(uint32 x4 = 0; x4 < w4; ++x4) {
+		const uint8x16_t px0 = vreinterpretq_u8_u32(vld1q_u32(src0));
+		const uint8x16_t px1 = vreinterpretq_u8_u32(vld1q_u32(src1));
+
+		src0 += 4;
+		src1 += 4;
+
+		const uint8x8_t ra = vqrshrn_n_u16(vmlal_u8(vmull_u8(vget_low_u8(px0), vget_low_u8(factor0)), vget_low_u8(px1), vget_low_u8(factor1)), 7);
+		const uint8x8_t rb = vqrshrn_n_u16(vmlal_high_u8(vmull_high_u8(px0, factor0), px1, factor1), 7);
+
+		vst1_u32(dst + 0, vreinterpret_u32_u8(ra));
+		vst1_u32(dst + 2, vreinterpret_u32_u8(rb));
+		dst += 4;
+	}
+
+	for(uint32 x = 0; x < w; ++x) {
+		const uint8x8_t px0 = vreinterpret_u8_u32(vdup_n_u32(*src0++));
+		const uint8x8_t px1 = vreinterpret_u8_u32(vdup_n_u32(*src1++));
+
+		const uint8x8_t ra = vqrshrn_n_u16(vmlal_u8(vmull_u8(px0, vget_low_u8(factor0)), px1, vget_low_u8(factor1)), 7);
+
+		*dst++ = vget_lane_u32(vreinterpret_u32_u8(ra), 0);
+	}
+}
+#endif
+
+void VDDisplayBlendMasks(uint32 *dst, const uint32 *src0, const uint32 *src1, uint32 w, float weight0, float weight1) {
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	if (VDCheckAllExtensionsEnabled(CPUF_SUPPORTS_SSE2 | CPUF_SUPPORTS_SSSE3)) {
+		return VDDisplayBlendMasks_SSSE3(dst, src0, src1, w, weight0, weight1);
+	}
+
+	return VDDisplayBlendMasks_Scalar(dst, src0, src1, w, weight0, weight1);
+#elif defined(VD_CPU_ARM64)
+	return VDDisplayBlendMasks_NEON(dst, src0, src1, w, weight0, weight1);
+#endif
+}
+
+void VDDisplayCreateSlotMaskTexture(uint32 *tex, ptrdiff_t pitch, uint32 w, uint32 h, float dstX, float dstY, float dstW, float dstH, const VDDisplaySlotMaskParams& params) {
+	// pre-render masks for the even and odd stripes using the aperture grille path
+	VDDisplayApertureGrilleParams evenParams;
+	evenParams.mPixelsPerTriad = params.mPixelsPerBlockH * 2;
+	evenParams.mRedCenter = params.mRedCenter * 0.5f / params.mPixelsPerBlockH;
+	evenParams.mRedWidth = params.mRedWidth * 0.5f / params.mPixelsPerBlockH;
+	evenParams.mGrnCenter = params.mGrnCenter * 0.5f / params.mPixelsPerBlockH;
+	evenParams.mGrnWidth = params.mGrnWidth * 0.5f / params.mPixelsPerBlockH;
+	evenParams.mBluCenter = params.mBluCenter * 0.5f / params.mPixelsPerBlockH;
+	evenParams.mBluWidth = params.mBluWidth * 0.5f / params.mPixelsPerBlockH;
+
+	VDDisplayApertureGrilleParams oddParams = evenParams;
+	oddParams.mRedCenter += 0.5f;
+	oddParams.mGrnCenter += 0.5f;
+	oddParams.mBluCenter += 0.5f;
+
+	vdfastvector<uint32> evenMask(w, 0);
+	vdfastvector<uint32> oddMask(w, 0);
+
+	VDDisplayCreateApertureGrilleTexture(evenMask.data(), w, dstX, evenParams);
+	VDDisplayCreateApertureGrilleTexture(oddMask.data(), w, dstX, oddParams);
+
+	const float pixelsPerBlockV = params.mPixelsPerBlockV;
+	const float slotHalfHeight = params.mRedHeight;
+
+	for(uint32 y = 0; y < h; ++y) {
+		// compute even/odd weights for this scanline
+		const float dstY2 = dstY + (float)y;
+		float slotWeights[2] {};
+
+		for(int i=0; i<16; ++i) {
+			float fy = ((float)i + 0.5f) / 16.0f + dstY2;
+
+			float dy1 = fy;
+			float dy2 = fy - pixelsPerBlockV * 0.5f;
+
+			dy1 -= VDRoundFast(dy1 / pixelsPerBlockV) * pixelsPerBlockV;
+			dy2 -= VDRoundFast(dy2 / pixelsPerBlockV) * pixelsPerBlockV;
+
+			if (fabsf(dy1) < slotHalfHeight)
+				slotWeights[0] += 1.0f / 16.0f;
+
+			if (fabsf(dy2) < slotHalfHeight)
+				slotWeights[1] += 1.0f / 16.0f;
+		}
+
+		// blend the even and odd masks together to form final scanline mask
+		VDDisplayBlendMasks(tex, evenMask.data(), oddMask.data(), w, slotWeights[0], slotWeights[1]);
+
+		tex = (uint32 *)((char *)tex + pitch);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+VDDisplayTriadDotMaskParams::VDDisplayTriadDotMaskParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW) {
+	const float scale = maskParams.mSourcePixelsPerDot / 1.5f * dstW / (float)srcW;
+	const float r3d2 = sqrtf(3.0f) * 0.5f;
+
+	mPixelsPerTriadH = scale * 3.0f;
+	mPixelsPerTriadV = scale * r3d2 * 2.0f;
+
+	mRedCenter[0][0] = scale * 0.5f;
+	mRedCenter[0][1] = scale * 0.5f;
+	mGrnCenter[0][0] = scale * 1.5f;
+	mGrnCenter[0][1] = scale * 0.5f;
+	mBluCenter[0][0] = scale * 1.0f;
+	mBluCenter[0][1] = scale * (0.5f + r3d2);
+
+	mRedCenter[1][0] = scale * 2.0f;
+	mRedCenter[1][1] = scale * (0.5f + r3d2);
+	mGrnCenter[1][0] = scale * 3.0f;
+	mGrnCenter[1][1] = scale * (0.5f + r3d2);
+	mBluCenter[1][0] = scale * 2.5f;
+	mBluCenter[1][1] = scale * 0.5f;
+
+	const float dotRadius = scale * 0.5f * maskParams.mOpenness;
+	mRedWidth = dotRadius;
+	mGrnWidth = dotRadius;
+	mBluWidth = dotRadius;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+void VDDisplayRenderDotMaskChannel(uint32 *tex, uint32 w, uint32 channelMask,
+	float pixelsPerTriadH, 
+	float pixelsPerTriadV, 
+	float posX1, float posY1, float posX2, float posY2, float dotRadius, float dstX, float dstY)
+{
+	// establish Y centerlines
+	const float yc1 = posY1;
+	const float yc2 = posY2;
+
+	// set up X positions and spans
+	posX1 += dotRadius + dstX;
+	posX2 += dotRadius + dstX;
+
+	float dotRightPos[2] {
+		posX1 - ceilf(posX1 / pixelsPerTriadH) * pixelsPerTriadH,
+		posX2 - ceilf(posX2 / pixelsPerTriadH) * pixelsPerTriadH
+	};
+
+	float dotSpans[2][2][8] {};
+
+	const float dotRadiusSq = dotRadius * dotRadius;
+	for(int i=0; i<8; ++i) {
+		float y = ((float)i + 0.5f) / 8.0f + dstY;
+
+		float dy1 = yc1 - y;
+		float dy2 = yc2 - y;
+
+		dy1 -= roundf(dy1 / pixelsPerTriadV) * pixelsPerTriadV;
+		dy2 -= roundf(dy2 / pixelsPerTriadV) * pixelsPerTriadV;
+
+		const float rsq1 = std::max<float>(0.0f, dotRadiusSq - dy1*dy1);
+		const float rsq2 = std::max<float>(0.0f, dotRadiusSq - dy2*dy2);
+		const float dx1 = sqrtf(rsq1);
+		const float dx2 = sqrtf(rsq2);
+
+		dotSpans[0][0][i] = -dotRadius - dx1;
+		dotSpans[0][1][i] = -dotRadius + dx1;
+		dotSpans[1][0][i] = -dotRadius - dx2;
+		dotSpans[1][1][i] = -dotRadius + dx2;
+	}
+
+	// render scanlines
+	const uint32 channelScale = 0x010101 & channelMask;
+	float prevLeftSum = 0;
+	while(w--) {
+		float rightSum = 0;
+		float leftSum = 0;
+
+		for(int i = 0; i < 2; ++i) {
+			float xbase = dotRightPos[i];
+
+			while(xbase <= 0.0f)
+				xbase += pixelsPerTriadH;
+
+			if (xbase < 1.0f + 2*dotRadius) {
+				float xbase2 = xbase;
+
+				const auto& VDRESTRICT dotSpansX1 = dotSpans[i][0];
+				const auto& VDRESTRICT dotSpansX2 = dotSpans[i][1];
+
+				do {
+					for(int j=0; j<8; ++j) {
+						// compute scanline intersection with disc
+						float x1 = xbase2 + dotSpansX1[j];
+						float x2 = xbase2 + dotSpansX2[j];
+
+						// clip span to pixel width
+						// manually min/max as MSVC can't vectorize through max(min)
+						x2 = x2 < 1.0f ? x2 : 1.0f;
+						x1 = x1 > 0.0f ? x1 : 0.0f;
+						x1 = x1 < x2 ? x1 : x2;
+
+						// integrate range over both halves of triangle filter
+						// (1-x1)*(1-x1) - (1-x2)*(1-x2) = 2(x2-x1) - (x2^2 - x1^2)
+						leftSum += x2*x2 - x1*x1;
+						rightSum += x2-x1;	// *2 and -leftSum done at end
+					}
+
+					xbase2 += pixelsPerTriadH;
+				} while(xbase2 < 1.0f + 2*dotRadius);
+			}
+
+			dotRightPos[i] = xbase - 1.0f;
+		}
+
+		const float intensity = rightSum * 2 - leftSum + prevLeftSum;
+		prevLeftSum = leftSum;
+
+		*tex++ |= channelScale * (int)(0.5f + intensity * (255.0f / 16.0f));
+	}
+
+}
+
+void VDDisplayCreateTriadDotMaskTexture(uint32 *tex, ptrdiff_t pitch, uint32 w, uint32 h, float dstX, float dstY, float dstW, float dstH, const VDDisplayTriadDotMaskParams& params) {
+	const float pptH = params.mPixelsPerTriadH;
+	const float pptV = params.mPixelsPerTriadV;
+
+	for(uint32 y = 0; y < h; ++y) {
+		memset(tex, 0, sizeof(tex[0]) * w);
+
+		VDDisplayRenderDotMaskChannel(
+			tex,
+			w,
+			0xFF0000,
+			pptH,
+			pptV,
+			params.mRedCenter[0][0],
+			params.mRedCenter[0][1],
+			params.mRedCenter[1][0],
+			params.mRedCenter[1][1],
+			params.mRedWidth,
+			dstX,
+			dstY + (float)y
+		);
+
+		VDDisplayRenderDotMaskChannel(
+			tex,
+			w,
+			0x00FF00,
+			pptH,
+			pptV,
+			params.mGrnCenter[0][0],
+			params.mGrnCenter[0][1],
+			params.mGrnCenter[1][0],
+			params.mGrnCenter[1][1],
+			params.mGrnWidth,
+			dstX,
+			dstY + (float)y
+		);
+
+		VDDisplayRenderDotMaskChannel(
+			tex,
+			w,
+			0x0000FF,
+			pptH,
+			pptV,
+			params.mBluCenter[0][0],
+			params.mBluCenter[0][1],
+			params.mBluCenter[1][0],
+			params.mBluCenter[1][1],
+			params.mBluWidth,
+			dstX,
+			dstY + (float)y
+		);
+
+		tex = (uint32 *)((char *)tex + pitch);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 void VDDisplayDistortionMapping::Init(float viewAngleX, float viewRatioY, float viewAspect) {
 	// The distortion algorithm works as follows:

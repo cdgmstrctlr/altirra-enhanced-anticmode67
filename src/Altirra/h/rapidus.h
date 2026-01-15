@@ -174,7 +174,7 @@ private:
 	ATMemoryLayer *mpLayerLoFlash = nullptr;				// $00:4000-7FFF read
 	ATMemoryLayer *mpLayerLoFlashControl = nullptr;			// $00:4000-7FFF read/write
 	ATMemoryLayer *mpLayerBank0RAM[6] {};					// 4 x 16KB in bank 0, block 1 fragmented into $4000-4FFF/5800-7FFF and block 3 fragmented into $C000-CFFF/D7FF and D800-FFFF
-	ATMemoryLayer *mpLayerLoBank0RAMShadow = nullptr;		// $00:0000-3FFF write only
+	ATMemoryLayer *mpLayerBank0RAMShadow[6] {};				// 4 x 16KB in bank 0, block 1 fragmented into $4000-4FFF/5800-7FFF and block 3 fragmented into $C000-CFFF/D7FF and D800-FFFF
 	ATMemoryLayer *mpLayerHiBank0RAMShadow = nullptr;		// $00:4000-FFFF write only
 	ATMemoryLayer *mpLayerSRAM = nullptr;					// $01:0000-07:FFFF or 0F:FFFF
 	ATMemoryLayer *mpLayerSDRAM = nullptr;					// $08:0000-EF:FFFF

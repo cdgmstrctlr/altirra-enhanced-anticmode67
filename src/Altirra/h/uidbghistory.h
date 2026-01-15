@@ -39,6 +39,7 @@ private:
 	ATCPUBeamPosition DecodeBeamPosition(uint32 cycle) override;
 	bool IsInterruptPositionVBI(uint32 cycle) override;
 	bool UpdatePreviewNode(ATCPUHistoryEntry& he) override;
+	bool ShouldRefreshPrevNode() const override { return true; }
 	uint32 ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 startIndex, uint32 n) override;
 	void OnEsc() override;
 	void OnInsnSelected(uint32 index) override {}
@@ -61,8 +62,8 @@ private:
 	void UpdateOpcodes();
 	void CheckDisasmMode();
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId);
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override;
 
 	vdrefptr<IATUIHistoryView> mpHistoryView;
 	bool mbHistoryError = false;

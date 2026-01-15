@@ -307,9 +307,8 @@ int VDCompilerLexer::Token() {
 		}
 
 		c = *mpSrc++;
-		bool escaped = false;
+
 		if (c == '\\') {
-			escaped = true;
 			if (mpSrc == mpSrcEnd) {
 				SetError("End of file encountered in character literal");
 				return 0;

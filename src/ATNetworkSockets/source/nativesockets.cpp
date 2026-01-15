@@ -81,7 +81,7 @@ vdrefptr<IATNetLookupResult> ATNetLookup(const wchar_t *hostname, const wchar_t 
 	return g_pATNetLookupWorker->Lookup(hostname, service);
 }
 
-vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *service) {
+vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *service, bool dualStack) {
 	if (!g_pATNetLookupWorker || !g_pATNetSocketWorker)
 		return nullptr;
 
@@ -94,8 +94,8 @@ vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *s
 		return nullptr;
 
 	lookup->SetOnCompleted(nullptr,
-		[lookup, socket](const ATSocketAddress& addr) {
-			socket->Connect(addr);
+		[lookup, socket, dualStack](const ATSocketAddress& addr) {
+			socket->Connect(addr, dualStack);
 		},
 		true
 	);
@@ -103,7 +103,7 @@ vdrefptr<IATStreamSocket> ATNetConnect(const wchar_t *hostname, const wchar_t *s
 	return socket;
 }
 
-vdrefptr<IATStreamSocket> ATNetConnect(const ATSocketAddress& address) {
+vdrefptr<IATStreamSocket> ATNetConnect(const ATSocketAddress& address, bool dualStack) {
 	if (!g_pATNetSocketWorker)
 		return nullptr;
 
@@ -111,22 +111,22 @@ vdrefptr<IATStreamSocket> ATNetConnect(const ATSocketAddress& address) {
 	if (!s)
 		return nullptr;
 
-	s->Connect(address);
+	s->Connect(address, dualStack);
 	return s;
 }
 
-vdrefptr<IATListenSocket> ATNetListen(const ATSocketAddress& address) {
+vdrefptr<IATListenSocket> ATNetListen(const ATSocketAddress& address, bool dualStack) {
 	if (!g_pATNetSocketWorker)
 		return nullptr;
 
-	vdrefptr<ATNetListenSocket> s = g_pATNetSocketWorker->CreateListenSocket(address);
+	vdrefptr<ATNetListenSocket> s = g_pATNetSocketWorker->CreateListenSocket(address, dualStack);
 	if (!s)
 		return nullptr;
 	
 	return s;
 }
 
-vdrefptr<IATListenSocket> ATNetListen(ATSocketAddressType addressType, uint16 port) {
+vdrefptr<IATListenSocket> ATNetListen(ATSocketAddressType addressType, uint16 port, bool dualStack) {
 	ATSocketAddress address;
 	address.mType = addressType;
 	address.mPort = port;
@@ -138,7 +138,7 @@ vdrefptr<IATListenSocket> ATNetListen(ATSocketAddressType addressType, uint16 po
 		address.mIPv6.mScopeId = 0;
 	}
 
-	return ATNetListen(address);
+	return ATNetListen(address, dualStack);
 }
 
 vdrefptr<IATDatagramSocket> ATNetBind(const ATSocketAddress& address, bool dualStack) {

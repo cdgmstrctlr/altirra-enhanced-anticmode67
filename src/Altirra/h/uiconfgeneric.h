@@ -21,59 +21,144 @@
 
 class IATUIConfigPropView {
 public:
-	virtual IATUIConfigPropView& SetTag(const char *tag) = 0;
-	virtual IATUIConfigPropView& SetLabel(const wchar_t *label) = 0;
-	virtual IATUIConfigPropView& SetHelp(const wchar_t *text) = 0;
-	virtual IATUIConfigPropView& SetHelp(const wchar_t *caption, const wchar_t *text) = 0;
-	virtual IATUIConfigPropView& SetEnableExpr(vdfunction<bool()> fn) = 0;
+	template<typename T>
+	T& SetTag(this T& self, const char *tag) {
+		self.SetTagImpl(tag);
+		return self;
+	}
+
+	template<typename T>
+	T& SetLabel(this T& self, const wchar_t *label) {
+		self.SetLabelImpl(label);
+		return self;
+	}
+
+	template<typename T>
+	T& SetHelp(this T& self, const wchar_t *text) {
+		self.SetHelpImpl(text);
+		return self;
+	}
+
+	template<typename T>
+	T& SetHelp(this T& self, const wchar_t *caption, const wchar_t *text) {
+		self.SetTagImpl(caption, text);
+		return self;
+	}
+
+	template<typename T>
+	T& SetEnableExpr(this T& self, vdfunction<bool()> fn) {
+		self.SetEnableExprImpl(fn);
+		return self;
+	}
+
+	virtual void SetTagImpl(const char *tag) = 0;
+	virtual void SetLabelImpl(const wchar_t *label) = 0;
+	virtual void SetHelpImpl(const wchar_t *text) = 0;
+	virtual void SetHelpImpl(const wchar_t *caption, const wchar_t *text) = 0;
+	virtual void SetEnableExprImpl(vdfunction<bool()> fn) = 0;
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
-class IATUIConfigBoolView {
+class IATUIConfigBoolView : public virtual IATUIConfigPropView {
 public:
-	virtual IATUIConfigPropView *operator->() = 0;
-	virtual IATUIConfigBoolView& SetDefault(bool val) = 0;
+	template<typename T>
+	T& SetDefault(this T& self, bool val) {
+		self.SetDefaultImpl(val);
+		return self;
+	}
+
+	template<typename T>
+	T& SetValue(this T& self, bool val) {
+		self.SetValueImpl(val);
+		return self;
+	}
+
+	virtual void SetDefaultImpl(bool val) = 0;
 	virtual bool GetValue() const = 0;
-	virtual void SetValue(bool v) = 0;
+	virtual void SetValueImpl(bool v) = 0;
 };
 
-class IATUIConfigIntView {
+class IATUIConfigIntView : public virtual IATUIConfigPropView  {
 public:
-	virtual IATUIConfigPropView *operator->() = 0;
-	virtual IATUIConfigIntView& SetDefault(sint32 val) = 0;
+	template<typename T>
+	T& SetDefault(this T& self, sint32 val, bool writeDefault = false) {
+		self.SetDefaultImpl(val, writeDefault);
+		return self;
+	}
+
+	template<typename T>
+	T& SetValue(this T& self, sint32 val) {
+		self.SetValueImpl(val);
+		return self;
+	}
+
+	virtual void SetDefaultImpl(sint32 val, bool writeDefault) = 0;
+
 	virtual sint32 GetValue() const = 0;
-	virtual void SetValue(sint32 v) = 0;
+	virtual void SetValueImpl(sint32 v) = 0;
 };
 
-class IATUIConfigStringView {
+class IATUIConfigStringView : public virtual IATUIConfigPropView  {
 public:
-	virtual IATUIConfigPropView *operator->() = 0;
+	template<typename T>
+	T& SetValue(this T& self, const wchar_t *s) {
+		self.SetValueImpl(s);
+		return self;
+	}
+
+	template<typename T>
+	T& SetDefault(this T& self, const wchar_t *s, bool writeDefault = false) {
+		self.SetDefaultImpl(s, writeDefault);
+		return self;
+	}
+
 	virtual const wchar_t *GetValue() const = 0;
-	virtual void SetValue(const wchar_t *s) = 0;
+	virtual void SetValueImpl(const wchar_t *s) = 0;
+	virtual void SetDefaultImpl(const wchar_t *s, bool writeDefault) = 0;
+};
+
+class IATUIConfigColorView : public virtual IATUIConfigPropView  {
+public:
+	template<typename T>
+	T& SetValue(this T& self, sint32 color) {
+		self.SetValueImpl(color);
+		return self;
+	}
+
+	template<typename T>
+	T& SetFixedPalette(this T& self, vdspan<const uint32> colors) {
+		self.SetFixedPaletteImpl(colors);
+		return self;
+	}
+
+	template<typename T>
+	T& SetCustomPaletteKey(this T& self, const char *key) {
+		self.SetCustomPaletteKeyImpl(key);
+		return self;
+	}
+
+	virtual sint32 GetValue() const = 0;
+	virtual void SetValueImpl(sint32 color) = 0;
+	virtual void SetFixedPaletteImpl(vdspan<const uint32> colors) = 0;
+	virtual void SetCustomPaletteKeyImpl(const char *key) = 0;
 };
 
 ///////////////////////////////////////////////////////////////////////////
 
-class IATUIConfigCheckboxView {
+class IATUIConfigCheckboxView : public virtual IATUIConfigBoolView {
 public:
-	virtual IATUIConfigBoolView& AsBoolView() = 0;
-
 	virtual IATUIConfigCheckboxView& SetText(const wchar_t *text) = 0;
 };
 
-class IATUIConfigSliderView {
+class IATUIConfigSliderView : public virtual IATUIConfigIntView {
 public:
-	virtual IATUIConfigIntView& AsIntView() = 0;
-
 	virtual IATUIConfigSliderView& SetRange(sint32 minVal, sint32 maxVal) = 0;
 	virtual IATUIConfigSliderView& SetPage(sint32 pageSize) = 0;
 };
 
-class IATUIConfigPathView {
+class IATUIConfigPathView : public virtual IATUIConfigStringView {
 public:
-	virtual IATUIConfigStringView& AsStringView() = 0;
-
 	virtual IATUIConfigPathView& SetBrowseCaption(const wchar_t *caption) = 0;
 	virtual IATUIConfigPathView& SetBrowseKey(uint32 key) = 0;
 	virtual IATUIConfigPathView& SetSave() = 0;
@@ -81,19 +166,40 @@ public:
 	virtual IATUIConfigPathView& SetTypeImage() = 0;
 };
 
-class IATUIConfigDropDownView {
+class IATUIConfigStringEditView : public virtual IATUIConfigStringView {
 public:
-	virtual IATUIConfigPropView *operator->() = 0;
+};
 
+class IATUIConfigIntEditView : public virtual IATUIConfigIntView {
+public:
+	virtual IATUIConfigIntEditView& SetRange(sint32 minVal, sint32 maxVal) = 0;
+};
+
+class IATUIConfigIntDropDownView : public virtual IATUIConfigPropView {
+public:
+	virtual IATUIConfigIntDropDownView& AddChoice(sint32 value, const wchar_t *text) = 0;
+
+	virtual sint32 GetValue() const = 0;
+	virtual void SetValue(sint32 value) = 0;
+};
+
+class IATUIConfigDropDownView : public virtual IATUIConfigPropView {
+public:
 	virtual IATUIConfigDropDownView& AddRawChoice(uint32 value, const wchar_t *text) = 0;
 
 	template<typename T> requires std::is_enum_v<T>
 	IATUIConfigDropDownView& AddChoice(T value, const wchar_t *text) {
 		return AddRawChoice((uint32)value, text);
 	}
+	
+	template<typename T> requires std::is_enum_v<T>
+	void SetDefaultValue(T value) {
+		SetRawDefaultValue((uint32)value);
+	}
 
 	virtual uint32 GetRawValue() const = 0;
 	virtual void SetRawValue(uint32 value) = 0;
+	virtual void SetRawDefaultValue(uint32 value) = 0;
 
 	template<typename T> requires std::is_enum_v<T>
 	T GetValue() {
@@ -112,8 +218,14 @@ class IATUIConfigView {
 public:
 	virtual IATUIConfigCheckboxView& AddCheckbox() = 0;
 	virtual IATUIConfigPathView& AddPath() = 0;
+	virtual IATUIConfigStringEditView& AddStringEdit() = 0;
+	virtual IATUIConfigIntEditView& AddIntEdit() = 0;
 
+	virtual IATUIConfigColorView& AddColor() = 0;
+	virtual IATUIConfigIntDropDownView& AddIntDropDown() = 0;
 	virtual IATUIConfigDropDownView& AddDropDown(const ATEnumLookupTable& enumTable) = 0;
+
+	virtual void AddVerticalSpace() = 0;
 
 	template<typename T>
 	IATUIConfigDropDownView& AddDropDown() {

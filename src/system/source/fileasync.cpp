@@ -325,9 +325,9 @@ void VDFileAsync9x::ThrowError() {
 			mhFileFast = INVALID_HANDLE_VALUE;
 		}
 
-		MyError tmp;
-		tmp.TransferFrom(*e);
+		VDException tmp = std::move(*e);
 		delete e;
+
 		throw tmp;
 	}
 }
@@ -394,10 +394,9 @@ void VDFileAsync9x::ThreadRun() {
 
 			mReadOccurred.signal();
 		}
-	} catch(MyError& e) {
-		MyError *p = new MyError;
+	} catch(VDException& e) {
+		VDException *p = new VDException(std::move(e));
 
-		p->TransferFrom(e);
 		delete mpError.xchg(p);
 		mReadOccurred.signal();
 	}
@@ -739,8 +738,7 @@ void VDFileAsyncNT::ThrowError() {
 			mhFileFast = INVALID_HANDLE_VALUE;
 		}
 
-		MyError tmp;
-		tmp.TransferFrom(*e);
+		VDException tmp = std::move(*e);
 		delete e;
 		throw tmp;
 	}
@@ -896,9 +894,8 @@ all_done:
 		;
 
 	} catch(MyError& e) {
-		MyError *p = new MyError;
+		VDException *p = new VDException(std::move(e));
 
-		p->TransferFrom(e);
 		delete mpError.xchg(p);
 		mReadOccurred.signal();
 	}

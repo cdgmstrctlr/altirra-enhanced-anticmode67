@@ -92,6 +92,7 @@ void ATDiskInterface::SwapSettings(ATDiskInterface& other) {
 void ATDiskInterface::Init(uint32 index, IATUIRenderer *uirenderer) {
 	mIndex = index;
 	mpUIRenderer = uirenderer;
+	mErrorSourceId = uirenderer->AllocateErrorSourceId();
 }
 
 void ATDiskInterface::Shutdown() {
@@ -474,7 +475,7 @@ void ATDiskInterface::SetShowMotorActive(bool active) {
 	mpUIRenderer->SetDiskMotorActivity(mIndex, active);
 }
 
-void ATDiskInterface::SetShowActivity(bool active, uint32 sector) {
+void ATDiskInterface::SetShowActivity(bool active, uint32 sector, uint32 holdTime) {
 	if (active) {
 		uint32 value = sector;
 
@@ -485,7 +486,7 @@ void ATDiskInterface::SetShowActivity(bool active, uint32 sector) {
 
 		mpUIRenderer->SetStatusFlags(1 << mIndex);
 	} else
-		mpUIRenderer->ResetStatusFlags(1 << mIndex);
+		mpUIRenderer->ResetStatusFlags(1 << mIndex, holdTime);
 }
 
 void ATDiskInterface::SetShowLEDReadout(sint32 ledDisplay) {
@@ -525,7 +526,7 @@ void ATDiskInterface::Flush(bool ignoreAutoFlush, bool rethrowErrors) {
 			
 			VDStringW s;
 			s.sprintf(L"D%u: remounted virtual read/write due to write error: %ls", mIndex + 1, msg.c_str());
-			mpUIRenderer->ReportError(s.c_str());
+			mpUIRenderer->ReportError(mErrorSourceId, s.c_str());
 		}
 	}
 

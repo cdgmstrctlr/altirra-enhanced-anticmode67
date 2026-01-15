@@ -61,6 +61,10 @@ void ATVMCompiler::SetOptionHandler(vdfunction<bool(ATVMCompiler&, const char *,
 	mpSetOption = std::move(setOptionFn);
 }
 
+void ATVMCompiler::SetUnsafeCallsAllowed(bool allowed) {
+	mbUnsafeCallsAllowed = allowed;
+}
+
 bool ATVMCompiler::IsValidVariableName(const char *name) {
 	char c = *name;
 
@@ -216,7 +220,9 @@ const ATVMFunction *ATVMCompiler::DeferCompile(const ATVMTypeInfo& returnType, c
 }
 
 bool ATVMCompiler::CompileDeferred() {
-	for(const auto& step : mDeferredCompiles) {
+	for(size_t i = 0; i < mDeferredCompiles.size(); ++i) {
+		const auto& step =  mDeferredCompiles[i];
+
 		if (!step())
 			return false;
 	}
@@ -801,6 +807,9 @@ bool ATVMCompiler::ParseFunction(ATVMFunction *func, const ATVMTypeInfo& returnT
 }
 
 bool ATVMCompiler::ParseBlock(bool& hasReturn) {
+	if (++mNestingLevel >= 256)
+		return ReportError("Nesting limit exceeded");
+
 	for(;;) {
 		uint32 tok = Token();
 		if (tok == kTokError)
@@ -818,6 +827,7 @@ bool ATVMCompiler::ParseBlock(bool& hasReturn) {
 			return false;
 	}
 
+	--mNestingLevel;
 	return true;
 }
 
@@ -1741,16 +1751,16 @@ bool ATVMCompiler::ParsePostfixExpression(TypeInfo& returnType) {
 		return ReportErrorF("Class '%s' does not have method called '%.*s'", returnType.mpObjectClass->mpClassName, (int)mTokIdent.size(), mTokIdent.data());
 
 	const bool isStaticCall = (returnType.mClass == TypeClass::ObjectClass);
-	if ((foundMethod->mFlags & ATVMFunctionFlags::Static) != ATVMFunctionFlags::None)
-	{
+	if ((foundMethod->mFlags & ATVMFunctionFlags::Static) != ATVMFunctionFlags::None) {
 		if (!isStaticCall)
 			return ReportErrorF("Static method '%.*s' must be called on a class instance", (int)mTokIdent.size(), mTokIdent.data());
-	}
-	else
-	{
+	} else {
 		if (isStaticCall)
 			return ReportErrorF("Instance method '%.*s' must be called on an object instance", (int)mTokIdent.size(), mTokIdent.data());
 	}
+
+	if (!mbUnsafeCallsAllowed && (foundMethod->mFlags & ATVMFunctionFlags::Unsafe) != ATVMFunctionFlags::None)
+		return ReportErrorF("Method '%s' is potentially unsafe, but unsafe calls have not been allowed", foundMethod->mpName);
 
 	ATVMFunctionFlags funcAsyncMask = foundMethod->mFlags & ATVMFunctionFlags::AsyncAll;
 

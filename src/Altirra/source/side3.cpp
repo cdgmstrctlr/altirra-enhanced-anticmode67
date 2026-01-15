@@ -137,18 +137,18 @@ void ATSIDE3Emulator::Init() {
 	handlerTable.mpDebugReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnReadByte<true>(addr); };
 	handlerTable.mpReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnReadByte<false>(addr); };
 	handlerTable.mpWriteHandler = [](void *thisptr, uint32 addr, uint8 value) -> bool { return ((ATSIDE3Emulator *)thisptr)->OnWriteByte(addr, value); };
-	mpMemLayerCCTL = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, handlerTable, 0xD5, 0x01);
+	mpMemLayerCCTL = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2, handlerTable, 0xD5, 0x01);
 	mpMemMan->SetLayerName(mpMemLayerCCTL, "SIDE 3 registers");
 
 	UpdateControlLayer();
 
-	mpMemLayerWindowA = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mFlash, 0x80, 0x20, true);
+	mpMemLayerWindowA = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2, mFlash, 0x80, 0x20, true);
 	mpMemMan->SetLayerName(mpMemLayerWindowA, "SIDE 3 right cartridge window");
 
-	mpMemLayerWindowA2 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, mFlash, 0x90, 0x10, true);
+	mpMemLayerWindowA2 = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2+1, mFlash, 0x90, 0x10, true);
 	mpMemMan->SetLayerName(mpMemLayerWindowA2, "SIDE 3 right cartridge window (high half)");
 
-	mpMemLayerWindowB = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay, mFlash, 0xA0, 0x20, true);
+	mpMemLayerWindowB = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2, mFlash, 0xA0, 0x20, true);
 	mpMemMan->SetLayerName(mpMemLayerWindowB, "SIDE 3 left cartridge window");
 
 	handlerTable.mbPassReads = false;
@@ -159,29 +159,32 @@ void ATSIDE3Emulator::Init() {
 	handlerTable.mpReadHandler = OnFlashReadA;
 	handlerTable.mpWriteHandler = OnFlashWriteA;
 
-	mpMemLayerFlashControlA = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0x80, 0x20);
+	mpMemLayerFlashControlA = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2+1, handlerTable, 0x80, 0x20);
 	mpMemMan->SetLayerName(mpMemLayerFlashControlA, "SIDE 3 flash control (right cart window)");
 
 	handlerTable.mpDebugReadHandler = OnFlashDebugReadB;
 	handlerTable.mpReadHandler = OnFlashReadB;
 	handlerTable.mpWriteHandler = OnFlashWriteB;
 
-	mpMemLayerFlashControlB = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+1, handlerTable, 0xA0, 0x20);
+	mpMemLayerFlashControlB = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2+1, handlerTable, 0xA0, 0x20);
 	mpMemMan->SetLayerName(mpMemLayerFlashControlB, "SIDE 3 flash control (left cart window)");
 
 	handlerTable.mpDebugReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnSpecialReadByteA1<true>(addr); };
 	handlerTable.mpReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnSpecialReadByteA1<false>(addr); };
 	handlerTable.mpWriteHandler = [](void *thisptr, uint32 addr, uint8 value) -> bool { return ((ATSIDE3Emulator *)thisptr)->OnSpecialWriteByteA1(addr, value); };
 
-	mpMemLayerSpecialBank1 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+2, handlerTable, 0x8F, 0x01);
+	mpMemLayerSpecialBank1 = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2+2, handlerTable, 0x8F, 0x01);
 	mpMemMan->SetLayerName(mpMemLayerSpecialBank1, "SIDE 3 flash control (right cart special banking)");
 
 	handlerTable.mpDebugReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnSpecialReadByteA2<true>(addr); };
 	handlerTable.mpReadHandler = [](void *thisptr, uint32 addr) -> sint32 { return ((ATSIDE3Emulator *)thisptr)->OnSpecialReadByteA2<false>(addr); };
 	handlerTable.mpWriteHandler = [](void *thisptr, uint32 addr, uint8 value) -> bool { return ((ATSIDE3Emulator *)thisptr)->OnSpecialWriteByteA2(addr, value); };
 
-	mpMemLayerSpecialBank2 = mpMemMan->CreateLayer(kATMemoryPri_CartridgeOverlay+2, handlerTable, 0x9F, 0x01);
+	mpMemLayerSpecialBank2 = mpMemMan->CreateLayer(kATMemoryPri_Cartridge2+2, handlerTable, 0x9F, 0x01);
 	mpMemMan->SetLayerName(mpMemLayerSpecialBank2, "SIDE 3 flash control (left cart special banking)");
+
+	UpdateWindowA();
+	UpdateWindowB();
 }
 
 void ATSIDE3Emulator::Shutdown() {
@@ -400,7 +403,7 @@ bool ATSIDE3Emulator::GetMappedRange(uint32 index, uint32& lo, uint32& hi) const
 
 void ATSIDE3Emulator::InitCartridge(IATDeviceCartridgePort *cartPort) {
 	mpCartridgePort = cartPort;
-	mpCartridgePort->AddCartridge(this, kATCartridgePriority_Internal, mCartId);
+	mpCartridgePort->AddCartridge(this, kATCartridgePriority_PassThrough, mCartId);
 }
 
 bool ATSIDE3Emulator::IsLeftCartActive() const {
@@ -1780,7 +1783,7 @@ void ATSIDE3Emulator::UpdateWindowB() {
 	mpCartridgePort->OnLeftWindowChanged(mCartId, enabled);
 
 	// upstream cartridge mask
-	if (!enabled) {
+	if (!enabled || !mbLeftWindowEnabled) {
 		mpMemMan->EnableLayer(mpMemLayerWindowB, false);
 		mpMemMan->EnableLayer(mpMemLayerFlashControlB, false);
 		return;

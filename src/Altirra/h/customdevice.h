@@ -24,11 +24,15 @@
 #include <at/atcore/deviceindicators.h>
 #include <at/atcore/devicesioimpl.h>
 #include <at/atcore/devicepbi.h>
+#include <at/atcore/scheduler.h>
+#include <at/atcore/vfs.h>
 #include <at/atvm/vm.h>
 #include <at/atvm/compiler.h>
+#include "customdevicevmtypes.h"
 
 class ATMemoryLayer;
 class ATMemoryManager;
+class ATMMUEmulator;
 class IATDeviceCustomNetworkEngine;
 class ATVMCompiler;
 class IATAsyncDispatcher;
@@ -67,8 +71,8 @@ public:
 	bool GetErrorStatus(uint32 idx, VDStringW& error) override;
 
 public:		// IATDeviceMemMap
-	void InitMemMap(ATMemoryManager *memmap);
-	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
 
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
@@ -87,7 +91,7 @@ public:
 
 public:
 	void InitSIO(IATDeviceSIOManager *mgr) override;
-	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request);
+	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
 	void OnSerialAbortCommand() override;
 	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
@@ -121,46 +125,9 @@ private:
 		kEventId_RawSend
 	};
 
-	struct Segment final : public ATVMObject {
-		static const ATVMObjectClass kVMObjectClass;
+	using Segment = ATDeviceCustomSegment;
 
-		const char *mpName = nullptr;
-		uint8 *mpData = nullptr;
-		uint8 *mpInitData = nullptr;
-		uint32 mSize = 0;
-		uint32 mInitSize = 0;
-		bool mbNonVolatile = false;
-		bool mbMappable = false;
-		bool mbReadOnly = false;
-		bool mbSpecial = false;
-
-		void VMCallClear(sint32 value);
-		void VMCallFill(sint32 offset, sint32 value, sint32 size);
-		void VMCallXorConst(sint32 offset, sint32 value, sint32 size);
-		void VMCallReverseBits(sint32 offset, sint32 size);
-		void VMCallTranslate(sint32 destOffset, Segment *srcSegment, sint32 srcOffset, sint32 size, Segment *translateTable, sint32 translateOffset);
-		void VMCallCopy(sint32 destOffset, Segment *srcSegment, sint32 srcOffset, sint32 size);
-		void VMCallCopyRect(sint32 destOffset, sint32 dstSkip, Segment *srcSegment, sint32 srcOffset, sint32 srcPitch, sint32 width, sint32 height);
-		void VMCallWriteByte(sint32 offset, sint32 value);
-		sint32 VMCallReadByte(sint32 offset);
-		void VMCallWriteWord(sint32 offset, sint32 value);
-		sint32 VMCallReadWord(sint32 offset);
-		void VMCallWriteRevWord(sint32 offset, sint32 value);
-		sint32 VMCallReadRevWord(sint32 offset);
-	};
-
-	enum class NetworkCommand : uint8 {
-		None,
-		DebugReadByte,
-		ReadByte,
-		WriteByte,
-		ColdReset,
-		WarmReset,
-		Error,
-		ScriptEventSend,
-		ScriptEventPost,
-		Init
-	};
+	using NetworkCommand = ATDeviceCustomNetworkCommand;
 
 	enum class NetworkReply : uint8 {
 		None,
@@ -179,20 +146,8 @@ private:
 		FillSegmentMemory				// V2+
 	};
 
-	enum class AddressAction : uint8 {
-		None,
-		ConstantData,
-		Block,
-		Network,
-		Script,
-		Variable
-	};
-
-	enum class SerialFenceId : uint32 {
-		AutoReceive = 1,
-		ScriptReceive,
-		ScriptDelay
-	};
+	using AddressAction = ATDeviceCustomAddressAction;
+	using SerialFenceId = ATDeviceCustomSerialFenceId;
 
 	enum class SpecialVarIndex : uint8 {
 		Address,
@@ -208,113 +163,26 @@ private:
 		Aux
 	};
 
-	struct AddressBinding {
-		AddressAction mAction = AddressAction::None;
+	using AddressBinding = ATDeviceCustomAddressBinding;
 
-		union {
-			uint8 mByteData;
-			uint16 mScriptFunctions[2];
-			uint32 mVariableIndex;
-		};
-	};
+	using MemoryLayer = ATDeviceCustomMemoryLayer;
+	friend MemoryLayer;
 
-	struct MemoryLayer final : public ATVMObject {
-		static const ATVMObjectClass kVMObjectClass;
+	using Network = ATDeviceCustomNetwork;
+	friend Network;
 
-		ATDeviceCustom *mpParent = nullptr;
-		uint32 mId = 0;
-		const char *mpName = nullptr;
-		ATMemoryLayer *mpPhysLayer = nullptr;
+	using SIO = ATDeviceCustomSIO;
+	friend SIO;
 
-		uint32 mAddressBase = 0;
-		uint32 mSize = 0;
-		AddressBinding *mpReadBindings = nullptr;
-		AddressBinding *mpWriteBindings = nullptr;
-		Segment *mpSegment = nullptr;
-		uint32 mSegmentOffset = 0;
-		uint32 mMaxOffset = 0;
-
-		bool mbAutoRD4 = false;
-		bool mbAutoRD5 = false;
-		bool mbAutoCCTL = false;
-		bool mbAutoPBI = false;
-		bool mbRD5Active = false;
-		bool mbIsWriteThrough = false;
-
-		uint8 mEnabledModes = 0;
-
-		void VMCallSetOffset(sint32 offset);
-		void VMCallSetSegmentAndOffset(Segment *seg, sint32 offset);
-		void VMCallSetModes(sint32 read, sint32 write);
-		void VMCallSetReadOnly(sint32 ro);
-		void VMCallSetBaseAddress(sint32 baseAddr);
-	};
-
-	struct Network final : public ATVMObject {
-		static const ATVMObjectClass kVMObjectClass;
-
-		ATDeviceCustom *mpParent = nullptr;
-
-		sint32 VMCallSendMessage(sint32 param1, sint32 param2);
-		sint32 VMCallPostMessage(sint32 param1, sint32 param2);
-	};
-
-	struct SIO final : public ATVMObject {
-		static const ATVMObjectClass kVMObjectClass;
-
-		ATDeviceCustom *mpParent = nullptr;
-		bool mbValid = false;
-		bool mbDataFrameReceived = false;
-		uint32 mSendChecksum = 0;
-		uint32 mRecvChecksum = 0;
-		uint8 mRecvLast = 0;
-
-		void Reset();
-		void VMCallAck();
-		void VMCallNak();
-		void VMCallError();
-		void VMCallComplete();
-		void VMCallSendFrame(Segment *seg, sint32 offset, sint32 length);
-		void VMCallRecvFrame(sint32 length);
-		void VMCallDelay(sint32 cycles);
-		void VMCallEnableRaw(sint32 enable);
-		void VMCallSetProceed(sint32 asserted);
-		void VMCallSetInterrupt(sint32 asserted);
-		sint32 VMCallCommandAsserted();
-		sint32 VMCallMotorAsserted();
-		void VMCallSendRawByte(sint32 c, sint32 cyclesPerBit, ATVMDomain& domain);
-		sint32 VMCallRecvRawByte(ATVMDomain& domain);
-		sint32 VMCallWaitCommand(ATVMDomain& domain);
-		sint32 VMCallWaitCommandOff(ATVMDomain& domain);
-		sint32 VMCallWaitMotorChanged(ATVMDomain& domain);
-		void VMCallResetRecvChecksum();
-		void VMCallResetSendChecksum();
-		sint32 VMCallGetRecvChecksum();
-		sint32 VMCallCheckRecvChecksum();
-		sint32 VMCallGetSendChecksum();
-	};
-
-	struct SIOCommand {
-		Segment *mpAutoTransferSegment = nullptr;
-		uint32 mAutoTransferOffset = 0;
-		uint32 mAutoTransferLength = 0;
-		bool mbAutoTransferWrite = false;
-		bool mbAllowAccel = false;
-		const ATVMFunction *mpScript = nullptr;
-	};
-
-	struct SIODevice final : public ATVMObject {
-		static const ATVMObjectClass kVMObjectClass;
-
-		bool mbAllowAccel = false;
-		SIOCommand *mpCommands[256] {};
-	};
+	using SIOCommand = ATDeviceCustomSIOCommand;
+	using SIODevice = ATDeviceCustomSIODevice;
 
 	struct SIODeviceTable {
 		SIODevice *mpDevices[256] {};
 	};
 
-	struct PBIDevice;
+	using PBIDevice = ATDeviceCustomPBIDevice;
+	friend ATDeviceCustomPBIDevice;
 
 	template<bool T_DebugOnly>
 	sint32 ReadControl(MemoryLayer& ml, uint32 addr);
@@ -343,6 +211,8 @@ private:
 	void ScheduleThreads(ATVMThreadWaitQueue& queue);
 	void RunReadyThreads();
 
+	void OnROMEnablesChanged();
+
 	void ReloadConfig();
 
 	class MemberParser;
@@ -356,10 +226,13 @@ private:
 	bool OnDefinePBIDevice(ATVMCompiler& compiler, const char *name, const ATVMDataValue *initializers);
 	bool OnDefineImage(ATVMCompiler& compiler, const char *name, const ATVMDataValue *initializers);
 	bool OnDefineVideoOutput(ATVMCompiler& compiler, const char *name, const ATVMDataValue *initializers);
+	bool OnDefineSound(ATVMCompiler& compiler, const char *name, const ATVMDataValue *initializers);
+	bool OnDefineSoundParams(ATVMCompiler& compiler, const char *name, const ATVMDataValue *initializers);
 
 	const ATVMFunction *ParseScriptOpt(const ATVMTypeInfo& returnType, const ATVMDataValue *value, ATVMFunctionFlags flags);
 	const ATVMFunction *ParseScript(const ATVMTypeInfo& returnType, const ATVMDataValue& value, ATVMFunctionFlags flags, ATVMConditionalMask conditionalMask);
 	vdvector_view<uint8> ParseBlob(const ATVMDataValue& value);
+	vdvector_view<uint8> ParseBlob16(const ATVMDataValue& value);
 	uint8 ParseRequiredUint8(const ATVMDataValue& value);
 	uint32 ParseRequiredUint32(const ATVMDataValue& value);
 	static const char *ParseRequiredString(const ATVMDataValue& valueRef);
@@ -372,10 +245,13 @@ private:
 	void UpdateLayerModes(MemoryLayer& ml);
 
 	ATMemoryManager *mpMemMan = nullptr;
+	ATMMUEmulator *mpMMU = nullptr;
 	ATScheduler *mpScheduler = nullptr;
 	IATDeviceCartridgePort *mpCartPort = nullptr;
 	IATDeviceIndicatorManager *mpIndicators = nullptr;
+	uint32 mErrorSourceId = 0;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	IATDevicePBIManager *mpPBIMgr = nullptr;
 	bool mbInited = false;
 	bool mbInitedSIO = false;
@@ -383,7 +259,9 @@ private:
 	bool mbInitedPBI = false;
 	bool mbInitedCart = false;
 	bool mbInitedCustomDevice = false;
+	bool mbInitedROMEnableHook = false;
 	bool mbHotReload = false;
+	bool mbAllowUnsafe = false;
 	uint64 mLastReloadAttempt = 0;
 	uint32 mCartId = 0;
 
@@ -417,9 +295,9 @@ private:
 	ATVMThread mVMThreadSIO;
 	ATVMThread mVMThreadScriptInterrupt;
 
-	struct Domain final : public ATVMDomain {
-		ATDeviceCustom *mpParent;
-	} mVMDomain;
+	using Domain = ATDeviceCustomDomain;
+
+	Domain mVMDomain;
 
 	const ATVMFunction *mpScriptEventInit = nullptr;
 	const ATVMFunction *mpScriptEventColdReset = nullptr;
@@ -437,113 +315,43 @@ private:
 	Network mNetwork;
 	SIO mSIO;
 
-	struct Clock final : public ATVMObject {
-	public:
-		static const ATVMObjectClass kVMObjectClass;
-
-		ATDeviceCustom *mpParent = nullptr;
-		uint64 mLocalTimeCaptureTimestamp = 0;
-		VDExpandedDate mLocalTime;
-
-		void Reset();
-
-		void VMCallCaptureLocalTime();
-		sint32 VMCallLocalYear();
-		sint32 VMCallLocalMonth();
-		sint32 VMCallLocalDay();
-		sint32 VMCallLocalDayOfWeek();
-		sint32 VMCallLocalHour();
-		sint32 VMCallLocalMinute();
-		sint32 VMCallLocalSecond();
-	};
+	using Clock = ATDeviceCustomClock;
+	friend Clock;
 
 	Clock mClock;
 
-	struct Console final : public ATVMObject {
-	public:
-		static const ATVMObjectClass kVMObjectClass;
-
-		static void VMCallSetConsoleButtonState(sint32 button, sint32 depressed);
-		static void VMCallSetKeyState(sint32 key, sint32 state);
-		static void VMCallPushBreak();
-	};
+	using Console = ATDeviceCustomConsole;
+	friend Console;
 
 	Console mConsole;
 
-	struct ControllerPort final : public ATVMObject {
-	public:
-		static const ATVMObjectClass kVMObjectClass;
-
-		vdrefptr<IATDeviceControllerPort> mpControllerPort;
-
-		void Init();
-		void Shutdown();
-
-		void Enable();
-		void Disable();
-
-		void ResetPotPositions();
-
-		void VMCallSetPaddleA(sint32 pos);
-		void VMCallSetPaddleB(sint32 pos);
-		void VMCallSetTrigger(sint32 asserted);
-		void VMCallSetDirs(sint32 directionMask);
-	};
+	using ControllerPort = ATDeviceCustomControllerPort;
+	friend ControllerPort;
 
 	ControllerPort *mpControllerPorts[4] {};
 
-	struct Debug final : public ATVMObject {
-	public:
-		static const ATVMObjectClass kVMObjectClass;
-
-		static void VMCallLog(const char *str);
-		static void VMCallLogInt(const char *str, sint32 v);
-	};
+	using Debug = ATDeviceCustomDebug;
+	friend Debug;
 
 	Debug mDebug;
+	vdrefptr<ATDeviceCustomEmulatorObj> mpEmulatorObj;
 
-	struct ScriptThread final : public ATVMObject {
-	public:
-		static const ATVMObjectClass kVMObjectClass;
-
-		ATDeviceCustom *mpParent = nullptr;
-		ATVMThread mVMThread;
-
-		sint32 VMCallIsRunning();
-		void VMCallRun(const ATVMFunction *function);
-		void VMCallInterrupt();
-		static void VMCallSleep(sint32 cycles, ATVMDomain& domain);
-		void VMCallJoin(ATVMDomain& domain);
-	};
+	using ScriptThread = ATDeviceCustomScriptThread;
+	friend ScriptThread;
 
 	vdfastvector<ScriptThread *> mScriptThreads;
 
 	ATVMThreadWaitQueue mVMThreadRunQueue;
 
-	struct SleepInfo {
-		uint32 mThreadIndex;
-		uint64 mWakeTime;
-	};
-
-	struct SleepInfoPred {
-		bool operator()(const SleepInfo& x, const SleepInfo& y) {
-			if (x.mWakeTime != y.mWakeTime)
-				return x.mWakeTime > y.mWakeTime;
-
-			return x.mThreadIndex > y.mThreadIndex;
-		}
-	};
+	using SleepInfo = ATDeviceCustomSleepInfo;
+	using SleepInfoPred = ATDeviceCustomSleepInfoPred;
 
 	vdfastvector<SleepInfo> mSleepHeap;
 	ATEvent *mpEventThreadSleep = nullptr;
 	ATEvent *mpEventThreadRun = nullptr;
 	uint32 mInThreadRun = 0;
 
-	struct RawSendInfo {
-		sint32 mThreadIndex;
-		uint32 mCyclesPerBit;
-		uint8 mByte;
-	};
+	using RawSendInfo = ATDeviceCustomRawSendInfo;
 
 	ATVMThreadWaitQueue mVMThreadRawRecvQueue;
 	ATVMThreadWaitQueue mVMThreadSIOCommandAssertQueue;
@@ -555,12 +363,16 @@ private:
 
 	vdfunction<void(ATVMThread&)> mpSleepAbortFn;
 	vdfunction<void(ATVMThread&)> mpRawSendAbortFn;
+	vdfunction<void()> mROMEnableHook;
 
-	class Image;
+	using Image = ATDeviceCustomImage;
 	vdfastvector<Image *> mImages;
 
-	class VideoOutput;
+	using VideoOutput = ATDeviceCustomVideoOutput;
+	friend VideoOutput;
+
 	vdfastvector<VideoOutput *> mVideoOutputs;
+	vdfastvector<ATDeviceCustomObject *> mVMObjects;
 
 	VDStringW mDeviceName;
 	VDStringW mConfigPath;

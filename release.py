@@ -1,7 +1,7 @@
 #! python3
 
 # Altirra build script
-# Copyright (C) Avery Lee 2014-2024
+# Copyright (C) Avery Lee 2014-2025
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,9 +26,11 @@ import zipfile
 import shutil
 import marshal
 import itertools
+import platform
+import signal
 
-EXPECTED_MSVC_VERSION = '19.42.34436'
-EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.12.4'
+EXPECTED_MSVC_VERSION = '19.44.35222'
+EXPECTED_MSVC_VERSION_DESC = 'Visual Studio 2022 v17.14.23'
 
 DIAGNOSTIC_PATTERN = re.compile(r'(?:[0-9]+\>|)(?:[a-zA-Z0-9:\\/.]* *\([0-9,]+\).*(?:warning|error)|.*fatal error LNK[0-9]+:).*', re.I)
 
@@ -122,8 +124,24 @@ def try_invoke_program(*args, diagnostic_pattern = None) -> int:
 
             return proc.wait()
         except KeyboardInterrupt:
+            proc.send_signal(signal.CTRL_C_EVENT)
+
+            log.log('Interrupt received - waiting for process to exit')
+
+            for i in range(0,50):
+                try:
+                    proc.wait(0.1)
+
+                    log.log('Process exited')
+                    break
+                except KeyboardInterrupt:
+                    # ignore keyboard inter
+                    pass
+                except subprocess.TimeoutExpired:
+                    pass
+            
             proc.terminate()
-            raise
+            raise BuildException('Build cancelled by user')
 
 def invoke_program(*args, diagnostic_pattern = None):
     return_code = try_invoke_program(*args, diagnostic_pattern = diagnostic_pattern)
@@ -298,7 +316,13 @@ def package_as_7z(output_path:str, selected_files:[(str, str)]) -> None:
 
     os.remove(stage_path)
 
-def do_package(output_path:str, include_patterns:[str]) -> None:
+def get_default_package_exclusions():
+    return [
+        '**/__pycache__/**',
+        '*.pyc'
+    ]
+
+def do_package(output_path:str, include_patterns:[str], exclude_patterns:[str] = get_default_package_exclusions()) -> None:
     regexps = []
     rpats = []
 
@@ -309,8 +333,16 @@ def do_package(output_path:str, include_patterns:[str]) -> None:
             rpats.append(rep)
 
         regexps.append(pat)
-
+        
     regexp = re.compile('|'.join(regexps), re.I)
+
+    xregexps = []
+    for xpat in exclude_patterns:
+        pat, _ = pattern_to_re(xpat, 0)
+        
+        xregexps.append(pat)
+        
+    xregexp = re.compile('|'.join(xregexps), re.I)
 
     selected_files = list()
 
@@ -323,6 +355,10 @@ def do_package(output_path:str, include_patterns:[str]) -> None:
 
         for file in files:
             relpath = rinsed_root + '/' + file if rinsed_root else file
+            
+            if xregexp.fullmatch(relpath):
+                continue
+            
             match_res = regexp.fullmatch(relpath)
             if match_res:
                 mgroup = match_res.lastgroup
@@ -470,8 +506,8 @@ def banner() -> None:
     if opts.enable_banner:
         opts.enable_banner = False
 
-        print("Altirra Build Release Utility Version 4.30")
-        print("Copyright (C) Avery Lee 2014-2024. Licensed under GNU General Public License, v2 or later")
+        print("Altirra Build Release Utility Version 4.40")
+        print("Copyright (C) Avery Lee 2014-2025. Licensed under GNU General Public License, v2 or later")
         print()
 
 def usage_error(*args) -> None:
@@ -623,6 +659,11 @@ def main() -> None:
             log.log('Using Visual C/C++ {}', vs_ver)
 
         if opts.enable_build:
+            try:
+                os.mkdir('publish')
+            except FileExistsError:
+                pass
+
             if opts.build_rmt:
                 try_remove(os.path.join('publish', 'build-x86.log'))
                 try_remove(os.path.join('publish', 'build-x64.log'))
@@ -733,6 +774,13 @@ def main() -> None:
 #endif
 """.format(numeric_version = numeric_version, string_version = string_version))
 
+                if version_type == 'test':
+                    log.log('Writing last test build info file')
+
+                    with open(os.path.join('publish', 'last-test-build-info.txt'), 'w') as f:
+                        f.write("version_id: {}\n".format(opts.version_id))
+                        f.write("version_number: {}\n".format(string_version))
+
             try:
                 build_switch = '/Rebuild' if opts.enable_clean else '/Build'
 
@@ -740,15 +788,30 @@ def main() -> None:
                     log.log('Building x86')
                     invoke_vs('src\\AltirraRMT.sln', build_switch, 'Release|x86', '/Out', 'publish\\build-rmt-x86.log')
                 else:
-                    log.log('Building x86')
-                    invoke_vs('src\\Altirra.sln', build_switch, 'Release|Win32', '/Out', 'publish\\build-x86.log')
+                    # The build tool architecture now depends on the host architecture, so we need to change the
+                    # build order. If we're building on ARM64, build ARM64 first, otherwise build x64 first.
 
-                    log.log('Building x64')
-                    invoke_vs('src\\Altirra.sln', build_switch, 'Release|x64', '/Out', 'publish\\build-x64.log')
+                    def build_x86():
+                        log.log('Building x86')
+                        invoke_vs('src\\Altirra.sln', build_switch, 'Release|Win32', '/Out', 'publish\\build-x86.log')
 
-                    if opts.enable_arm64:
+                    def build_x64():
+                        log.log('Building x64')
+                        invoke_vs('src\\Altirra.sln', build_switch, 'Release|x64', '/Out', 'publish\\build-x64.log')
+
+                    def build_arm64():
                         log.log('Building ARM64')
                         invoke_vs('src\\Altirra.sln', build_switch, 'Release|ARM64', '/Out', 'publish\\build-arm64.log')
+
+                    if platform.machine() == 'ARM64':
+                        build_arm64()
+                        build_x86()
+                        build_x64()
+                    else:
+                        build_x64()
+                        build_x86()
+                        if opts.enable_arm64:
+                            build_arm64()
 
                     log.log('Building help file')
                     invoke_vs('src\\ATHelpFile.sln', build_switch, 'Release', '/Out', 'publish\\build-help.log')
@@ -897,13 +960,22 @@ def main() -> None:
                     ('out/Release/Additions.atr', 'Additions.atr')
                 ]
 
+                extras_tmp_path = os.path.join('publish', 'extras.zip')
+                do_package(extras_tmp_path,
+                    [
+                        ('dist/**', '**')
+                    ]
+                )
+
                 do_package(os.path.join('publish', 'Altirra-{}.zip'.format(opts.version_id)),
                     [
                         ('out/Release/Altirra.exe', 'Altirra.exe'),
                         ('out/ReleaseAMD64/Altirra64.exe', 'Altirra64.exe'),
-                        ('dist/**', '**')
+                        ('publish/extras.zip', 'extras.zip')
                     ] + bin_common_patterns
                 )
+                
+                os.remove(extras_tmp_path)
 
                 if opts.enable_arm64:
                     do_package(os.path.join('publish', 'Altirra-{}-ARM64.zip'.format(opts.version_id)),

@@ -22,6 +22,7 @@
 #include "resource.h"
 #include "simulator.h"
 #include "rs232.h"
+#include "uiconfgeneric.h"
 
 extern ATSimulator g_sim;
 
@@ -89,4 +90,49 @@ bool ATUIConfDev850(VDGUIHandle h, ATPropertySet& props) {
 	ATUIDialogDevice850 dlg(props);
 
 	return dlg.ShowDialog(h) != 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+bool ATUIConfDev850Full(VDGUIHandle h, ATPropertySet& props) {
+	return ATUIShowDialogGenericConfig(h,
+		props,
+		L"850 Interface Module (full emulation) Options",
+		[](IATUIConfigView& view) {
+			const auto setBaudRates = [](IATUIConfigIntDropDownView& dropDownView) -> IATUIConfigIntDropDownView& {
+				return dropDownView
+					.AddChoice(0, L"Auto")
+					.AddChoice(2, L"45.5 baud")
+					.AddChoice(3, L"50 baud")
+					.AddChoice(4, L"56.875 baud")
+					.AddChoice(5, L"75 baud")
+					.AddChoice(6, L"110 baud")
+					.AddChoice(7, L"134.5 baud")
+					.AddChoice(8, L"150 baud")
+					.AddChoice(1, L"300 baud")
+					.AddChoice(10, L"600 baud")
+					.AddChoice(11, L"1200 baud")
+					.AddChoice(12, L"1800 baud")
+					.AddChoice(13, L"2400 baud")
+					.AddChoice(14, L"4800 baud")
+					.AddChoice(15, L"9600 baud");
+			};
+
+			setBaudRates(view.AddIntDropDown())
+				.SetTag("serbaud1")
+				.SetLabel(L"Port 1 baud rate");
+
+			setBaudRates(view.AddIntDropDown())
+				.SetTag("serbaud2")
+				.SetLabel(L"Port 2 baud rate");
+
+			setBaudRates(view.AddIntDropDown())
+				.SetTag("serbaud3")
+				.SetLabel(L"Port 3 baud rate");
+
+			setBaudRates(view.AddIntDropDown())
+				.SetTag("serbaud4")
+				.SetLabel(L"Port 4 baud rate");
+		}
+	);
 }

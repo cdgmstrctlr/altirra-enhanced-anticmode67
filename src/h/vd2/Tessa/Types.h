@@ -24,7 +24,8 @@ enum VDTFormat {
 	kVDTF_B5G5R5A1,
 	kVDTF_L8,
 	kVDTF_R8,
-	kVDTF_R16G16B16A16F
+	kVDTF_R16G16B16A16F,
+	kVDTF_R32G32B32A32F
 };
 
 struct VDTInitData2D {
@@ -83,7 +84,8 @@ enum VDTElementUsage {
 	kVDTEU_TexCoord,
 	kVDTEU_Tangent,
 	kVDTEU_Binormal,
-	kVDTEU_Color
+	kVDTEU_Color,
+	kVDTEU_SV_Position,		// used with weird custom effects that take SV_Position _input_
 };
 
 struct VDTVertexElement {
@@ -145,7 +147,8 @@ enum VDTFilterMode {
 
 enum VDTAddressMode {
 	kVDTAddr_Clamp,
-	kVDTAddr_Wrap
+	kVDTAddr_Wrap,
+	kVDTAddr_Border
 };
 
 struct VDTSamplerStateDesc {
@@ -194,6 +197,17 @@ struct VDTViewport {
 	uint32 mHeight;
 	float mMinZ;
 	float mMaxZ;
+
+	static VDTViewport CreateTopLeft(uint32 w, uint32 h) {
+		return VDTViewport {
+			0,
+			0,
+			w,
+			h,
+			0.0f,
+			1.0f
+		};
+	}
 };
 
 struct VDTData {
@@ -217,7 +231,13 @@ struct VDTDeviceCaps {
 	uint32	mMaxTextureHeight = 0;
 	bool	mbMinPrecisionPS = false;
 	bool	mbMinPrecisionNonPS = false;
+	bool	mbGraphicsSM3 = false;
+	bool	mbGraphicsSM4 = false;
+	bool	mbGraphicsSM5 = false;
 	bool	mbComputeSM5 = false;
+
+	// BORDER addressing mode is supported.
+	bool	mbSamplerBorder = false;
 };
 
 #endif	// f_VD2_TESSA_TYPES_H

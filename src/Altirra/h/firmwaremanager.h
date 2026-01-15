@@ -115,6 +115,9 @@ enum ATFirmwareType : uint32 {
 	kATFirmwareType_820,
 	kATFirmwareType_1025,
 	kATFirmwareType_1029,
+	kATFirmwareType_850,
+	kATFirmwareType_BlackBoxFloppy,
+	kATFirmwareType_SpeedyXF,
 	kATFirmwareTypeCount
 };
 

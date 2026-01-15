@@ -357,7 +357,7 @@ ATDiskFSKey ATDiskFSCPM::LookupEntry(const EncodedName& en) const {
 			uint8 err = c ^ d;
 			uint8 mask = ((c - 0x41) & 0x5F) < 26 ? 0x5F : 0x7F;
 
-			if (err ^ mask) {
+			if (err & mask) {
 				match = false;
 				break;
 			}
@@ -399,7 +399,7 @@ void ATDiskFSCPM::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 
 	for(const DirEnt& de2 : mDirectory) {
 		if (!memcmp(de.mName.s, de2.mName.s, 11)) {
-			uint16 extNum = de.GetExtent();
+			uint16 extNum = de2.GetExtent();
 
 			if (extentMap.size() <= extNum)
 				extentMap.resize(extNum + 1, nullptr);
@@ -411,6 +411,9 @@ void ATDiskFSCPM::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 	uint32 extentOffset = 0;
 
 	for(const DirEnt *extent : extentMap) {
+		if (!extent)
+			throw ATDiskFSException(kATDiskFSError_CorruptedFileSystem);
+
 		const uint32 numRecords = std::min<uint32>(extent->mRecordCount, 128);
 		const uint32 numBlocks = (numRecords + 7) >> 3;
 
@@ -418,9 +421,9 @@ void ATDiskFSCPM::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 			continue;
 
 		uint32 extentEnd = extentOffset + 1024 * numBlocks;
-		dst.resize(extentEnd, 0x1A);
+		dst.resize(extentEnd, 0xE5);
 
-		for(uint32 i = 0; i < 16; ++i) {
+		for(uint32 i = 0; i < numBlocks; ++i) {
 			if (extent->mBlocks[i]) {
 				for(uint32 j = 0; j < 4; ++j) {
 					if (256 != mpImage->ReadVirtualSector(mVolumeOffset + extent->mBlocks[i] * 4 + j, &dst[extentOffset + 1024 * i + 256 * j], 256))
@@ -430,7 +433,10 @@ void ATDiskFSCPM::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 		}
 
 		dst.resize(extentOffset + 128 * numRecords);
+		extentOffset += 16 * 1024;
+	}
 
+	if (!dst.empty()) {
 		for(uint32 i = 0; i < 128; ++i) {
 			if (dst.back() != 0xE5)
 				break;
@@ -455,7 +461,7 @@ ATDiskFSKey ATDiskFSCPM::WriteFile(ATDiskFSKey parentKey, const char *filename, 
 		throw ATDiskFSException(kATDiskFSError_FileExists);
 
 	// compute the total number of records, blocks, and extents in the file
-	const uint32 totalRecords = (len + 127) >> 7;
+	const uint32 totalRecords = len ? (len + 127) >> 7 : 1;
 	const uint32 totalBlocks = (totalRecords + 7) >> 3;
 	const uint32 totalExtents = (totalBlocks + 15) >> 4;
 
@@ -467,44 +473,29 @@ ATDiskFSKey ATDiskFSCPM::WriteFile(ATDiskFSKey parentKey, const char *filename, 
 	uint32 nextExtent = 0;
 
 	for(uint32 i=0; i<totalBlocks; ++i) {
-		uint32 blockStart = i * 1024;
-		uint32 blockEnd = std::min<uint32>(blockStart + 1024, len);
-		bool isBlockEmpty = true;
+		for(;;) {
+			uint32 block = nextAlloc;
+			if (++nextAlloc >= mTotalBlocks)
+				nextAlloc = mReservedBlocks;
 
-		for(uint32 i = blockStart; i < blockEnd; ++i) {
-			if (src8[i] != 0x1A) {
-				isBlockEmpty = false;
+			if (!mBlockBitmap[block]) {
+				blockMap[i] = block;
 				break;
 			}
+
+			if (nextAlloc == mNextAlloc)
+				throw ATDiskFSException(kATDiskFSError_DiskFull);
 		}
 
-		if (!isBlockEmpty) {
-			for(;;) {
-				uint32 block = nextAlloc;
-				if (++nextAlloc >= mTotalBlocks)
-					nextAlloc = mReservedBlocks;
-
-				if (!mBlockBitmap[block]) {
-					blockMap[i] = block;
-					break;
-				}
-
-				if (nextAlloc == mNextAlloc)
-					throw ATDiskFSException(kATDiskFSError_DiskFull);
+		// allocate extent
+		uint32 extentIdx = i >> 4;
+		if (extentMap[extentIdx] < 0) {
+			while(mDirectory[nextExtent].IsInUse()) {
+				if (++nextExtent >= 64)
+					throw ATDiskFSException(kATDiskFSError_DirectoryFull);
 			}
-		}
 
-		// allocate extent if needed -- we always need at least one
-		if (!isBlockEmpty || (i == totalBlocks - 1)) {
-			uint32 extentIdx = i >> 4;
-			if (extentMap[extentIdx] < 0) {
-				while(mDirectory[nextExtent].IsInUse()) {
-					if (++nextExtent >= 64)
-						throw ATDiskFSException(kATDiskFSError_DirectoryFull);
-				}
-
-				extentMap[extentIdx] = nextExtent;
-			}
+			extentMap[extentIdx] = nextExtent++;
 		}
 	}
 
@@ -544,7 +535,7 @@ ATDiskFSKey ATDiskFSCPM::WriteFile(ATDiskFSKey parentKey, const char *filename, 
 		de.mStatus = 0;
 		de.mName = en;
 		de.mByteCount = 0;
-		de.mRecordCount = std::min<uint8>(totalRecords - i*128, 128);
+		de.mRecordCount = (uint8)std::min<uint32>(totalRecords - i*128, 128);
 		de.SetExtent(i);
 		for(int j=0; j<16; ++j)
 			de.mBlocks[j] = (uint8)blockMap[i * 16 + j];

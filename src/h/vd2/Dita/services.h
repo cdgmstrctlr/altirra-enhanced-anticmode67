@@ -5,6 +5,7 @@
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/VDString.h>
+#include <vd2/system/vdstl.h>
 
 struct VDFileDialogOption {
 	enum {
@@ -38,4 +39,5 @@ void VDClearFilespecSystemData();
 
 void VDInitFilespecSystem();
 
+sint32 VDUIShowColorPicker(VDGUIHandle parent, uint32 initialColor, vdspan<const uint32> fixedPalette = {}, const char *customPaletteKey = nullptr);
 #endif

@@ -31,6 +31,7 @@
 #include <stdio.h>
 
 #include <windows.h>
+#include <winnls.h>
 
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vdstdc.h>
@@ -320,6 +321,28 @@ bad_sequence_exit:
 }
 
 ///////////////////////////////////////////////////////////////////////////
+
+bool VDTextContainsSubstringMatchByLocale(VDStringSpanW sourceString, VDStringSpanW searchString) {
+	const int pos = FindNLSStringEx(
+		LOCALE_NAME_USER_DEFAULT,
+		FIND_FROMSTART
+			| NORM_IGNORECASE
+			| NORM_IGNOREKANATYPE
+			| NORM_IGNOREWIDTH
+			| NORM_LINGUISTIC_CASING,
+		sourceString.data(),
+		(int)sourceString.size(),
+		searchString.data(),
+		(int)searchString.size(),
+		nullptr,
+		nullptr,
+		nullptr,
+		0);
+
+	return pos >= 0;
+}
+
+///////////////////////////////////////////////////////////////////////////
 //
 //	VirtualDub's very own printf() functions.
 //
@@ -338,7 +361,7 @@ VDStringW VDaswprintf(const wchar_t *format, int args, const void *const *argv) 
 
 	VDStringW tempConv;
 
-	while(c = *format) {
+	while((c = *format)) {
 		if (c != L'%') {
 			const wchar_t *s = format;
 

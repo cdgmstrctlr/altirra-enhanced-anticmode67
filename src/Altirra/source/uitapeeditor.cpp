@@ -1772,7 +1772,7 @@ void ATUITapeViewControl::UpdateFontMetrics() {
 
 	if (HDC hdc = GetDC(mhwnd)) {
 		if (int savedState = SaveDC(hdc)) {
-			if (HGDIOBJ hOldFont = SelectObject(hdc, mhfont)) {
+			if (SelectObject(hdc, mhfont)) {
 				static const WCHAR kRepresentativeText[] = L"00:00:00.000";
 				SIZE sz {};
 

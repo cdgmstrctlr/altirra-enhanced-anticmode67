@@ -40,7 +40,7 @@ public:
 			mpExpr = ATDebuggerParseExpression(VDTextWToA(expr).c_str(), ATGetDebuggerSymbolLookup(), ATGetDebugger()->GetExprOpts());
 		} catch(const ATDebuggerExprParseException& ex) {
 			mValueStr = L"<Evaluation error: ";
-			mValueStr += VDTextAToW(ex.gets());
+			mValueStr += ex.wc_str();
 			mValueStr += L'>';
 		}
 	}

@@ -936,8 +936,12 @@ void ATDeviceDiskDrivePercom::OnPIACB2ChangedATSPD(bool value) {
 		if (auto *printer = mParallelBus.GetChild<IATPrinterOutput>())
 			printer->WriteRaw(&c, 1);
 		else {
-			if (!mpPrinterOutput)
-				mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+			if (!mpPrinterOutput) {
+				ATDeviceInfo info;
+				GetDeviceInfo(info);
+
+				mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput(info.mpDef->mpName);
+			}
 
 			mpPrinterOutput->WriteRaw(&c, 1);
 		}

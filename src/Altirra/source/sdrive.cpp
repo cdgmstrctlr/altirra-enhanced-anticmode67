@@ -82,10 +82,8 @@ void ATSDriveEmulator::Shutdown() {
 		mpUIRenderer = nullptr;
 	}
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATSDriveEmulator::WarmReset() {
@@ -108,7 +106,7 @@ void ATSDriveEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 
 void ATSDriveEmulator::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATSDriveEmulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -144,29 +142,29 @@ IATDeviceSIO::CmdResponse ATSDriveEmulator::OnSerialBeginCommand(const ATDeviceS
 			break;
 
 		case 0xDD:	// set SD sector number
-			mpSIOMgr->BeginCommand();
+			mpSIOInterface->BeginCommand();
 			if (mbHighSpeedPhase)
-				mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-			mpSIOMgr->SendACK();
-			mpSIOMgr->ReceiveData(cmd.mCommand, 4, true);
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->EndCommand();
+				mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+			mpSIOInterface->SendACK();
+			mpSIOInterface->ReceiveData(cmd.mCommand, 4, true);
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->EndCommand();
 			return kCmdResponse_Start;
 
 		case 0xDE:	// read SD sector
-			mpSIOMgr->BeginCommand();
+			mpSIOInterface->BeginCommand();
 			if (mbHighSpeedPhase)
-				mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-			mpSIOMgr->SendACK();
-			mpSIOMgr->InsertFence(cmd.mCommand);
+				mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+			mpSIOInterface->SendACK();
+			mpSIOInterface->InsertFence(cmd.mCommand);
 			return kCmdResponse_Start;
 
 		case 0xDF:	// write SD sector
-			mpSIOMgr->BeginCommand();
+			mpSIOInterface->BeginCommand();
 			if (mbHighSpeedPhase)
-				mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-			mpSIOMgr->SendACK();
-			mpSIOMgr->ReceiveData(cmd.mCommand, 512, true);
+				mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+			mpSIOInterface->SendACK();
+			mpSIOInterface->ReceiveData(cmd.mCommand, 512, true);
 			return kCmdResponse_Start;
 	}
 
@@ -184,18 +182,18 @@ void ATSDriveEmulator::OnSerialReceiveComplete(uint32 id, const void *data, uint
 
 		case 0xDF:	// write SD sector
 			if (!mpDisk || mSectorNumber >= mpDisk->GetSectorCount()) {
-				mpSIOMgr->SendError();
+				mpSIOInterface->SendError();
 			} else {
 				try {
 					mpUIRenderer->SetIDEActivity(true, mSectorNumber);
 					mpDisk->WriteSectors(mSectorBuffer, mSectorNumber, 1);
-					mpSIOMgr->SendComplete();
+					mpSIOInterface->SendComplete();
 				} catch(const MyError&) {
-					mpSIOMgr->SendError();
+					mpSIOInterface->SendError();
 				}
 			}
 
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->EndCommand();
 			break;
 	}
 }
@@ -204,20 +202,20 @@ void ATSDriveEmulator::OnSerialFence(uint32 id) {
 	switch(id) {
 		case 0xDE:	// read SD sector
 			if (!mpDisk || mSectorNumber >= mpDisk->GetSectorCount()) {
-				mpSIOMgr->SendError();
+				mpSIOInterface->SendError();
 			} else  {
 				try {
 					mpUIRenderer->SetIDEActivity(false, mSectorNumber);
 					mpDisk->ReadSectors(mSectorBuffer, mSectorNumber, 1);
-					mpSIOMgr->SendComplete();
-					mpSIOMgr->SendData(mSectorBuffer, 512, true);
+					mpSIOInterface->SendComplete();
+					mpSIOInterface->SendData(mSectorBuffer, 512, true);
 				} catch(const MyError&) {
-					mpSIOMgr->SendError();
+					mpSIOInterface->SendError();
 				}
 			}
 
-			mpSIOMgr->SendData(mSectorBuffer, 512, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->SendData(mSectorBuffer, 512, true);
+			mpSIOInterface->EndCommand();
 			break;
 	}
 }

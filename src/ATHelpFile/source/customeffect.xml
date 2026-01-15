@@ -10,13 +10,13 @@
   </p>
   <h2>Using a custom effect</h2>
   <p>
-    A custom effect is configured in Options under Display Effects, Custom Effect path.
+    A custom effect is configured in Configure System under Display 2, Custom Effect path.
     This points to a <tt>.cgp</tt> file that describes the shader stages of the effect
     to render during display composition.
   </p>
   <p>
-    Currently, the display mode must be set to Direct3D 9 in Display options for custom
-    effects to work. They will not function if Direct3D 11 or another mode is in use.
+    Either Direct3D 9 or Direct3D 11 must be enabled for custom effects to work (these
+    are enabled by default).
   </p>
   <h2>Basic structure</h2>
   <p>
@@ -41,7 +41,22 @@
     for a false value, and <tt>1</tt> or <tt>true</tt> for a true value.
   </p>
   <h2>Global declarations</h2>
-  <dl class="monospace color-sections">
+  <p>
+    Global declarations apply to all passes.
+  </p>
+  <dl class="scripting-ref">
+    <dt>shaders</dt>
+    <dd>
+      Specifies the number of shader passes. For instance, <tt>shaders = 2</tt> indicates
+      two passes. An error is thrown if there are not at least the specified number of passes,
+      by the <tt>shader0</tt>, <tt>shader1</tt>, etc. parameters. Any additional passes are
+      ignored, so this can be used to debug a specific pass.
+    </dd>
+    <dd>
+      If this parameter is omitted, all contiguous passes starting with <tt>shader0</tt> are
+      used.
+    </dd>
+      
     <dt>shader_profile_d3d9</dt>
     <dd>
       Sets the shader profile used for compiling shaders for Direct3D 9. Valid values are
@@ -55,12 +70,22 @@
       will fail to load.
     </dd>
     <dd>
-      The default is <tt>2_0</tt>, as it is supported by all shader model 2 hardware or newer.
+      The default is the highest shader model supported by the graphics device in Direct3D 9.
+    </dd>
+
+    <dt>shader_profile_d3d11</dt>
+    <dd>
+      Sets the shader profile used for compiling shaders for Direct3D 11. Valid values are
+      <tt>4_0_level_9_1</tt>, <tt>4_0_level_9_3</tt>, <tt>4_0</tt>, and <tt>5_0</tt>.
+      These approximately correspond to shader models 2, 3, 4, and 5.
+    </dd>
+    <dd>
+      If not specified, the default is the highest supported profile for the device in Direct3D 11.
     </dd>
 
     <dt>shader_precompile</dt>
     <dd>
-      If <tt>true</tt>, always compile the shaders from source and write the precompiled shaders
+      For Direct3D 9, if <tt>true</tt>, always compile the shaders from source and write the precompiled shaders
       to disk with the suffix <tt>-d3d9.vsh</tt> or <tt>-d3d9-psh</tt>. This is the same binary
       format produced by the <tt>fxc</tt> tool in the DirectX or Windows SDK.
     </dd>
@@ -68,12 +93,19 @@
       The default is <tt>false</tt>, which means to use precompiled shaders if they exist or
       otherwise attempt to compile from source, but never to write precompiled shaders.
     </dd>
+    <dd>
+      This setting is currently ignored for Direct3D 11, which always compiles shaders.
+    </dd>
 
     <dt>shader_show_stats</dt>
     <dd>
       Displays stats on screen for the output surface format and GPU timings for each pass if
       available. This is useful to tell which passes are the most expensive. The default is
       <tt>false</tt>.
+    </dd>
+    <dd>
+      This can also be enabled by setting the advanced configuration variable <tt>display.customeffect.show_stats</tt>
+      in Altirra in Tools &gt; Advanced Configuration.
     </dd>
 
     <dt>textures</dt>
@@ -96,7 +128,11 @@
   </dl>
 
   <h2>Pass declarations</h2>
-  <dl class="monospace color-sections">
+  <p>
+    Pass declarations only apply to a specific pass. All pass declarations are suffixed with the
+    pass number, starting at <tt>0</tt> for the first pass.
+  </p>
+  <dl class="scripting-ref">
     <dt>shader<i>N</i></dt>
     <dd>
       Declares pass <i>N</i> and sets the name of the shader source file for that pass. Passes are
@@ -113,13 +149,19 @@
       setting is used.
     </dd>
 
+    <dt>shader_profile_d3d11_<i>N</i></dt>
+    <dd>
+      Same as <tt>shader_profile_d3d11</tt>, but overriding it only for pass <i>N</i>. If omitted, the global
+      setting is used.
+    </dd>
+    
     <dt>filter_linear<i>N</i></dt>
     <dd>
       If <tt>true</tt>, use bilinear filtering for the default input of pass <i>N</i>. If
       <tt>false</tt>, use nearest (point) sampling. If omitted, the default is <tt>true</tt> (bilinear).
     </dd>
 
-    <dt>scale_type<i>N</i>, scale_type_x<i>N</i>, scale_type_<i>N</i></dt>
+    <dt>scale_type<i>N</i>, scale_type_x<i>N</i>, scale_type<i>N</i></dt>
     <dd>
       Sets the output size type for pass <i>N</i>. <tt>source</tt> uses the size of the default source input for
       the pass (not necessarily the original source to the whole effect). <tt>viewport</tt> uses the
@@ -172,6 +214,13 @@
     <dd>
       If the device does not support half-float point textures, full-float textures are used
       if available.
+    </dd>
+
+    <dt>srgb_framebuffer<i>N</i></dt>
+    <dd>
+      Enables hardware sRGB conversion for the output of pass N. If set, reads from the output
+      texture are converted from sRGB to linear color, and writes are converted from linear
+      color to sRGB.
     </dd>
   </dl>
 
@@ -234,19 +283,17 @@
     suffixed parameters.
   </p>
   <p>
-    Texture/sampler 0 is also special-cased as the IN parameter, the pass input. This is the
-    output from the previous pass, or the original source for pass 0. Because it is always
-    at slot 0, it should be declared explicitly so that this slot is not used for
-    any other textures:
+    Any unrecognized textures bound to texture/sampler 0 are mapped to the <tt>IN</tt>
+    parameter. This allows simply <tt>extern</tt>-ing the input texture as register <tt>s0</tt>:
   </p>
-  <pre>extern sampler IN_texture : register(s0);</pre>
+  <pre>extern sampler IN_texture : register(s0)</pre>
   <p>
     All other textures can be referred to by name, with slots auto-allocated by the shader
     compiler. Each input <tt>FOO</tt> has a sampler parameter named <tt>FOO_texture</tt>
     and a struct parameter named <tt>FOO</tt>. Both of these are declared as <tt>uniform</tt>
     parameters to the shader and not as a global parameters.
   </p>
-  <dl class="monospace color-sections">
+  <dl class="scripting-ref">
     <dt>IN</dt>
     <dd>
       The pass input, either the output of the previous pass or the source texture for
@@ -272,19 +319,27 @@
 
     <dt>PREV, PREV<i>M</i></dt>
     <dd>
-      The pass input from the previous frame, or from <i>M+1</i> frames back. That is,
-      <tt>PREV</tt> is the previous frame version of <tt>IN</tt>, while <tt>PREV1</tt>
+      The original input from the previous frame, or from <i>M+1</i> frames back. That is,
+      <tt>PREV</tt> is the previous frame version of <tt>ORIG</tt>, while <tt>PREV1</tt>
       is one frame behind <tt>PREV</tt>. Up to <tt>PREV6</tt> is supported.
     </dd>
     <dd>
       Note that the number on <tt>PREV<i>M</i></tt> is a frame offset number, <i>not</i>
       a pass number. Previous frames can only be referenced on the immediate pass input.
     </dd>
+  
+    <dt>PASSPREV, PASSPREV<i>M</i></dt>
+    <dd>
+      Alternate way of accessing previous pass inputs. <tt>PASSPREV</tt> is the input to the
+      previous pass, <tt>PASSPREV1</tt> the input to two passes back, etc. This indexes passes
+      backwards from the current pass, versus <tt>PASS</tt> which numbers passes forwards from
+      the start.
+    </dd>
   </dl>
   <p>
     The struct parameter has the following fields:
   </p>
-  <dl class="monospace color-sections">
+  <dl class="scripting-ref">
     <dt>float2 video_size;</dt>
     <dd>
       The size of the valid image within the texture. For a 320x200 image within a 512x256
@@ -297,6 +352,12 @@
       texture, <tt>video_size</tt> is (512, 256).
     </dd>
 
+    <dt>float2 output_size;</dt>
+    <dd>
+      The valid image size in texels for the pass associated with the texture. <tt>IN.output_size</tt>
+      is the output size for the current pass.
+    </dd>
+    
     <dt>float frame_count;</dt>
     <dd>
       The frame number represented by this input, starting with 0. For a <tt>PREV</tt>
@@ -316,13 +377,18 @@
   </p>
   <p>
     <b>Note:</b> For compatibility reasons, <tt>modelViewProj</tt> is expected to be multiplied
-    on the left of the input position vector, i.e. <tt>mul(modelViewProj, position)</tt>.
+    on the left of the input position vector, i.e. <tt>mul(modelViewProj, position)</tt>. In Altirra,
+    either order will work since <tt>modelViewProj</tt> is always identity.
   </p>
 
   <h3>Custom texture inputs</h3>
   <p>
     Any custom textures declared with <tt>textures</tt> appear as global uniform parameters with
     the same name.
+  </p>
+  <p>
+    Custom textures are always allocated with the exact size of the image. If the device only supports
+    power-of-two textures and the image dimensions are not powers of two, the texture load fails.
   </p>
   
   <h3>Texture settings</h3>
@@ -334,6 +400,30 @@
     Non-power-of-two textures may be stored in power-of-two sized textures due to hardware limitations
     or for speed. When available, <tt>BORDER</tt> addressing is used to ensure that texture sampling
     outside of the valid image area of the texture returns transparent black.
+  </p>
+
+  <h2>Direct3D 11 specific issues</h2>
+  <p>
+    In Direct3D 11 mode, shaders are compiled with the FXC <tt>/Gec</tt> compatibility option. This
+    enables backwards compatibility with Direct3D 9 shaders, including accepting D3D9 semantics
+    (<tt>POSITION</tt> instead of <tt>SV_Position</tt>, <tt>COLOR0</tt> instead of <tt>SV_Target</tt>),
+    and D3D9-style <tt>tex2D()</tt> intrinsics. This allows D3D9-compatible shaders to be used in
+    D3D11 mode as well with minor modifications.
+  </p>
+  <p>
+    The main requirement for D3D11 compatibility is that the pixel shader input signature must
+    be compatible with the vertex shader input signature. This means that all pixel shader varying
+    attribute inputs must be a subset of the vertex shader inputs, <i>in order</i>. For instance,
+    if the pixel shader accepts <tt>float2 : TEXCOORD0</tt> and <tt>float3 : TEXCOORD1</tt>, the
+    vertex shader must output at least <tt>TEXCOORD0</tt> and <tt>TEXCOORD1</tt> as the first
+    two varying attributes, in that order, with at least <tt>float2</tt> and <tt>float3</tt>
+    components. The custom effect loader validates this and will throw an error if the signatures
+    are not compatible. The most common error is due to outputting <tt>POSITION</tt> from the
+    vertex shader before other varying attributes, which can be fixed by moving it to the end.
+  </p>
+  <p>
+    The custom effect loader also maps the D3D9 <tt>half</tt> types to <tt>min16float</tt> if supported
+    by the device, to take advantage of double-speed half float arithmetic.
   </p>
 
   <h2>Interaction with host UI</h2>
@@ -361,6 +451,12 @@
     any letterboxing performed to maintain scaling/aspect is outside of the viewport. The image processing
     performed in the custom effect does not affect the border color.
   </p>
+  
+  <h2>Interaction with post-processing</h2>
+  <p>
+    If the final pass contains scaling settings, it is considered to replace the built-in post-processing
+    pipeline. This disables the default scaling and screen effect passes.
+  </p>
 
   <h2>Precompiling shaders for distribution</h2>
   <p>
@@ -376,6 +472,9 @@
     There is no difference in performance between source-compiled and precompiled shaders, besides
     a very small amount of time to compile from source on load in the former case.
   </p>
+  <p>
+    Precompiled shaders are only supported for Direct3D 9.
+  </p>
 
   <h2>Performance optimization</h2>
   <p>
@@ -387,8 +486,8 @@
     that to avoid adversely affecting vsync lock. Running within 8ms or lower is highly recommended.
   </p>
   <p>
-    If the final pass is rendering at 1:1 pixels at viewport resolution, make sure it has no scales
-    defined so that the built-in blit is skipped.
+    Pass outputs can be cached if they do not reference the original input or any other passes
+    referencing the original input.
   </p>
   <p>
     Structure passes so that as much processing as possible is done at the smallest size. Color
@@ -430,8 +529,8 @@ void main_vertex(
     float4 pos : POSITION,
     float2 uv : TEXCOORD0,
     uniform float4x4 modelViewProj,
-    out float4 oPos : POSITION,
-    out float2 oT0 : TEXCOORD0)
+    out float2 oT0 : TEXCOORD0,
+    out float4 oPos : POSITION)
 {
     oPos = mul(modelViewProj, pos);
     oT0 = uv;

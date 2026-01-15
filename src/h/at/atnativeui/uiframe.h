@@ -25,6 +25,7 @@
 
 #include <vd2/system/function.h>
 #include <vd2/system/refcount.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/vectors.h>
 #include <vd2/system/VDString.h>
@@ -123,6 +124,7 @@ public:
 	void LayoutWindow(HWND hwnd, int x, int y, int width, int height, bool visible);
 	void LayoutAndReorderWindow(HWND hwnd, HWND hwndAfter, int x, int y, int width, int height, bool visible);
 	void ResizeWindow(HWND hwnd, int width, int height);
+	void HideWindow(HWND hwnd);
 
 	void Flush();
 
@@ -144,6 +146,7 @@ public:
 protected:
 	static LRESULT StaticWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	bool OnErase(HDC hdc);
 	void OnPaint();
 	void OnSize();
 	void OnLButtonDown(WPARAM wParam, int x, int y);
@@ -180,6 +183,34 @@ protected:
 	int mY;
 };
 
+class ATContainerTabControlHandler final : public vdrefcount {
+public:
+	ATContainerTabControlHandler(ATContainerDockingPane& dockingPane)
+		: mpDockingPane(&dockingPane) {}
+
+	static LRESULT CALLBACK StaticTabSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR data);
+	LRESULT TabSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+	bool IsDraggingTab() const {
+		return mpDragFrame != nullptr;
+	}
+
+	void SetDestroyPending() {
+		mbDestroyPending = true;
+	}
+
+	ATContainerDockingPane *mpDockingPane = nullptr;
+
+	bool		mbTrackingTabDrag = false;
+	vdrect32	mTrackingTabDragRect {};
+	int			mTrackingTabDragInitialX = 0;
+	int			mTrackingTabDragInitialY = 0;
+
+	bool mbDestroyPending = false;
+
+	vdrefptr<ATFrameWindow> mpDragFrame;
+};
+
 class ATContainerDockingPane final : public vdrefcounted<IVDRefCount> {
 public:
 	ATContainerDockingPane(ATContainerWindow *parent);
@@ -208,6 +239,7 @@ public:
 	float	GetDockFraction() const;
 	void	SetDockFraction(float dist);
 
+	ATContainerWindow *GetContainerWindow() const { return mpParent; }
 	ATContainerDockingPane *GetParentPane() const { return mpDockParent; }
 
 	uint32	GetContentCount() const;
@@ -248,12 +280,15 @@ public:
 	void	RemoveAnyEmptyNodes();
 
 	void	OnTabChange(HWND hwndSender);
+	void	OnTabClose(HWND hwndSender);
 
-protected:
+private:
 	void	RecalcFrameInternal();
 	void	RepositionContent(ATContainerResizer& resizer);
 	void	RemoveEmptyNode();
 	void	UpdateChildEdgeFlags();
+
+	void	DestroyTabControls();
 
 	ATContainerWindow *const mpParent;
 	vdrefptr<ATDragHandleWindow> mpDragHandle;
@@ -279,7 +314,10 @@ protected:
 	sint32		mVisibleFrameIndex;
 	uint8		mSplitterEdges = 0;
 
-	HWND		mhwndTabControl;
+	vdrefptr<ATContainerTabControlHandler> mpTabControlHandler;
+
+	HWND		mhwndTabControl = nullptr;
+	HWND		mhwndTabCloseControl = nullptr;
 };
 
 class ATContainerWindow : public ATUINativeWindow {
@@ -442,6 +480,7 @@ public:
 
 	bool IsVisible() const;
 	void SetVisible(bool vis);
+	FrameMode GetFrameMode() const { return mFrameMode; }
 	void SetFrameMode(FrameMode fm);
 	void SetSplitterEdges(uint8 flags);
 
@@ -459,6 +498,10 @@ public:
 	void RecalcFrame();
 	void Relayout(int w, int h);
 
+	void BeginFrameDrag(int initialScreenX, int initialScreenY);
+	void UpdateFrameDrag(int screenX, int screenY);
+	void EndFrameDrag();
+
 	VDGUIHandle Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 	VDGUIHandle CreateChild(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent);
 
@@ -472,6 +515,8 @@ protected:
 	bool OnNCLButtonDown(int code, int x, int y);
 	bool OnMouseMove(int x, int y);
 
+	void BeginUnverifiedDrag(int screenX, int screenY, bool capture);
+	void BeginVerifiedDrag();
 	void EndDrag(bool success);
 
 	int		mDragOriginX = 0;

@@ -25,15 +25,17 @@ public:
 	~ATDevicePrinter1020();
 
 	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
 	void ColdReset() override;
 
 	void OnCreatedGraphicalOutput() override;
 	ATPrinterGraphicsSpec GetGraphicsSpec() const override;
-	bool IsSupportedDeviceId(uint8 id) const;
-	bool IsSupportedOrientation(uint8 aux1) const;
-	uint8 GetWidthForOrientation(uint8 aux1) const;
+	bool IsSupportedDeviceId(uint8 id) const override;
+	bool IsSupportedOrientation(uint8 aux1) const override;
+	uint8 GetWidthForOrientation(uint8 aux1) const override;
 	void GetStatusFrameInternal(uint8 frame[4]) override;
-	void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
+	void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
 
 private:
 	void ResetState();
@@ -43,6 +45,8 @@ private:
 	bool DrawToAbsolute(sint32 x, sint32 y);
 	vdfloat2 ConvertPointToMM(sint32 x, sint32 y) const;
 	vdfloat2 ConvertVectorToMM(sint32 x, sint32 y) const;
+
+	void ReconvertPens();
 
 	// 0.200mm/step per VIC-1520 manual and CGP-115 service manual
 	static constexpr float kUnitsToMM = 0.20f;
@@ -74,6 +78,9 @@ private:
 	uint8 mArgsLeft = 0;
 	uint8 mArgCount = 0;
 	bool mbIntCharsEnabled = false;
+
+	sint32 mPenColors[4] {};
+	uint32 mPrintPenColors[4] {};
 };
 
 #endif

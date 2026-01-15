@@ -257,16 +257,36 @@ public:
 
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
-	bool OnCommand(uint32 id, uint32 extcode) override;
 
 protected:
 	void UpdateEnables();
 	void UpdateGeometry();
-	void UpdateCapacity();
-	void SetCapacityBySectorCount(uint64 sectors);
+	void UpdateCapacityByCHS();
+	void UpdateCapacityBySizeMB();
+	void UpdateCapacityBySizeSectors();
+	void UpdateCapacityBySectorCount(uint64 sectors, bool updateMb = true, bool updateSectors = true);
+
+	void ShowCHSGeometry(uint32 cylinders, uint32 heads, uint32 spt);
+	void ShowSizeInMB(uint32 sizemb);
+	void ShowSizeInSectors(uint32 sectors);
+
+	void OnBrowseImage();
+	void OnBrowseDisk();
+	void OnCreateVHD();
+
+	static bool ParseUint32(const wchar_t *s, uint32& dst);
 
 	uint32 mInhibitUpdateLocks;
 	ATPropertySet& mProps;
+
+	VDUIProxyButtonControl mBrowseImageView;
+	VDUIProxyButtonControl mBrowseDiskView;
+	VDUIProxyButtonControl mCreateVHDView;
+	VDUIProxyEditControl mCylindersView;
+	VDUIProxyEditControl mHeadsView;
+	VDUIProxyEditControl mSectorsPerTrackView;
+	VDUIProxyEditControl mSizeMBView;
+	VDUIProxyEditControl mSizeSectorsView;
 };
 
 ATUIDialogDeviceHardDisk::ATUIDialogDeviceHardDisk(ATPropertySet& props)
@@ -274,18 +294,70 @@ ATUIDialogDeviceHardDisk::ATUIDialogDeviceHardDisk(ATPropertySet& props)
 	, mInhibitUpdateLocks(0)
 	, mProps(props)
 {
+	mBrowseImageView.SetOnClicked(
+		[this] { OnBrowseImage(); }
+	);
+
+	mBrowseDiskView.SetOnClicked(
+		[this] { OnBrowseDisk(); }
+	);
+
+	mCreateVHDView.SetOnClicked(
+		[this] { OnCreateVHD(); }
+	);
+
+	mCylindersView.SetOnTextChanged(
+		[this](VDUIProxyEditControl*) {
+			if (!mInhibitUpdateLocks)
+				UpdateCapacityByCHS();
+		}
+	);
+
+	mHeadsView.SetOnTextChanged(
+		[this](VDUIProxyEditControl*) {
+			if (!mInhibitUpdateLocks)
+				UpdateCapacityByCHS();
+		}
+	);
+
+	mSectorsPerTrackView.SetOnTextChanged(
+		[this](VDUIProxyEditControl*) {
+			if (!mInhibitUpdateLocks)
+				UpdateCapacityByCHS();
+		}
+	);
+
+	mSizeMBView.SetOnTextChanged(
+		[this](VDUIProxyEditControl*) {
+			if (!mInhibitUpdateLocks)
+				UpdateCapacityBySizeMB();
+		}
+	);
+
+	mSizeSectorsView.SetOnTextChanged(
+		[this](VDUIProxyEditControl*) {
+			if (!mInhibitUpdateLocks)
+				UpdateCapacityBySizeSectors();
+		}
+	);
 }
 
 ATUIDialogDeviceHardDisk::~ATUIDialogDeviceHardDisk() {
 }
 
 bool ATUIDialogDeviceHardDisk::OnLoaded() {
-	if (VDIsAtLeastVistaW32()) {
-		HWND hwndItem = GetDlgItem(mhdlg, IDC_IDE_DISKBROWSE);
+	AddProxy(&mBrowseImageView, IDC_IDE_IMAGEBROWSE);
+	AddProxy(&mBrowseDiskView, IDC_IDE_DISKBROWSE);
+	AddProxy(&mCreateVHDView, IDC_CREATE_VHD);
 
-		if (hwndItem)
-			SendMessage(hwndItem, BCM_SETSHIELD, 0, TRUE);
-	}
+	AddProxy(&mCylindersView, IDC_IDE_CYLINDERS);
+	AddProxy(&mHeadsView, IDC_IDE_HEADS);
+	AddProxy(&mSectorsPerTrackView, IDC_IDE_SPT);
+
+	AddProxy(&mSizeMBView, IDC_IDE_SIZE);
+	AddProxy(&mSizeSectorsView, IDC_SECTOR_COUNT);
+
+	mBrowseDiskView.ShowElevationNeeded();
 
 	ATUIEnableEditControlAutoComplete(GetControl(IDC_IDE_IMAGEPATH));
 
@@ -294,6 +366,8 @@ bool ATUIDialogDeviceHardDisk::OnLoaded() {
 
 void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 	if (!write) {
+		++mInhibitUpdateLocks;
+
 		SetControlText(IDC_IDE_IMAGEPATH, mProps.GetString("path"));
 		CheckButton(IDC_IDEREADONLY, !mProps.GetBool("write_enabled"));
 
@@ -306,21 +380,30 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 			spt = 0;
 			cylinders = 0;
 		} else {
-			SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
-			SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
-			SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+			VDStringW s;
+
+			s.sprintf(L"%u", cylinders);
+			mCylindersView.SetText(s.c_str());
+
+			s.sprintf(L"%u", heads);
+			mHeadsView.SetText(s.c_str());
+
+			s.sprintf(L"%u", spt);
+			mSectorsPerTrackView.SetText(s.c_str());
 		}
+
+		--mInhibitUpdateLocks;
 
 		bool fast = mProps.GetBool("solid_state");
 		CheckButton(IDC_SPEED_FAST, fast);
 		CheckButton(IDC_SPEED_SLOW, !fast);
 
-		UpdateCapacity();
+		UpdateCapacityByCHS();
 
 		if (!cylinders || !heads || !spt) {
 			uint32 totalSectors = mProps.GetUint32("sectors");
 			if (totalSectors)
-				SetCapacityBySectorCount(totalSectors);
+				UpdateCapacityBySectorCount(totalSectors);
 		}
 
 		UpdateEnables();
@@ -341,22 +424,25 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 		uint32 sectors = 0;
 
 		if (!path.empty()) {
-			if (!GetControlValueString(IDC_IDE_CYLINDERS).empty()) {
+			VDStringW s;
+
+			s = mCylindersView.GetText();
+			if (!s.empty()) {
 				cylinders = GetControlValueUint32(IDC_IDE_CYLINDERS);
 				if (cylinders > 16777216)
-					FailValidation(IDC_IDE_CYLINDERS);
+					FailValidation(mCylindersView.GetWindowId());
 			}
 
-			if (!GetControlValueString(IDC_IDE_HEADS).empty()) {
-				heads = GetControlValueUint32(IDC_IDE_HEADS);
-				if (heads > 16)
-					FailValidation(IDC_IDE_HEADS);
+			s = mHeadsView.GetText();
+			if (!s.empty()) {
+				if (!ParseUint32(s.c_str(), heads) || heads > 16)
+					FailValidation(mHeadsView.GetWindowId());
 			}
 
-			if (!GetControlValueString(IDC_IDE_SPT).empty()) {
-				sectors = GetControlValueUint32(IDC_IDE_SPT);
-				if (sectors > 255)
-					FailValidation(IDC_IDE_SPT);
+			s = mSectorsPerTrackView.GetText();
+			if (!s.empty()) {
+				if (!ParseUint32(s.c_str(), sectors) || sectors > 255)
+					FailValidation(mSectorsPerTrackView.GetWindowId());
 			}
 		}
 
@@ -375,101 +461,6 @@ void ATUIDialogDeviceHardDisk::OnDataExchange(bool write) {
 			mProps.SetBool("solid_state", fast);
 		}
 	}
-}
-
-bool ATUIDialogDeviceHardDisk::OnCommand(uint32 id, uint32 extcode) {
-	switch(id) {
-		case IDC_IDE_IMAGEBROWSE:
-			{
-				int optvals[1]={false};
-
-				static const VDFileDialogOption kOpts[]={
-					{ VDFileDialogOption::kConfirmFile, 0 },
-					{0}
-				};
-
-				VDStringW s(VDGetSaveFileName('ide ', (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
-				if (!s.empty()) {
-					if (s.size() >= 4 && !vdwcsicmp(s.c_str() + s.size() - 4, L".vhd")) {
-						try {
-							vdrefptr<ATIDEVHDImage> vhdImage(new ATIDEVHDImage);
-
-							vhdImage->Init(s.c_str(), false, false);
-
-							SetCapacityBySectorCount(vhdImage->GetSectorCount());
-						} catch(const MyError& e) {
-							ShowError2(e, L"VHD image mount failed");
-							return true;
-						}
-					} else {
-						VDDirectoryIterator it(s.c_str());
-
-						if (it.Next()) {
-							SetCapacityBySectorCount(it.GetSize() >> 9);
-						}
-					}
-
-					SetControlText(IDC_IDE_IMAGEPATH, s.c_str());
-
-					uint32 attr = VDFileGetAttributes(s.c_str());
-					if (attr != kVDFileAttr_Invalid)
-						CheckButton(IDC_IDEREADONLY, (attr & kVDFileAttr_ReadOnly) != 0);
-				}
-			}
-			return true;
-
-		case IDC_IDE_DISKBROWSE:
-			if (!ATIsUserAdministrator()) {
-				ShowError(L"You must run Altirra with local administrator access in order to mount a physical disk for emulation.", L"Altirra Error");
-				return true;
-			} else {
-				ShowWarning(
-					L"This option uses a physical disk for IDE emulation. You can either map the entire disk or a partition within the disk. However, only read only access is supported.\n"
-					L"\n"
-					L"You can use a partition that is currently mounted by Windows. However, changes to the file system in Windows may not be reflected consistently in the emulator.",
-					L"Altirra Warning");
-			}
-
-			{
-				const VDStringW& path = ATUIShowDialogBrowsePhysicalDisks((VDGUIHandle)mhdlg);
-
-				if (!path.empty()) {
-					SetControlText(IDC_IDE_IMAGEPATH, path.c_str());
-					CheckButton(IDC_IDEREADONLY, true);
-
-					sint64 size = ATIDEGetPhysicalDiskSize(path.c_str());
-					uint64 sectors = (uint64)size >> 9;
-
-					SetCapacityBySectorCount(sectors);
-				}
-			}
-			return true;
-
-		case IDC_CREATE_VHD:
-			{
-				ATUIDialogCreateVHDImage2 createVHDDlg;
-
-				if (createVHDDlg.ShowDialog((VDGUIHandle)mhdlg)) {
-					SetCapacityBySectorCount(createVHDDlg.GetSectorCount());
-					SetControlText(IDC_IDE_IMAGEPATH, createVHDDlg.GetPath());
-				}
-			}
-			return true;
-
-		case IDC_IDE_CYLINDERS:
-		case IDC_IDE_HEADS:
-		case IDC_IDE_SPT:
-			if (extcode == EN_UPDATE && !mInhibitUpdateLocks)
-				UpdateCapacity();
-			return true;
-
-		case IDC_IDE_SIZE:
-			if (extcode == EN_UPDATE && !mInhibitUpdateLocks)
-				UpdateGeometry();
-			return true;
-	}
-
-	return false;
 }
 
 void ATUIDialogDeviceHardDisk::UpdateEnables() {
@@ -504,39 +495,222 @@ void ATUIDialogDeviceHardDisk::UpdateGeometry() {
 	}
 }
 
-void ATUIDialogDeviceHardDisk::UpdateCapacity() {
-	uint32 cyls = GetControlValueUint32(IDC_IDE_CYLINDERS);
-	uint32 heads = GetControlValueUint32(IDC_IDE_HEADS);
-	uint32 spt = GetControlValueUint32(IDC_IDE_SPT);
-	uint32 size = 0;
+void ATUIDialogDeviceHardDisk::UpdateCapacityByCHS() {
+	VDStringW s;
+	uint32 cyls = 0;
+	uint32 heads = 0;
+	uint32 spt = 0;
 
-	if (cyls || heads || spt)
-		size = (cyls * heads * spt) >> 11;
+	s = mCylindersView.GetText();
+	ParseUint32(s.c_str(), cyls);
+
+	s = mHeadsView.GetText();
+	ParseUint32(s.c_str(), heads);
+
+	if (heads > 16)
+		heads = 0;
+
+	s = mSectorsPerTrackView.GetText();
+	ParseUint32(s.c_str(), spt);
+
+	if (spt > 255)
+		spt = 0;
+
+	uint64 sizeSectors = 0;
+
+	if (cyls && heads && spt) {
+		sizeSectors = cyls;
+		
+		sizeSectors *= heads;
+		if (sizeSectors > UINT32_MAX)
+			sizeSectors = 0;
+
+		sizeSectors *= spt;
+		if (sizeSectors > UINT32_MAX)
+			sizeSectors = 0;
+	}
 
 	++mInhibitUpdateLocks;
 
-	if (size)
-		SetControlTextF(IDC_IDE_SIZE, L"%u", size);
-	else
-		SetControlText(IDC_IDE_SIZE, L"--");
+	if (sizeSectors) {
+		s.sprintf(L"%u", (uint32)(sizeSectors >> 11));
+		mSizeMBView.SetText(s.c_str());
+
+		s.sprintf(L"%u", (uint32)sizeSectors);
+		mSizeSectorsView.SetText(s.c_str());
+	} else {
+		mSizeMBView.SetText(L"--");
+		mSizeSectorsView.SetText(L"--");
+	}
 
 	--mInhibitUpdateLocks;
 }
 
-void ATUIDialogDeviceHardDisk::SetCapacityBySectorCount(uint64 sectors) {
+void ATUIDialogDeviceHardDisk::UpdateCapacityBySizeMB() {
+	VDStringW s = mSizeMBView.GetText();
+	uint32 sizemb = 0;
+
+	ParseUint32(s.c_str(), sizemb);
+
+	UpdateCapacityBySectorCount((uint64)sizemb << 11, false, true);
+}
+
+void ATUIDialogDeviceHardDisk::UpdateCapacityBySizeSectors() {
+	VDStringW s = mSizeSectorsView.GetText();
+	uint32 sizeSectors = 0;
+
+	ParseUint32(s.c_str(), sizeSectors);
+
+	UpdateCapacityBySectorCount(sizeSectors, true, false);
+}
+
+void ATUIDialogDeviceHardDisk::UpdateCapacityBySectorCount(uint64 sectors, bool updateMb, bool updateSectors) {
 	uint32 spt = 63;
 	uint32 heads = 15;
 	uint32 cylinders = 1;
 
-	if (sectors)
-		cylinders = VDClampToUint32((sectors - 1) / (heads * spt) + 1);
+	if (sectors > UINT32_MAX)
+		sectors = UINT32_MAX;
 
-	SetControlTextF(IDC_IDE_CYLINDERS, L"%u", cylinders);
-	SetControlTextF(IDC_IDE_HEADS, L"%u", heads);
-	SetControlTextF(IDC_IDE_SPT, L"%u", spt);
+	if (sectors) {
+		// We need to truncate as otherwise the disk code will raise the sector size to
+		// accommodate the CHS geometry.
+		cylinders = VDClampToUint32(sectors / (heads * spt));
+	}
 
-	UpdateCapacity();
+	ShowCHSGeometry(cylinders, heads, spt);
+
+	if (updateMb)
+		ShowSizeInMB((uint32)(sectors >> 11));
+
+	if (updateSectors)
+		ShowSizeInSectors(sectors);
 }
+
+void ATUIDialogDeviceHardDisk::ShowCHSGeometry(uint32 cylinders, uint32 heads, uint32 spt) {
+	VDStringW s;
+
+	++mInhibitUpdateLocks;
+
+	s.sprintf(L"%u", cylinders);
+	mCylindersView.SetText(s.c_str());
+
+	s.sprintf(L"%u", heads);
+	mHeadsView.SetText(s.c_str());
+
+	s.sprintf(L"%u", spt);
+	mSectorsPerTrackView.SetText(s.c_str());
+
+	--mInhibitUpdateLocks;
+}
+
+void ATUIDialogDeviceHardDisk::ShowSizeInMB(uint32 sizemb) {
+	VDStringW s;
+
+	++mInhibitUpdateLocks;
+
+	s.sprintf(L"%u", sizemb);
+	mSizeMBView.SetText(s.c_str());
+
+	--mInhibitUpdateLocks;
+}
+
+void ATUIDialogDeviceHardDisk::ShowSizeInSectors(uint32 sectors) {
+	VDStringW s;
+
+	++mInhibitUpdateLocks;
+
+	s.sprintf(L"%u", sectors);
+	mSizeSectorsView.SetText(s.c_str());
+
+	--mInhibitUpdateLocks;
+}
+
+void ATUIDialogDeviceHardDisk::OnBrowseImage() {
+	int optvals[1]={false};
+
+	static constexpr VDFileDialogOption kOpts[]={
+		{ VDFileDialogOption::kConfirmFile, 0 },
+		{0}
+	};
+
+	VDStringW s(VDGetSaveFileName('ide ', (VDGUIHandle)mhdlg, L"Select IDE image file", L"All files\0*.*\0", NULL, kOpts, optvals));
+	if (!s.empty()) {
+		if (s.size() >= 4 && !vdwcsicmp(s.c_str() + s.size() - 4, L".vhd")) {
+			try {
+				vdrefptr<ATIDEVHDImage> vhdImage(new ATIDEVHDImage);
+
+				vhdImage->Init(s.c_str(), false, false);
+
+				UpdateCapacityBySectorCount(vhdImage->GetSectorCount());
+			} catch(const MyError& e) {
+				ShowError2(e, L"VHD image mount failed");
+				return;
+			}
+		} else {
+			VDDirectoryIterator it(s.c_str());
+
+			if (it.Next()) {
+				UpdateCapacityBySectorCount(it.GetSize() >> 9);
+			}
+		}
+
+		SetControlText(IDC_IDE_IMAGEPATH, s.c_str());
+
+		uint32 attr = VDFileGetAttributes(s.c_str());
+		if (attr != kVDFileAttr_Invalid)
+			CheckButton(IDC_IDEREADONLY, (attr & kVDFileAttr_ReadOnly) != 0);
+	}
+}
+
+void ATUIDialogDeviceHardDisk::OnBrowseDisk() {
+	if (!ATIsUserAdministrator()) {
+		ShowError(L"You must run Altirra with local administrator access in order to mount a physical disk for emulation.", L"Altirra Error");
+		return;
+	}
+
+	ShowWarning(
+		L"This option uses a physical disk for IDE/SCSI/SD emulation. You can either map the entire disk or a partition within the disk. However, only read only access is supported.\n"
+		L"\n"
+		L"You can use a partition that is currently mounted by Windows. However, changes to the file system in Windows may not be reflected consistently in the emulator.",
+		L"Altirra Warning");
+
+	const VDStringW& path = ATUIShowDialogBrowsePhysicalDisks((VDGUIHandle)mhdlg);
+
+	if (!path.empty()) {
+		SetControlText(IDC_IDE_IMAGEPATH, path.c_str());
+		CheckButton(IDC_IDEREADONLY, true);
+
+		sint64 size = ATIDEGetPhysicalDiskSize(path.c_str());
+		uint64 sectors = (uint64)size >> 9;
+
+		UpdateCapacityBySectorCount(sectors);
+	}
+}
+
+void ATUIDialogDeviceHardDisk::OnCreateVHD() {
+	ATUIDialogCreateVHDImage2 createVHDDlg;
+
+	if (createVHDDlg.ShowDialog((VDGUIHandle)mhdlg)) {
+		UpdateCapacityBySectorCount(createVHDDlg.GetSectorCount());
+		SetControlText(IDC_IDE_IMAGEPATH, createVHDDlg.GetPath());
+	}
+}
+
+bool ATUIDialogDeviceHardDisk::ParseUint32(const wchar_t *s, uint32& dst) {
+	unsigned val;
+	wchar_t tmp;
+
+	if (1 != swscanf(s, L" %u %c", &val, &tmp)) {
+		dst = 0;
+		return false;
+	}
+
+	dst = val;
+	return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 bool ATUIConfDevHardDisk(VDGUIHandle hParent, ATPropertySet& props) {
 	ATUIDialogDeviceHardDisk dlg(props);

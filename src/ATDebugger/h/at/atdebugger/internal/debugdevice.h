@@ -47,6 +47,7 @@ private:
 
 	IATDebugDeviceCallback *mpDebugger = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 
 	VDStringA mDebuggerName;
 };

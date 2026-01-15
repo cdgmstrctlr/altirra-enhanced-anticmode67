@@ -56,6 +56,30 @@ sint64 VDRoundToInt64(float x) {
 sint64 VDRoundToInt64(double x) {
 	return (sint64)floor(x + 0.5);
 }
+#elif defined(VD_CPU_ARM64)
+int VDRoundToInt(float x) {
+	return VDRoundToIntFast(x);
+}
+
+int VDRoundToInt(double x) {
+	return VDRoundToIntFastFullRange(x);
+}
+
+sint32 VDRoundToInt32(float x) {
+	return VDRoundToIntFast(x);
+}
+
+sint32 VDRoundToInt32(double x) {
+	return VDRoundToIntFastFullRange(x);
+}
+
+sint64 VDRoundToInt64(float x) {
+	return vcvtnd_s64_f64((double)x);
+}
+
+sint64 VDRoundToInt64(double x) {
+	return vcvtnd_s64_f64(x);
+}
 #else
 int VDRoundToInt(float x) {
 	return (int)floorf(x + 0.5f);

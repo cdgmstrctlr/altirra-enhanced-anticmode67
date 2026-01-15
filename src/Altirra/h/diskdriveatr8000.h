@@ -99,7 +99,7 @@ public:
 	void OnAudioModeChanged(uint32 index);
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(bool polarity);
 

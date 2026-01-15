@@ -51,6 +51,10 @@ void ATSaveStatePokeyInternal::Exchange(T& rw) {
 	rw.Transfer("renderer_poly17_offset", &mRendererState.mPoly17Offset);
 	rw.Transfer("output_flip_flops", &mRendererState.mOutputFlipFlops);
 
+	rw.TransferArray("pot_charge_levels", mPotChargeLevels);
+	rw.Transfer("pot_master_counter", &mPotMasterCounter);
+	rw.Transfer("pot_scan_active", &mbPotScanActive);
+
 	if constexpr (rw.IsReader) {
 		if (mClock15Offset >= 114)
 			throw ATInvalidSaveStateException();
@@ -115,6 +119,7 @@ void ATSaveStatePokey::Exchange(T& rw) {
 	rw.Transfer("kbcode", &mKBCODE);
 	rw.Transfer("internal_state", &mpInternalState);
 	rw.Transfer("stereo_pair", &mpStereoPair);
+	rw.TransferArray("pot", mPOT);
 }
 
 template void ATSaveStatePokeyInternal::Exchange(ATSerializer&);

@@ -248,10 +248,15 @@ void ATCassetteEmulator::LoadNew() {
 	mLength = 0;
 	mAudioLength = 0;
 
+	mWriteCursor.mPosition = 0;
+	mRecordLastTime = mpScheduler->GetTick();
+
 	TapeChanged.InvokeAll();
 
 	PositionChanged.NotifyDeferred();
 	PlayStateChanged.NotifyDeferred();
+
+	Record();
 }
 
 void ATCassetteEmulator::Load(const wchar_t *fn) {

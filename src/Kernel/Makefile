@@ -1,5 +1,3 @@
-ATCOMPILER = $(OUT)\atcompiler.exe
-
 SRCFILES = source\main.xasm \
 source\loader.xasm
 
@@ -80,6 +78,7 @@ all: madscheck atcompilercheck kernel kernelxl kernelxlsoftkick kernel816 \
 	r850 fw1030 additions \
 	exeloader \
 	sapplayers \
+	vgmplayer \
 	pbidisk \
 	rapidflash \
 	rapidpbi16
@@ -157,6 +156,8 @@ additions: $(OUT)\Additions.atr
 exeloader: $(INT)\exeloader.bin $(INT)\exeloader-0700.bin $(INT)\exeloader-hispeed.bin $(INT)\exeloader-hispeed-0700.bin $(INT)\exeloader-nobasic.bin
 
 sapplayers: $(INT)\playsap-b.xex $(INT)\playsap-c.xex $(INT)\playsap-d-ntsc.xex $(INT)\playsap-d-pal.xex $(INT)\playsap-r.xex
+
+vgmplayer: $(INT)\playvgm.xex
 
 pbidisk: $(INT)\pbidisk.bin
 
@@ -397,6 +398,9 @@ $(INT)\playsap-d-pal.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-d.s
 
 $(INT)\playsap-r.xex: $(SHARED_SRCFILESINC) source\SAPPlayers\playsap-r.s
 	"$(MADS)"  -s -p -i:source\Shared -l:"$(INT)\playsap-r.lst" -t:"$(INT)\playsap-r.lab" -o:"$(INT)\playsap-r.xex" source\SAPPlayers\playsap-r.s
+
+$(INT)\playvgm.xex: $(SHARED_SRCFILESINC) source\VGMPlayer\playvgm.s
+	"$(MADS)"  -s -p -i:source\Shared -l:"$(INT)\playvgm.lst" -t:"$(INT)\playvgm.lab" -o:"$(INT)\playvgm.xex" source\VGMPlayer\playvgm.s
 
 $(INT)\pbidisk.bin: $(SHARED_SRCFILESINC) source\PBIDisk\pbidisk.s
 	"$(MADS)"  -s -p -i:source\Shared -l:"$(INT)\pbidisk.lst" -t:"$(INT)\pbidisk.lab" -o:"$(INT)\pbidisk.bin" source\PBIDisk\pbidisk.s

@@ -132,7 +132,7 @@ class ATUIWrappedDataObject final : public vdrefcounted<IATUIDragDropObject> {
 public:
 	ATUIWrappedDataObject(IDataObject *obj) : mpObject(obj) {}
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
 	void Shutdown();
 

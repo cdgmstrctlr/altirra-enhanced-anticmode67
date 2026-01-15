@@ -75,6 +75,13 @@ struct ATDiskProfile {
 	bool	mbBufferTrackReadErrors = false;
 	bool	mbBufferSector1 = false;
 
+	// True if this disk drive requires SIO command to still be asserted at
+	// the end of the command frame.
+	bool	mbRequireCommandDeassertCheck = false;
+
+	// True if this disk drive supports interrupting a command in progress.
+	bool	mbSupportCommandTruncation = false;
+
 	ATDiskProfile() = default;
 
 	constexpr ATDiskProfile(ATDiskEmulationMode mode);

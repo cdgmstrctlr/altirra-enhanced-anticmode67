@@ -30,6 +30,16 @@ enum class ATFirmwareDetection : uint32 {
 	SpecificImage
 };
 
-ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificFirmware);
+ATFirmwareDetection ATFirmwareAutodetect(const void *data, uint32 len, ATFirmwareInfo& info, ATSpecificFirmwareType& specificFirmware, sint32& knownFirmwareIndex);
+
+struct ATKnownFirmware {
+	uint32 mCRC;
+	uint32 mSize;
+	ATFirmwareType mType;
+	const wchar_t *mpDesc;
+	ATSpecificFirmwareType mSpecificType;
+};
+
+const ATKnownFirmware *ATFirmwareGetKnownByIndex(size_t idx);
 
 #endif

@@ -81,7 +81,7 @@ public:	// IATDeviceRawSIO
 	void OnSendReady() override;
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddCommandEdge(uint32 polarity);
 
@@ -135,7 +135,7 @@ protected:
 	public:
 		TargetProxy(ATDevice1025Full& parent);
 
-		std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const;
+		std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const override;
 		void SetHistoryBuffer(ATCPUHistoryEntry *harray) override;
 		uint32 GetHistoryCounter() const override;
 		uint32 GetTime() const override;

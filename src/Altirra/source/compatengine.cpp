@@ -695,7 +695,7 @@ void ATCompatGetMarkersForImage(vdfastvector<ATCompatMarker>& markers, IATImage 
 	}
 
 	if (auto *tapeImage = vdpoly_cast<IATCassetteImage *>(image)) {
-		if (const auto& sha256 = image->GetImageFileSHA256(); sha256.has_value())
+		if (const auto& sha256 = tapeImage->GetImageFileSHA256(); sha256.has_value())
 			markers.push_back(ATCompatMarker::FromSHA256(kATCompatRuleType_TapeFileSHA256, sha256.value()));
 	}
 

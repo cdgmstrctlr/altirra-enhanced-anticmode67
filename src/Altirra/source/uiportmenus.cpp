@@ -21,6 +21,7 @@
 #include <vd2/system/vdstl.h>
 #include <vd2/system/w32assist.h>
 #include "inputmanager.h"
+#include "inputmap.h"
 #include "resource.h"
 #include <at/atui/uimenulist.h>
 

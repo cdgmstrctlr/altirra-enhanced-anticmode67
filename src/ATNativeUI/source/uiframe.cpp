@@ -240,6 +240,29 @@ void ATContainerResizer::ResizeWindow(HWND hwnd, int width, int height) {
 	VDVERIFY(SetWindowPos(hwnd, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE));
 }
 
+void ATContainerResizer::HideWindow(HWND hwnd) {
+	VDASSERT(hwnd);
+	VDASSERT(IsWindow(hwnd));
+
+	if (!mhdwp)
+		mhdwp = BeginDeferWindowPos(4);
+
+	if (mhdwp) {
+		HDWP hdwp = DeferWindowPos(mhdwp, hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+
+		if (hdwp) {
+			mhdwp = hdwp;
+			return;
+		}
+
+		// MSDN says that you should not call EndDeferWindowPos() on a failure, but Internet
+		// lore says that this is necessary to avoid a leak:
+		// http://www.itimdp4.com/dp4kb/a4000035.htm
+	}
+
+	VDVERIFY(SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW));
+}
+
 void ATContainerResizer::Flush() {
 	if (mhdwp) {
 		VDVERIFY(EndDeferWindowPos(mhdwp));
@@ -297,6 +320,9 @@ LRESULT ATContainerSplitterBar::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 		OnSize();
 		break;
 
+	case WM_ERASEBKGND:
+		return OnErase((HDC)wParam) ? 1 : 0;
+
 	case WM_PAINT:
 		OnPaint();
 		break;
@@ -325,6 +351,27 @@ LRESULT ATContainerSplitterBar::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
 }
 
+bool ATContainerSplitterBar::OnErase(HDC hdc) {
+	const bool dragging = (GetCapture() == mhwnd);
+	RECT r {};
+
+	GetClientRect(mhwnd, &r);
+
+	// We prefer to erase from WM_ERASEBKGND as it acts better during scrolling
+	// when the paint queue is overwhelmed.
+	if (ATUIIsDarkThemeActive()) {
+		SetDCBrushColor(hdc, dragging ? RGB(192, 192, 192) : RGB(48, 48, 48));
+		FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+	} else {
+		if (dragging)
+			FillRect(hdc, &r, (HBRUSH)(COLOR_3DSHADOW+1));
+		else
+			FillRect(hdc, &r, (HBRUSH)(COLOR_3DFACE+1));
+	}
+
+	return true;
+}
+
 void ATContainerSplitterBar::OnPaint() {
 	PAINTSTRUCT ps;
 
@@ -332,17 +379,8 @@ void ATContainerSplitterBar::OnPaint() {
 		RECT r;
 		GetClientRect(mhwnd, &r);
 
-		const bool dragging = (GetCapture() == mhwnd);
-
-		if (ATUIIsDarkThemeActive()) {
-			SetDCBrushColor(hdc, dragging ? RGB(192, 192, 192) : RGB(48, 48, 48));
-			FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
-		} else {
-			if (dragging)
-				FillRect(hdc, &r, (HBRUSH)(COLOR_3DSHADOW+1));
-			else
-				FillRect(hdc, &r, (HBRUSH)(COLOR_3DFACE+1));
-		}
+		if (ps.fErase)
+			OnErase(hdc);
 
 		EndPaint(mhwnd, &ps);
 	}
@@ -436,8 +474,13 @@ ATDragHandleWindow::~ATDragHandleWindow() {
 VDGUIHandle ATDragHandleWindow::Create(int x, int y, int cx, int cy, VDGUIHandle parent, int id) {
 	HWND hwnd = CreateWindowEx(WS_EX_TOPMOST|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE, (LPCTSTR)(uintptr_t)sWndClass, _T("Drag Handle"), WS_POPUP, x, y, cx, cy, (HWND)parent, (HMENU)(INT_PTR)id, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 
-	if (hwnd)
+	if (hwnd) {
 		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+
+		// Force the drag handles to paint immediately. Otherwise, they might be delayed by
+		// the main loop being busy handling dragging.
+		UpdateWindow(hwnd);
+	}
 
 	return (VDGUIHandle)hwnd;
 }
@@ -583,6 +626,152 @@ void ATDragHandleWindow::OnPaint() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+LRESULT CALLBACK ATContainerTabControlHandler::StaticTabSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR data) {
+	ATContainerTabControlHandler *context = (ATContainerTabControlHandler *)data;
+
+	if (msg == WM_NCDESTROY) {
+		context->Release();
+
+		RemoveWindowSubclass(
+			hwnd,
+			StaticTabSubclassProc,
+			subclassId);
+	}
+
+	return context->TabSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+LRESULT ATContainerTabControlHandler::TabSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (msg == WM_LBUTTONDOWN) {
+		if (mpDockingPane) {
+			// We may be about to select a tab. Let's see if the click is within
+			// the currently selected tab; if so, set capture to begin checking
+			// for a drag.
+			DefSubclassProc(hwnd, msg, wParam, lParam);
+
+			int curSel = DefSubclassProc(hwnd, TCM_GETCURSEL, 0, 0);
+			if (curSel >= 0) {
+				const int x = GET_X_LPARAM(lParam);
+				const int y = GET_Y_LPARAM(lParam);
+
+				RECT rTab {};
+				DefSubclassProc(hwnd, TCM_GETITEMRECT, curSel, (LPARAM)&rTab);
+
+				if (x >= rTab.left && x < rTab.right && y >= rTab.top && y < rTab.bottom) {
+					// It is within the current tab. Make sure this frame is activated.
+					ATFrameWindow *frame = mpDockingPane->GetVisibleFrame();
+					if (frame)
+						frame->ActivateFrame();
+				
+					// Mark that we're tracking a possible drag, store the rect that we're
+					// using to do it, and set mouse capture.
+					//
+					// The regular Win32 drag metrics are a bit too small to make this comfortable.
+					// Use a multiple of the height of the tab as the drag distance, beyond the edge of
+					// the entire tab well.
+
+					RECT rTabControl {};
+					GetClientRect(hwnd, &rTabControl);
+
+					mbTrackingTabDrag = true;
+
+					const int dragSize = (rTab.bottom - rTab.top) * 4;
+
+					mTrackingTabDragRect.set(
+						-dragSize,
+						rTab.top - dragSize,
+						rTabControl.right + dragSize,
+						rTab.bottom + dragSize
+					);
+
+					POINT pt { x, y };
+					::ClientToScreen(hwnd, &pt);
+					mTrackingTabDragInitialX = pt.x;
+					mTrackingTabDragInitialY = pt.y;
+
+					::SetCapture(hwnd);
+				}
+			}
+
+			return 0;
+		}
+	} else if (msg == WM_MOUSEMOVE) {
+		const int x = GET_X_LPARAM(lParam);
+		const int y = GET_Y_LPARAM(lParam);
+
+		POINT pt { x, y };
+		::ClientToScreen(hwnd, &pt);
+
+		if (mpDragFrame) {
+			mpDragFrame->UpdateFrameDrag(pt.x, pt.y);
+		} else if (mpDockingPane && mbTrackingTabDrag) {
+			if (!mTrackingTabDragRect.contains(vdpoint32(x, y))) {
+				// We've dragged out of the tab rect. Undock the frame begin dragging it.
+				//
+				// There are several tricky considerations:
+				//
+				// - The undocking of the pane can cause massive changes in the docking pane
+				//   hierarchy. In particular, the tab control that we're dragging from can
+				//   go away. There is special consideration to keep this tab window alive
+				//   in a hidden state during the drag, and deferring the destroy until the
+				//   drag operation is complete.
+				//
+				// - We MUST maintain the capture from this window. No other window can do
+				//   it, as only the window that gets the mouse down can fully capture the
+				//   mouse. Any other window will only be able to capture mouse input when
+				//   within a window in the process, and there is also no reliable way to
+				//   capture the mouse up if it happens outside of the process window areas.
+				//   Therefore, we MUST maintain capture on this tab window and MUST keep
+				//   the tab window alive for the duration of the drag. However, it doesn't
+				//   have to be _visible_, which is the hack that we do.
+
+				ATFrameWindow *frame = mpDockingPane->GetVisibleFrame();
+
+				if (frame) {
+					mpDragFrame = frame;
+					mbTrackingTabDrag = false;
+
+					frame->BeginFrameDrag(mTrackingTabDragInitialX, mTrackingTabDragInitialY);
+				}
+			}
+		}
+	} else if (msg == WM_LBUTTONUP) {
+		if (mpDragFrame) {
+			mpDragFrame->EndFrameDrag();
+			mpDragFrame = nullptr;
+
+			if (mbDestroyPending) {
+				mbDestroyPending = false;
+				DestroyWindow(hwnd);
+			}
+
+			::ReleaseCapture();
+		} else if (mbTrackingTabDrag) {
+			mbTrackingTabDrag = false;
+
+			::ReleaseCapture();
+		}
+	} else if (msg == WM_CAPTURECHANGED) {
+		if (mpDragFrame) {
+			mpDragFrame->EndFrameDrag();
+			mpDragFrame = nullptr;
+
+			if (mbDestroyPending) {
+				mbDestroyPending = false;
+				DestroyWindow(hwnd);
+			}
+
+			return 0;
+		} else if (mbTrackingTabDrag) {
+			mbTrackingTabDrag = false;
+			return 0;
+		}
+	}
+
+	return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+////////////////////////////////////////////////////////////////////////////////
 ATContainerDockingPane::ATContainerDockingPane(ATContainerWindow *parent)
 	: mpParent(parent)
 	, mpDockParent(NULL)
@@ -596,7 +785,6 @@ ATContainerDockingPane::ATContainerDockingPane(ATContainerWindow *parent)
 	, mbLayoutInvalid(false)
 	, mbDescendantLayoutInvalid(false)
 	, mVisibleFrameIndex(-1)
-	, mhwndTabControl(NULL)
 {
 }
 
@@ -613,11 +801,7 @@ ATContainerDockingPane::~ATContainerDockingPane() {
 
 	DestroyDragHandles();
 	DestroySplitter();
-
-	if (mhwndTabControl) {
-		DestroyWindow(mhwndTabControl);
-		mhwndTabControl = NULL;
-	}
+	DestroyTabControls();
 }
 
 void ATContainerDockingPane::SetArea(ATContainerResizer *resizer, const vdrect32& area, bool parentContainsFullScreen) {
@@ -643,10 +827,7 @@ void ATContainerDockingPane::SetArea(ATContainerResizer *resizer, const vdrect32
 void ATContainerDockingPane::Clear() {
 	AddRef();
 
-	if (mhwndTabControl) {
-		DestroyWindow(mhwndTabControl);
-		mhwndTabControl = NULL;
-	}
+	DestroyTabControls();
 
 	mVisibleFrameIndex = -1;
 
@@ -960,15 +1141,29 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 				// Note that we create this as 1x1 instead of 0x0. 0x0 triggers a bug in comctl32 v6 where
 				// if a tab is selected and the tab control is later resized, the tab control does an
 				// InvalidateRect() with a null HWND.
-				mhwndTabControl = CreateWindowExW(mpDockParent ? 0 : WS_EX_CLIENTEDGE, WC_TABCONTROLW, L"Tab Control", WS_CHILD, 0, 0, 1, 1, mpParent->GetHandleW32(), (HMENU)0, VDGetLocalModuleHandleW32(), NULL);
+				mhwndTabControl = CreateWindowExW(0, WC_TABCONTROLW, L"Tab Control", WS_CHILD, 0, 0, 1, 1, mpParent->GetHandleW32(), (HMENU)0, VDGetLocalModuleHandleW32(), NULL);
 
 				// The tab control must be under the content controls. Ideally, we want it as close as possible so the Z-order
 				// makes sense for Narrator.
-
-				SetWindowPos(mhwndTabControl, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
-
 				if (mhwndTabControl) {
+					SetWindowPos(mhwndTabControl, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE);
 					SendMessage(mhwndTabControl, WM_SETFONT, (LPARAM)mpParent->GetLabelFont(), TRUE);
+
+					// Subclass the tab control so we can intercept dragging.
+					mpTabControlHandler = new ATContainerTabControlHandler(*this);
+
+					if (SetWindowSubclass(
+						mhwndTabControl,
+						mpTabControlHandler->StaticTabSubclassProc,
+						1,
+						(DWORD_PTR)mpTabControlHandler.get()
+					)) {
+						// subclassproc is now holding onto a reference
+						mpTabControlHandler->AddRef();
+					}
+
+					// create close control
+					mhwndTabCloseControl = CreateWindowExW(0, WC_BUTTONW, L"\u00D7", WS_CHILD | BS_PUSHBUTTON | BS_FLAT, 0, 0, 0, 0, mpParent->GetHandleW32(), (HMENU)0, VDGetLocalModuleHandleW32(), nullptr);
 
 					// Create the tab for the existing item.
 					ATFrameWindow *frame0 = mContent.front();
@@ -980,11 +1175,12 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 					SendMessageW(mhwndTabControl, TCM_INSERTITEMW, 0, (LPARAM)&tci);
 				}
 
-				// if this is the root pane, the content we used to have has no frame and needs to have one added
-				if (!mpDockParent) {
-					mContent.front()->SetFrameMode(ATFrameWindow::kFrameModeEdge);
+				// remove the frame on the content pane if it has one (the root pane might not)
+				ATFrameWindow *existingContent = mContent.front();
+				if (existingContent && existingContent->GetFrameMode() != ATFrameWindow::kFrameModeEdge) {
+					existingContent->SetFrameMode(ATFrameWindow::kFrameModeEdge);
 
-					HWND hwndOther = mContent.front()->GetHandleW32();
+					HWND hwndOther = existingContent->GetHandleW32();
 					SetWindowPos(hwndOther, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 				}
 			}
@@ -1007,6 +1203,14 @@ ATContainerDockingPane *ATContainerDockingPane::Dock(ATFrameWindow *frame, int c
 				mContent[i]->SetVisible(false);
 
 			mVisibleFrameIndex = n;
+		}
+
+		// Strip the window chrome from the new frame.
+		if (frame->GetFrameMode() != ATFrameWindow::kFrameModeEdge) {
+			frame->SetFrameMode(ATFrameWindow::kFrameModeEdge);
+
+			HWND hwndNew = frame->GetHandleW32();
+			SetWindowPos(hwndNew, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 		}
 
 		// Add the new frame.
@@ -1101,8 +1305,7 @@ bool ATContainerDockingPane::Undock(ATFrameWindow *frame) {
 	if (mhwndTabControl) {
 		// kill the tab control entry if we only have one tab left
 		if (mContent.size() <= 1) {
-			DestroyWindow(mhwndTabControl);
-			mhwndTabControl = NULL;
+			DestroyTabControls();
 
 			// change the existing frame to non-tab mode
 			if (!mContent.empty()) {
@@ -1537,9 +1740,23 @@ void ATContainerDockingPane::RepositionContent(ATContainerResizer& resizer) {
 			ShowWindow(mhwndTabControl, SW_HIDE);
 			memset(&r, 0, sizeof r);
 		} else {
-			resizer.LayoutWindow(mhwndTabControl, r.left, r.top, r.right - r.left, r.bottom - r.top, true);
+			// compute tab control window for empty height content area
+			RECT rTabControl { r.left, 0, r.right, 0 };
+			SendMessageW(mhwndTabControl, TCM_ADJUSTRECT, TRUE, (LPARAM)&rTabControl);
 
-			SendMessageW(mhwndTabControl, TCM_ADJUSTRECT, FALSE, (LPARAM)&r);
+			// position the close window in the upper right
+			const int tabCloseH = -rTabControl.top;
+			const int tabCloseW = tabCloseH;
+			
+			if (mhwndTabCloseControl)
+				resizer.LayoutWindow(mhwndTabCloseControl, std::max<int>(r.left, r.right - tabCloseW), r.top, tabCloseW, tabCloseH, true);
+
+			// position the tab control at the top
+			int tabControlHeight = std::min<int>(-rTabControl.top, r.bottom - r.top);
+			resizer.LayoutWindow(mhwndTabControl, r.left, r.top, std::max<int>(0, r.right - r.left - tabCloseW), tabControlHeight, true);
+
+			// subtract tab control from top of area
+			r.top += tabControlHeight;
 		}
 	}
 
@@ -1596,6 +1813,7 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 	VDASSERT(!parent->mChildren.empty());
 
 	VDASSERT(!mhwndTabControl);
+	DestroyTabControls();
 
 	// Check if we have any children. If we do, promote the innermost one to center.
 	if (!mChildren.empty()) {
@@ -1603,8 +1821,17 @@ void ATContainerDockingPane::RemoveEmptyNode() {
 
 		// Steal the content and the tab control.
 		mContent.swap(child->mContent);
+
+		mpTabControlHandler = std::move(child->mpTabControlHandler);
+
+		if (mpTabControlHandler)
+			mpTabControlHandler->mpDockingPane = this;
+
 		mhwndTabControl = child->mhwndTabControl;
-		child->mhwndTabControl = NULL;
+		child->mhwndTabControl = nullptr;
+
+		mhwndTabCloseControl = child->mhwndTabCloseControl;
+		child->mhwndTabCloseControl = nullptr;
 
 		for(FrameWindows::const_iterator it(mContent.begin()), itEnd(mContent.end());
 			it != itEnd;
@@ -1703,6 +1930,38 @@ void ATContainerDockingPane::OnTabChange(HWND hwndSender) {
 
 		frame->FocusContent();
 	}
+}
+
+void ATContainerDockingPane::OnTabClose(HWND hwndSender) {
+	if (hwndSender != mhwndTabCloseControl) {
+		for(ATContainerDockingPane *child : mChildren)
+			child->OnTabClose(hwndSender);
+	} else {
+		ATFrameWindow *frame = GetVisibleFrame();
+
+		if (frame)
+			mpParent->CloseFrame(frame);
+	}
+}
+
+void ATContainerDockingPane::DestroyTabControls() {
+	if (mhwndTabControl) {
+		if (mpTabControlHandler && mpTabControlHandler->IsDraggingTab()) {
+			mpTabControlHandler->SetDestroyPending();
+
+			ShowWindow(mhwndTabControl, SW_HIDE);
+		} else
+			DestroyWindow(mhwndTabControl);
+
+		mhwndTabControl = nullptr;
+	}
+
+	if (mhwndTabCloseControl) {
+		DestroyWindow(mhwndTabCloseControl);
+		mhwndTabCloseControl = nullptr;
+	}
+
+	mpTabControlHandler = nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1904,6 +2163,8 @@ void ATContainerWindow::ResumeLayout() {
 			ATContainerResizer resizer;
 			mpDockingPane->UpdateLayout(resizer);
 			resizer.Flush();
+
+			RedrawWindow(mhwnd, nullptr, nullptr, RDW_ALLCHILDREN | RDW_UPDATENOW);
 		}
 	}
 }
@@ -2099,12 +2360,13 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 
 			style &= ~(WS_CHILD | WS_VISIBLE);
 			style |= WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
+			style |= WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
 			SetLastError(0);
 			VDVERIFY(SetWindowLongPtr(hwndFrame, GWL_STYLE, style) || GetLastError() == 0);
 
 			UINT exstyle = GetWindowLong(hwndFrame, GWL_EXSTYLE);
-			exstyle |= WS_EX_TOOLWINDOW;
+			exstyle &= ~WS_EX_TOOLWINDOW;
 
 			SetLastError(0);
 			VDVERIFY(SetWindowLongPtr(hwndFrame, GWL_EXSTYLE, exstyle) || GetLastError() == 0);
@@ -2121,6 +2383,9 @@ void ATContainerWindow::UndockFrame(ATFrameWindow *frame, bool visible, bool des
 			if (visible)
 				ShowWindow(hwndFrame, SW_SHOWNA);
 
+			// restore normal window framing
+			SetWindowTheme(hwndFrame, nullptr, nullptr);
+			
 			VDASSERT(std::find(mUndockedFrames.begin(), mUndockedFrames.end(), frame) == mUndockedFrames.end());
 			mUndockedFrames.push_back(frame);
 			frame->AddRef();
@@ -2195,7 +2460,7 @@ void ATContainerWindow::NotifyFrameActivated(ATFrameWindow *frame) {
 	if (mbBlockActiveUpdates)
 		return;
 
-	HWND hwndFrame = NULL;
+	[[maybe_unused]] HWND hwndFrame = nullptr;
 	
 	if (frame)
 		hwndFrame = frame->GetHandleW32();
@@ -2273,6 +2538,13 @@ LRESULT ATContainerWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 			InvalidateRect(mhwnd, NULL, TRUE);
 			break;
 
+		case WM_COMMAND:
+			if (HIWORD(wParam) == BN_CLICKED && lParam) {
+				if (mpDockingPane)
+					mpDockingPane->OnTabClose((HWND)lParam);
+			}
+			break;
+
 		case WM_NOTIFY:
 			{
 				const NMHDR& hdr = *(const NMHDR *)lParam;
@@ -2327,6 +2599,11 @@ LRESULT ATContainerWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
+
+		case ATWM_QUERYSYSCHAR:
+			// Force WM_SYSCHAR messages to route directly to the top-level window
+			// so intermediate frame windows don't intercept Alt+Key presses.
+			return true;
 	}
 
 	return ATUINativeWindow::WndProc(msg, wParam, lParam);
@@ -2455,8 +2732,8 @@ void ATContainerWindow::RecreateSystemObjects() {
 		scaleFactor = MulDiv(100, mMonitorDpi, globalDpi);
 	}
 
-	mSplitterWidth = (GetSystemMetrics(SM_CXEDGE) * scaleFactor + 99) / 100;
-	mSplitterHeight = (GetSystemMetrics(SM_CYEDGE) * scaleFactor + 99) / 100;
+	mSplitterWidth = (GetSystemMetrics(SM_CXEDGE) * 2 * scaleFactor + 99) / 100;
+	mSplitterHeight = (GetSystemMetrics(SM_CYEDGE) * 2 * scaleFactor + 99) / 100;
 
 	NONCLIENTMETRICS ncm = {
 #if WINVER >= 0x0600
@@ -2821,6 +3098,22 @@ void ATFrameWindow::Relayout(int w, int h) {
 	}
 }
 
+void ATFrameWindow::BeginFrameDrag(int initialScreenX, int initialScreenY) {
+	BeginUnverifiedDrag(initialScreenX, initialScreenY, false);
+	BeginVerifiedDrag();
+}
+
+void ATFrameWindow::UpdateFrameDrag(int screenX, int screenY) {
+	POINT pt { screenX, screenY };
+
+	::ScreenToClient(mhwnd, &pt);
+	OnMouseMove(pt.x, pt.y);
+}
+
+void ATFrameWindow::EndFrameDrag() {
+	EndDrag(true);
+}
+
 VDGUIHandle ATFrameWindow::Create(const wchar_t *title, int x, int y, int cx, int cy, VDGUIHandle parent) {
 	return (VDGUIHandle)CreateWindowExW(WS_EX_TOOLWINDOW, (LPCWSTR)(uintptr_t)sWndClass, title, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_CLIPCHILDREN, x, y, cx, cy, (HWND)parent, NULL, VDGetLocalModuleHandleW32(), static_cast<ATUINativeWindow *>(this));
 }
@@ -3155,6 +3448,7 @@ LRESULT ATFrameWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 				mClientRect.set(r.left, r.top, r.right, r.bottom);
 				mClientRect.translate(-x, -y);
+
 				return 0;
 			}
 			break;
@@ -3535,23 +3829,7 @@ bool ATFrameWindow::OnNCLButtonDown(int code, int x, int y) {
 	if (code != HTCAPTION)
 		return false;
 
-	RECT r;
-
-	mbDragging = true;
-	mbDragVerified = false;
-	GetWindowRect(mhwnd, &r);
-
-	mDragOriginX = x;
-	mDragOriginY = y;
-	mDragOffsetX = r.left - x;
-	mDragOffsetY = r.top - y;
-
-	mpDragContainer = mpContainer;
-
-	SetForegroundWindow(mhwnd);
-	SetActiveWindow(mhwnd);
-	FocusContent();
-	SetCapture(mhwnd);
+	BeginUnverifiedDrag(x, y, true);
 	return true;
 }
 
@@ -3559,34 +3837,108 @@ bool ATFrameWindow::OnMouseMove(int x, int y) {
 	if (!mbDragging)
 		return false;
 
-	POINT pt = {x, y};
-	ClientToScreen(mhwnd, &pt);
+	POINT cpt = {x, y};
+	ClientToScreen(mhwnd, &cpt);
 
+	// determine current client origin in screen space
+	POINT clientOrigin { 0, 0 };
+	ClientToScreen(mhwnd, &clientOrigin);
+
+	RECT rWin {};
+	GetWindowRect(mhwnd, &rWin);
+
+	// check if drag should start -- require 3x caption bar height outside of
+	// caption area for a docked tab, otherwise just use regular drag threshold
 	if (!mbDragVerified) {
-		int dx = abs(GetSystemMetrics(SM_CXDRAG));
-		int dy = abs(GetSystemMetrics(SM_CYDRAG));
+		RECT rDragDeadZone;
 
-		if (abs(mDragOriginX - pt.x) <= dx && abs(mDragOriginY - pt.y) <= dy)
+		if (mFrameMode == kFrameModeUndocked) {
+			int dx = abs(GetSystemMetrics(SM_CXDRAG));
+			int dy = abs(GetSystemMetrics(SM_CYDRAG));
+
+			rDragDeadZone.left = mDragOriginX - dx;
+			rDragDeadZone.top = mDragOriginY - dy;
+			rDragDeadZone.right = mDragOriginX + dx + 1;
+			rDragDeadZone.bottom = mDragOriginY + dy + 1;
+		} else {
+			RECT rCaption {
+				rWin.left,
+				rWin.top,
+				rWin.right,
+				clientOrigin.y
+			};
+
+			const int padding = (rCaption.bottom - rCaption.top) * 3;
+
+			rDragDeadZone = rCaption;
+			rDragDeadZone.left -= padding;
+			rDragDeadZone.top -= padding;
+			rDragDeadZone.right += padding;
+			rDragDeadZone.bottom += padding;
+		}
+	
+		if (cpt.x >= rDragDeadZone.left && cpt.y >= rDragDeadZone.top && cpt.x < rDragDeadZone.right && cpt.y < rDragDeadZone.bottom)
 			return true;
 
-		mbDragVerified = true;
-
-		UINT style = GetWindowLong(mhwnd, GWL_STYLE);
-		if (style & WS_CHILD) {
-			mpDragContainer->UndockFrame(this);
-		}
-
-		if (mpDragContainer) {
-			mpDragContainer->InitDragHandles();
-		}
+		BeginVerifiedDrag();
 	}
 
-	SetWindowPos(mhwnd, NULL, pt.x + mDragOffsetX, pt.y + mDragOffsetY, 0, 0, SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
+	// reposition by client origin error
+	const int newClientOriginX = cpt.x + mDragOffsetX;
+	const int newClientOriginY = cpt.y + mDragOffsetY;
+	const int newWindowX = newClientOriginX + (rWin.left - clientOrigin.x);
+	const int newWindowY = newClientOriginY + (rWin.top - clientOrigin.y);
+
+	SetWindowPos(mhwnd, NULL, newWindowX, newWindowY, 0, 0, SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE);
 
 	if (mpDragContainer)
-		mpDragContainer->UpdateDragHandles(pt.x, pt.y);
+		mpDragContainer->UpdateDragHandles(cpt.x, cpt.y);
 
 	return true;
+}
+
+// Called when we receive a non-client mouse down, but aren't sure that a drag
+// is occurring yet.
+void ATFrameWindow::BeginUnverifiedDrag(int screenX, int screenY, bool capture) {
+	mbDragging = true;
+	mbDragVerified = false;
+
+	// fetch the client rect
+	RECT r {};
+	::GetClientRect(mhwnd, &r);
+
+	// convert to screen coordinates
+	::MapWindowPoints(mhwnd, nullptr, (LPPOINT)&r, 2);
+
+	// store origin and origin-to-client offset
+	mDragOriginX = screenX;
+	mDragOriginY = screenY;
+	mDragOffsetX = r.left - screenX;
+	mDragOffsetY = r.top - screenY;
+
+	mpDragContainer = mpContainer;
+
+	SetForegroundWindow(mhwnd);
+	SetActiveWindow(mhwnd);
+	FocusContent();
+
+	if (capture)
+		SetCapture(mhwnd);
+}
+
+// Called once we know that a drag should occur, and should actually start the
+// drag operation.
+void ATFrameWindow::BeginVerifiedDrag() {
+	mbDragVerified = true;
+
+	UINT style = GetWindowLong(mhwnd, GWL_STYLE);
+	if (style & WS_CHILD) {
+		mpDragContainer->UndockFrame(this);
+	}
+
+	if (mpDragContainer) {
+		mpDragContainer->InitDragHandles();
+	}
 }
 
 void ATFrameWindow::EndDrag(bool success) {

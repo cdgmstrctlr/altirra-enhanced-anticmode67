@@ -131,6 +131,14 @@
 //			$$texture 0 vd_srctexture clamp clamp autobilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //
+//	$$technique screenfx_ptlinear_noscanlines_mask_cc
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_NoScanlines_Mask_GammaCC
+//			$$texture 0 vd_srctexture clamp clamp autobilinear
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 3 vd_src2ctexture clamp clamp point
+//
 //	$$technique screenfx_sharp_noscanlines_linear
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_ScreenFX
@@ -150,6 +158,14 @@
 //			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_NoScanlines_GammaCC
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
+//
+//	$$technique screenfx_sharp_noscanlines_mask_cc
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_NoScanlines_Mask_GammaCC
+//			$$texture 0 vd_srctexture clamp clamp bilinear
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 3 vd_src2ctexture clamp clamp point
 //
 //	$$technique screenfx_ptlinear_scanlines_linear
 //		$$pass
@@ -174,6 +190,15 @@
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
 //
+//	$$technique screenfx_ptlinear_scanlines_mask_cc
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_PtLinear_Scanlines_Mask_GammaCC
+//			$$texture 0 vd_srctexture clamp clamp autobilinear
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp point
+//			$$texture 3 vd_src2ctexture clamp clamp point
+//
 //	$$technique screenfx_sharp_scanlines_linear
 //		$$pass
 //			$$vertex_shader vs_2_0 VP_ScreenFX
@@ -196,6 +221,15 @@
 //			$$texture 0 vd_srctexture clamp clamp bilinear
 //			$$texture 1 vd_src2atexture clamp clamp bilinear
 //			$$texture 2 vd_src2btexture clamp clamp point
+//
+//	$$technique screenfx_sharp_scanlines_mask_cc
+//		$$pass
+//			$$vertex_shader vs_2_0 VP_ScreenFX
+//			$$pixel_shader ps_2_0 FP_ScreenFX_Sharp_Scanlines_Mask_GammaCC
+//			$$texture 0 vd_srctexture clamp clamp bilinear
+//			$$texture 1 vd_src2atexture clamp clamp bilinear
+//			$$texture 2 vd_src2btexture clamp clamp point
+//			$$texture 3 vd_src2ctexture clamp clamp point
 
 //	$$technique screenfx_bloomv2_conv
 //		$$pass

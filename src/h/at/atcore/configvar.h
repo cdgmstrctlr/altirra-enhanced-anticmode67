@@ -62,7 +62,7 @@ public:
 	ATConfigVarT(const char *name, T_Val val, OnChangedHandler h = nullptr) : ATConfigVar(name, h), mValue(val), mDefaultValue(val) {}
 
 	ATConfigVarType GetVarType() const override;
-	void Unset();
+	void Unset() override;
 
 	void operator=(const T_Val& val);
 

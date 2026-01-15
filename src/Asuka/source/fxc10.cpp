@@ -16,15 +16,16 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#define INITGUID
 #include <vector>
 #include <list>
 #include <unordered_map>
 #include <string>
 #include <windows.h>
 #include <d3dcommon.h>
+#include <d3dcompiler.h>
 #include <d3d11.h>
 #include <d3d10.h>
-#include <d3d10shader.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/refcount.h>
 #include <vd2/system/error.h>
@@ -37,6 +38,10 @@
 
 // TODO: Fix this
 #include <vd2/VDDisplay/minid3dx.h>
+
+#include "utils.h"
+
+#pragma comment(lib, "d3dcompiler")
 
 namespace {
 	HMODULE g_hmodD3DCompiler;
@@ -890,15 +895,46 @@ struct EffectInfo {
 							if (errors)
 								puts((const char *)errors->GetBufferPointer());
 
-							shader.clear();
-							errors.clear();
-							fclose(fo);
-							remove(args[1]);
-							exit(10);
+							throw VDExitToolWithErrorException();
 						}
 
 						const uint8 *compile_data = (const uint8 *)shader->GetBufferPointer();
 						const uint32 compile_len = shader->GetBufferSize();
+
+						vdrefptr<ID3D11ShaderReflection> refl;
+						hr = D3DReflect(compile_data, compile_len, IID_ID3D11ShaderReflection, (void **)~refl);
+						if (FAILED(hr)) {
+							printf("Effect compilation failed for \"%s\" with target %s (hr=%08x): unable to reflect shader\n", filename, compile_target.c_str(), (unsigned)hr);
+
+							throw VDExitToolWithErrorException();
+						}
+
+						D3D11_SHADER_DESC shaderDesc {};
+						hr = refl->GetDesc(&shaderDesc);
+						if (FAILED(hr)) {
+							printf("Effect compilation failed for \"%s\" with target %s (hr=%08x): unable to get shader desc\n", filename, compile_target.c_str(), (unsigned)hr);
+
+							throw VDExitToolWithErrorException();
+						}
+
+						for(UINT i=0; i<shaderDesc.BoundResources; ++i) {
+							D3D11_SHADER_INPUT_BIND_DESC resourceDesc {};
+							hr = refl->GetResourceBindingDesc(i, &resourceDesc);
+
+							if (FAILED(hr)) {
+								printf("Effect compilation failed for \"%s\" with target %s (hr=%08x): unable to reflect input resource binding %d\n", filename, compile_target.c_str(), (unsigned)hr, i);
+
+								throw VDExitToolWithErrorException();
+							}
+
+							if (resourceDesc.Type == D3D10_SIT_CBUFFER) {
+								if (resourceDesc.BindPoint != 0) {
+									printf("Effect compilation failed for \"%s\" with target %s: shader has constant binding for non-zero index\n", filename, compile_target.c_str());
+
+									throw VDExitToolWithErrorException();
+								}
+							}
+						}
 
 						vdrefptr<ID3D10Blob> disasm;
 						hr = g_pD3DDisassemble(compile_data, compile_len, 0, NULL, ~disasm);

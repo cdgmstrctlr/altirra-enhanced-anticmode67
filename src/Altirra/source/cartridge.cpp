@@ -481,7 +481,7 @@ constexpr ATCartridgeModeTable::ATCartridgeModeTable() {
 		;
 
 	m[kATCartridgeMode_SpartaDosX_64K]
-		.InitBank(0, -1, 7)
+		.InitBank(0, -1, 8)
 		;
 
 	m[kATCartridgeMode_Atrax_SDX_64K]
@@ -489,7 +489,7 @@ constexpr ATCartridgeModeTable::ATCartridgeModeTable() {
 		;
 
 	m[kATCartridgeMode_SpartaDosX_128K]
-		.InitBank(0, -1, 15)
+		.InitBank(0, -1, 16)
 		;
 	
 	m[kATCartridgeMode_Atrax_SDX_128K]
@@ -1584,38 +1584,28 @@ bool ATCartridgeEmulator::WriteByte_CCTL_Williams(void *thisptr0, uint32 address
 	return true;
 }
 
-template<uint8 T_Address>
-sint32 ATCartridgeEmulator::ReadByte_CCTL_SDX64(void *thisptr0, uint32 address) {
-	if (((uint8)address & 0xF0) == T_Address) {
-		((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 8 ? -1 : ~address & 7);
-		return 0xFF;
-	}
-
-	return -1;
-}
-
-template<uint8 T_Address>
+template<uint8 T_Address, bool T_PassThrough>
 bool ATCartridgeEmulator::WriteByte_CCTL_SDX64(void *thisptr0, uint32 address, uint8 value) {
 	if (((uint8)address & 0xF0) == T_Address) {
-		((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 8 ? -1 : ~address & 7);
+		((ATCartridgeEmulator *)thisptr0)->SetCartBank(
+			address & 8
+				? (address & 4) || !T_PassThrough ? -1 : 8
+				: ~address & 7
+		);
 		return true;
 	}
 
 	return false;
 }
 
-sint32 ATCartridgeEmulator::ReadByte_CCTL_SDX128(void *thisptr0, uint32 address) {
-	if (((uint8)address & 0xE0) == 0xE0) {
-		((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 8 ? -1 : (~address & 7) + (address & 0x10 ? 0 : 8));
-		return 0xFF;
-	}
-
-	return -1;
-}
-
+template<bool T_PassThrough>
 bool ATCartridgeEmulator::WriteByte_CCTL_SDX128(void *thisptr0, uint32 address, uint8 value) {
 	if (((uint8)address & 0xE0) == 0xE0) {
-		((ATCartridgeEmulator *)thisptr0)->SetCartBank(address & 8 ? -1 : (~address & 7) + (address & 0x10 ? 0 : 8));
+		((ATCartridgeEmulator *)thisptr0)->SetCartBank(
+			address & 8
+				? (address & 4) || !T_PassThrough ? -1 : 16
+				: (~address & 7) + (address & 0x10 ? 0 : 8)
+		);
 		return true;
 	}
 
@@ -2559,6 +2549,9 @@ uint32 ATCartridgeEmulator::GetSupportedButtons() const {
 
 		case kATCartridgeMode_JRC_RAMBOX:
 		case kATCartridgeMode_JRC6_64K:
+		case kATCartridgeMode_TheCart_32M:
+		case kATCartridgeMode_TheCart_64M:
+		case kATCartridgeMode_TheCart_128M:
 			return UINT32_C(1) << kATDeviceButton_CartridgeResetBank;
 
 		default:
@@ -2587,6 +2580,12 @@ void ATCartridgeEmulator::ActivateButton(ATDeviceButton idx, bool state) {
 			case kATCartridgeMode_JRC6_64K:
 				SetCartBank(mInitialCartBank);
 				SetCartBank2(mInitialCartBank2);
+				break;
+
+			case kATCartridgeMode_TheCart_32M:
+			case kATCartridgeMode_TheCart_64M:
+			case kATCartridgeMode_TheCart_128M:
+				ColdReset();
 				break;
 		}
 	}
@@ -2794,25 +2793,39 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			break;
 
 		case kATCartridgeMode_SpartaDosX_128K:
+			bank1Base	= 0xA0;
+			bank1Size	= 0x20;
+			usecctl = true;
+			usecctlread = false;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX128<true>;
+			break;
+
 		case kATCartridgeMode_Atrax_SDX_128K:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
-			usecctlread = true;
+			usecctlread = false;
 			usecctlwrite = true;
-			cctlhd.mpReadHandler = ReadByte_CCTL_SDX128;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX128;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX128<false>;
 			break;
 
 		case kATCartridgeMode_SpartaDosX_64K:
+			bank1Base	= 0xA0;
+			bank1Size	= 0x20;
+			usecctl = true;
+			usecctlread = false;
+			usecctlwrite = true;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0xE0, true>;
+			break;
+
 		case kATCartridgeMode_Atrax_SDX_64K:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
-			usecctlread = true;
+			usecctlread = false;
 			usecctlwrite = true;
-			cctlhd.mpReadHandler = ReadByte_CCTL_SDX64<0xE0>;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0xE0>;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0xE0, false>;
 			break;
 
 		case kATCartridgeMode_Atrax_128K:
@@ -2858,20 +2871,18 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
-			usecctlread = true;
+			usecctlread = false;
 			usecctlwrite = true;
-			cctlhd.mpReadHandler = ReadByte_CCTL_SDX64<0xD0>;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0xD0>;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0xD0, false>;
 			break;
 
 		case kATCartridgeMode_Express_64K:
 			bank1Base	= 0xA0;
 			bank1Size	= 0x20;
 			usecctl = true;
-			usecctlread = true;
+			usecctlread = false;
 			usecctlwrite = true;
-			cctlhd.mpReadHandler = ReadByte_CCTL_SDX64<0x70>;
-			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0x70>;
+			cctlhd.mpWriteHandler = WriteByte_CCTL_SDX64<0x70, false>;
 			break;
 
 		case kATCartridgeMode_TelelinkII:
@@ -2908,7 +2919,16 @@ void ATCartridgeEmulator::InitMemoryLayers() {
 			spec1WriteEnabled = true;
 
 			// 04072012 flasher expects mfr|device == 0x20 or 0x21
-			mFlashEmu.Init(mpROM, kATFlashType_Am29F010, mpScheduler);
+			{
+				ATFlashType flashType = kATFlashType_Am29F010;
+
+				if (g_ATOptions.mMaxflash1MbFlashChip == "M29F010B")
+					flashType = kATFlashType_M29F010B;
+				else if (g_ATOptions.mMaxflash1MbFlashChip == "SST39SF010")
+					flashType = kATFlashType_SST39SF010;
+
+				mFlashEmu.Init(mpROM, flashType, mpScheduler);
+			}
 			break;
 
 		case kATCartridgeMode_MaxFlash_128K_MyIDE:
@@ -3643,6 +3663,50 @@ void ATCartridgeEmulator::UpdateCartBank() {
 			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
 			return;
 		}
+	}
+
+	if (mCartMode == kATCartridgeMode_SpartaDosX_64K) {
+		if (mCartBank < 0) {
+			// disable cart
+			mpCartridgePort->OnLeftWindowChanged(mCartId, false);
+			mpCartridgePort->EnablePassThrough(mCartId, false, false, true);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
+		} else if (mCartBank < 8) {
+			// enable cart
+			mpMemMan->SetLayerMemoryAndAddressSpace(mpMemLayerVarBank1, mpROM + (mCartBank << 13), kATAddressSpace_CB + (mCartBank << 16) + 0xA000);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, true);
+			mpCartridgePort->EnablePassThrough(mCartId, false, false, true);
+			mpCartridgePort->OnLeftWindowChanged(mCartId, true);
+		} else {
+			// enable pass through
+			mpCartridgePort->EnablePassThrough(mCartId, true, true, true);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
+			mpCartridgePort->OnLeftWindowChanged(mCartId, false);
+		}
+
+		return;
+	}
+
+	if (mCartMode == kATCartridgeMode_SpartaDosX_128K) {
+		if (mCartBank < 0) {
+			// disable cart
+			mpCartridgePort->OnLeftWindowChanged(mCartId, false);
+			mpCartridgePort->EnablePassThrough(mCartId, false, false, true);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
+		} else if (mCartBank < 16) {
+			// enable cart
+			mpMemMan->SetLayerMemoryAndAddressSpace(mpMemLayerVarBank1, mpROM + (mCartBank << 13), kATAddressSpace_CB + (mCartBank << 16) + 0xA000);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, true);
+			mpCartridgePort->EnablePassThrough(mCartId, false, false, true);
+			mpCartridgePort->OnLeftWindowChanged(mCartId, true);
+		} else {
+			// enable pass through
+			mpCartridgePort->EnablePassThrough(mCartId, true, true, true);
+			mpMemMan->EnableLayer(mpMemLayerVarBank1, false);
+			mpCartridgePort->OnLeftWindowChanged(mCartId, false);
+		}
+
+		return;
 	}
 	
 	if (mCartBank < 0) {

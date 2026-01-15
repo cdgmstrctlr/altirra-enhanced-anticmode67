@@ -267,6 +267,8 @@ public:
 		return vdspan<const uint8>(mBuffer.begin(), mBuffer.end());
 	}
 
+	void Clear();
+
 	const wchar_t *GetNameForError() override;
 	sint64	Pos() override;
 	void	Read(void *buffer, sint32 bytes) override;
@@ -280,24 +282,45 @@ protected:
 	size_t mPos = 0;
 };
 
-class VDBufferedStream final : public IVDRandomAccessStream {
+class VDBufferedStream final : public IVDStream {
 public:
-	VDBufferedStream(IVDRandomAccessStream *pSrc, uint32 bufferSize);
+	VDBufferedStream(IVDStream *pSrc, uint32 bufferSize);
 	~VDBufferedStream();
 
-	const wchar_t *GetNameForError();
-	sint64	Pos();
-	void	Read(void *buffer, sint32 bytes);
-	sint32	ReadData(void *buffer, sint32 bytes);
-	void	Write(const void *buffer, sint32 bytes);
-
-	sint64	Length();
-	void	Seek(sint64 offset);
+	const wchar_t *GetNameForError() override;
+	sint64	Pos() override;
+	void	Read(void *buffer, sint32 bytes) override;
+	sint32	ReadData(void *buffer, sint32 bytes) override;
+	void	Write(const void *buffer, sint32 bytes) override;
 
 	void	Skip(sint64 size);
 
 protected:
-	IVDRandomAccessStream *mpSrc;
+	IVDStream *mpSrc = nullptr;
+	vdblock<char>	mBuffer;
+	sint64		mBasePosition;
+	uint32		mBufferOffset;
+	uint32		mBufferValidSize;
+};
+
+class VDBufferedRandomAccessStream final : public IVDRandomAccessStream {
+public:
+	VDBufferedRandomAccessStream(IVDRandomAccessStream *pSrc, uint32 bufferSize);
+	~VDBufferedRandomAccessStream();
+
+	const wchar_t *GetNameForError() override;
+	sint64	Pos() override;
+	void	Read(void *buffer, sint32 bytes) override;
+	sint32	ReadData(void *buffer, sint32 bytes) override;
+	void	Write(const void *buffer, sint32 bytes) override;
+
+	sint64	Length() override;
+	void	Seek(sint64 offset) override;
+
+	void	Skip(sint64 size);
+
+protected:
+	IVDRandomAccessStream *mpSrc = nullptr;
 	vdblock<char>	mBuffer;
 	sint64		mBasePosition;
 	uint32		mBufferOffset;

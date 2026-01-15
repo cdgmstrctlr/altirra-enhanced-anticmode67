@@ -1073,7 +1073,7 @@ void ATDeviceDiskDriveATR8000::OnWritePort(uint8 addr, uint8 val) {
 									printer->WriteRaw(&mPrinterData, 1);
 								else {
 									if (!mpPrinterOutput)
-										mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+										mpPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput(g_ATDeviceDefDiskDriveATR8000.mpName);
 
 									mpPrinterOutput->WriteRaw(&mPrinterData, 1);
 								}

@@ -813,8 +813,8 @@ void ATDiskImageVirtualFolder::UpdateDirectory(bool reportNewFiles) {
 						VDFile f(it.GetFullPath().c_str());
 
 						f.read(mBootSectors, sizeof mBootSectors);
-					} catch(const MyError& e) {
-						g_ATLCVDisk("Unable to read boot file: %s\n", e.gets());
+					} catch(const VDException& e) {
+						g_ATLCVDisk("Unable to read boot file: %ls\n", e.wc_str());
 						bootPresent = false;
 					}
 				}

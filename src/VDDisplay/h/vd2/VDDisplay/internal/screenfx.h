@@ -17,13 +17,64 @@
 #ifndef f_VD2_VDDISPLAY_INTERNAL_SCREENFX_H
 #define f_VD2_VDDISPLAY_INTERNAL_SCREENFX_H
 
-#include <optional>
 #include <vd2/system/vdtypes.h>
 #include <vd2/system/vectors.h>
+
+struct VDDScreenMaskParams;
 
 void VDDisplayCreateGammaRamp(uint32 *gammaTex, uint32 len, bool enableInputConversion, float outputGamma, float gammaAdjust);
 void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, uint32 texSize, float intensity, bool renderLinear);
 void VDDisplayCreateScanlineMaskTexture(uint32 *scanlineTex, ptrdiff_t pitch, uint32 srcH, uint32 dstH, float outY, float outH, uint32 texSize, float intensity, bool renderLinear);
+
+struct VDDisplayApertureGrilleParams {
+	float mPixelsPerTriad = 0;
+	float mRedCenter = 0;
+	float mRedWidth = 0;
+	float mGrnCenter = 0;
+	float mGrnWidth = 0;
+	float mBluCenter = 0;
+	float mBluWidth = 0;
+
+	VDDisplayApertureGrilleParams() = default;
+	VDDisplayApertureGrilleParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW);
+};
+
+void VDDisplayCreateApertureGrilleTexture(uint32 *tex, uint32 w, float dstX, const VDDisplayApertureGrilleParams& params);
+
+struct VDDisplaySlotMaskParams {
+	float mPixelsPerBlockH = 0;
+	float mPixelsPerBlockV = 0;
+	float mRedCenter = 0;
+	float mRedWidth = 0;
+	float mRedHeight = 0;
+	float mGrnCenter = 0;
+	float mGrnWidth = 0;
+	float mGrnHeight = 0;
+	float mBluCenter = 0;
+	float mBluWidth = 0;
+	float mBluHeight = 0;
+
+	VDDisplaySlotMaskParams() = default;
+	VDDisplaySlotMaskParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW);
+};
+
+void VDDisplayCreateSlotMaskTexture(uint32 *tex, ptrdiff_t pitch, uint32 w, uint32 h, float dstX, float dstY, float dstW, float dstH, const VDDisplaySlotMaskParams& params);
+
+struct VDDisplayTriadDotMaskParams {
+	float mPixelsPerTriadH = 0;
+	float mPixelsPerTriadV = 0;
+	float mRedCenter[2][2] {};
+	float mRedWidth = 0;
+	float mGrnCenter[2][2] {};
+	float mGrnWidth = 0;
+	float mBluCenter[2][2] {};
+	float mBluWidth = 0;
+
+	VDDisplayTriadDotMaskParams() = default;
+	VDDisplayTriadDotMaskParams(const VDDScreenMaskParams& maskParams, float dstW, float srcW);
+};
+
+void VDDisplayCreateTriadDotMaskTexture(uint32 *tex, ptrdiff_t pitch, uint32 w, uint32 h, float dstX, float dstY, float dstW, float dstH, const VDDisplayTriadDotMaskParams& params);
 
 struct VDDisplayDistortionMapping {
 	float mScaleX;

@@ -59,11 +59,11 @@
       <t name="Speedy 1050" href="devices-speedy1050.html"/>
     </t>
     <t name="High-level emulation (HLE) devices">
-      <t name="Host (H:) device" href="host-device.html"/>
+      <t name="Host (H:) device" href="devices-hostdevice.html"/>
     </t>
     <t name="Other devices">
       <t name="Corvus Disk Interface" href="devices-corvus.html" />
-      <t name="XEP-80 Interface Module" href="xep80.html" />
+      <t name="XEP-80 Interface Module" href="devices-xep80.html" />
     </t>
     <t name="Custom devices">
       <t name="About Custom Devices" href="customdev-intro.html" />

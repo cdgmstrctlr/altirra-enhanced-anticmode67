@@ -7,6 +7,15 @@
 ;	notice and this notice are preserved.  This file is offered as-is,
 ;	without any warranty.
 
+;==========================================================================
+; Revision history:
+;	2024-31-12 v0.3
+;	- Break key no longer cancels concurrent I/O. Instead, it is now
+;	  blocked during concurrent I/O like the updated revision of the 850
+;	  R: handler.
+;
+;==========================================================================
+
 		icl		'cio.inc'
 		icl		'sio.inc'
 		icl		'kerneldb.inc'
@@ -786,8 +795,7 @@ copy_loop:
 		dex
 		bpl		copy_loop
 		
-		mwa		brkky brkVecSave
-		mwa		brk_vec brkky
+		jsr		SwapIrqVector
 		
 		;switch serial port to channel 4 async recv, channel 2 xmit
 		lda		sskctl
@@ -807,9 +815,6 @@ copy_loop:
 		ldy		#1
 fail:
 		rts
-		
-brk_vec:
-		dta		a(BreakHandler)
 .endp
 
 ;==========================================================================
@@ -886,7 +891,7 @@ done:
 		ldx		#5
 		mva:rpl	serialVecSave,x vserin,x-
 		
-		mwa		brkVecSave brkky
+		jsr		SwapIrqVector
 		
 		cli
 		
@@ -1025,16 +1030,58 @@ is_empty:
 .endp
 
 ;==========================================================================
-.proc BreakHandler
-		;terminate concurrent I/O
-		txa
+; IRQ handler used during concurrent I/O.
+;
+; The Break key is blocked while concurrent I/O is active. This behavior of
+; the 850 R: device is documented in the 850 Technical Manual, Programming
+; the Serial Interface Ports, Restrictions, p.19. There is an early revision
+; referenced whose embedded R: handler lacks this behavior; we follow the
+; behavior of the later and more common revision that does. The behavior of
+; the older firmware is documented in the 1980 version of the 850 Owner's
+; Manual.
+;
+; Note that this needs to use (VIMIRQ) instead of (BRKKY) because the latter
+; is not supported in OS-A. The 850's R: handler does block the Break key
+; on OS-A, and we also follow suit here.
+;
+.proc IrqHandler
+		;check if the Break key IRQ is active
+		bit		irqst
+		bpl		is_break
+
+		;chain to old IRQ handler
+		jmp		IrqHandler
+chain_addr = * - 2
+
+is_break:
+		;ack the break IRQ and return
 		pha
-		jsr		SerialEndConcurrent
+		lda		#$7f
+		sta		irqen
+		lda		pokmsk
+		sta		irqen
 		pla
-		tax
-		
-		;jump through old BREAK vector (already restored)
-		jmp		(brkky)
+		rti
+.endp
+
+;==========================================================================
+; Exchange the IRQ vector at VIMIRQ with the IRQ save/chain address.
+;
+; Preserved:
+;	Y
+;
+.proc SwapIrqVector
+		ldx		#1
+loop:
+		lda		vimirq,x
+		pha
+		lda		IrqHandler.chain_addr,x
+		sta		vimirq,x
+		pla
+		sta		IrqHandler.chain_addr,x
+		dex
+		bpl		loop
+		rts
 .endp
 
 ;==========================================================================

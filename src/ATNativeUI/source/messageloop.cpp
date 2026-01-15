@@ -24,6 +24,7 @@
 #include <at/atnativeui/uiframe.h>
 
 ATNotifyList<HWND> g_ATModelessDialogs;
+ATNotifyList<HWND> g_ATModelessWindows;
 ATNotifyList<HWND> g_ATUITopLevelWindows;
 bool g_ATUIGlobalEnable = true;
 
@@ -43,10 +44,28 @@ void ATUIUnregisterModelessDialog(VDZHWND h) {
 	g_ATModelessDialogs.Remove(h);
 }
 
-void ATUIShowModelessDialogs(bool visible, VDZHWND parent) {
+void ATUIRegisterModelessWindow(VDZHWND h) {
+	g_ATModelessWindows.Add(h);
+}
+
+void ATUIUnregisterModelessWindow(VDZHWND h) {
+	g_ATModelessWindows.Remove(h);
+}
+
+void ATUIShowModelessWindows(bool visible, VDZHWND parent) {
 	const int showFlags = visible ? SW_SHOWNOACTIVATE : SW_HIDE; 
 
 	g_ATModelessDialogs.Notify(
+		[&](HWND hwnd) {
+			if (GetParent(hwnd) == parent) {
+				ShowWindow(hwnd, showFlags);
+			}
+
+			return false;
+		}
+	);
+
+	g_ATModelessWindows.Notify(
 		[&](HWND hwnd) {
 			if (GetParent(hwnd) == parent) {
 				ShowWindow(hwnd, showFlags);
@@ -81,6 +100,13 @@ void ATUISetGlobalEnableState(bool enable) {
 		}
 	);
 
+	g_ATModelessWindows.Notify(
+		[enable](HWND hwnd) {
+			EnableWindow(hwnd, enable);
+			return false;
+		}
+	);
+
 	g_ATUITopLevelWindows.Notify(
 		[enable](HWND hwnd) {
 			EnableWindow(hwnd, enable);
@@ -89,8 +115,17 @@ void ATUISetGlobalEnableState(bool enable) {
 	);
 }
 
-void ATUIDestroyModelessDialogs(VDZHWND parent) {
+void ATUIDestroyModelessWindows(VDZHWND parent) {
 	g_ATModelessDialogs.Notify(
+		[parent](HWND hwnd) {
+			if (!parent || GetParent(hwnd) == parent)
+				DestroyWindow(hwnd);
+
+			return false;
+		}
+	);
+
+	g_ATModelessWindows.Notify(
 		[parent](HWND hwnd) {
 			if (!parent || GetParent(hwnd) == parent)
 				DestroyWindow(hwnd);
@@ -187,11 +222,14 @@ bool ATUIProcessMessages(bool waitForMessage, int& returnCode) {
 				}
 			}
 
-			if (ATUIProcessModelessDialogs(&msg))
-				continue;
+			ATProfileBeginRegionWithArg(kATProfileRegion_NativeMessage, msg.message);
 
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+			if (!ATUIProcessModelessDialogs(&msg)) {
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+
+			ATProfileEndRegion(kATProfileRegion_NativeMessage);
 		}
 	}
 

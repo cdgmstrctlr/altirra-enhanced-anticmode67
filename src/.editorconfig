@@ -23,3 +23,7 @@ indent_size = 3
 [*.html]
 indent_style = space
 indent_size = 2
+
+[BUILD-HOWTO.html]
+indent_style = space
+indent_size = 4

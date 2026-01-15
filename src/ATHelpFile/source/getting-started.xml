@@ -68,15 +68,20 @@
   </p>
   <h3>BASIC programs</h3>
   <p>
-    Running a BASIC program that is supplied directly as a BAS file &#x2014; and not a disk image &#x2014; takes a bit more work.
-    In order to run the program, rename it to an 8.3 compatible filename (i.e. MYPROGRM.BAS), and then assign the directory holding
-    that file to the virtual H: device through System &gt; Hard disk. Then, enable System &gt; Firmware &gt; BASIC, cold reset
+    There are two ways to run a BASIC (<tt>*.bas</tt>) file directly. The first is simply to use it with the Boot Image option with
+    BASIC enabled. The emulator will automatically initiate the program load when BASIC starts.
+  </p>
+  <p>
+    The other way is to load the BASIC program file through the host device (H:). The host device is added in System &gt; Configure
+    System &gt; Devices, by adding a <a href="devices-hostdevice.html">Host Device (H:)</a> to the device tree. From there, a directory on the host system can be
+    mapped into emulation through the H: device. Rename the BASIC file to an 8.3 compatible filename (i.e. MYPROGRM.BAS), and then
+    assign the directory holding that file to the virtual H: device through the host device configuration. Then, enable BASIC, cold reset
     the emulation, and type the following:
   </p>
   <blockquote>
-    <tt>load "H:MYPROGRM.BAS"</tt>
+    <tt>LOAD "H:MYPROGRM.BAS"</tt>
     <br/>
-    <tt>run</tt>
+    <tt>RUN</tt>
   </blockquote>
   <h2>Hooking up actual kernel ROM images</h2>
   <p>

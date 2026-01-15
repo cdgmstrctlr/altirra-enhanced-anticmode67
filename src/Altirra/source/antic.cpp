@@ -32,11 +32,12 @@
 #endif
 
 namespace {
-	const uint8 kModeToFetchRate[18]={
+	const uint8 kModeToFetchRate[18] = {
 	//  0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F 10 11	// CMC
 		0, 0, 3, 3, 3, 3, 2, 2, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3	// CMC
 	};
 
+	// CMC
 	const uint8 kDblModeToMode[32] = {
 		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,11,12,13,14,15,
 		0, 1, 2, 3, 4, 5,16,17, 8, 9, 10,11,12,13,14,15
@@ -136,6 +137,8 @@ void ATAnticEmulator::ColdReset() {
 	mWSYNCPending = 0;
 	mbWSYNCActive = false;
 
+	memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
+
 	mpScheduler->UnsetEvent(mpEventRNMI);
 
 	WarmReset();
@@ -164,6 +167,7 @@ void ATAnticEmulator::WarmReset() {
 	// - Memory scan counter
 	// - NMIST
 	// - RNMI
+	// - Line buffer
 
 	++mRawFrame;
 	++mPresentedFrame;
@@ -632,8 +636,6 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 				// properly.
 				mDLControlPrev = mDLControl;
 				mDLControl &= 0x20;
-
-				memset(mPFDataBuffer, 0, sizeof mPFDataBuffer);
 			} else {
 				uint32 rowStop = mbRowStopUseVScroll ? mLatchedVScroll2 : ((mRowCount - 1) & 15);
 
@@ -724,7 +726,7 @@ uint8 ATAnticEmulator::AdvanceSpecial() {
 			mPFDisplayCounter = 0;
 			mPFDMALastCheckX = 0;
 		} else if (mX == 16) {
-			mpGTIA->BeginScanline(mY, mPFPushMode == k320, mDblXColor && mMode16Enabled);
+			mpGTIA->BeginScanline(mY, mPFPushMode == k320, mDblXColor && mMode16Enabled);	// CMC
 			mbPFRendered = false;
 		} else if (mX == 105) {
 			if (mbWSYNCActive) {
@@ -926,7 +928,7 @@ void ATAnticEmulator::AdvanceFrame() {
 				++y;
 			}
 
-			static constexpr const wchar_t *kModeNames[16]={	// CMC
+			static constexpr const wchar_t* kModeNames[16] = {	// CMC
 				L"2",
 				L"3",
 				L"4",
@@ -1069,7 +1071,7 @@ void ATAnticEmulator::Decode(int offset) {
 	static_assert(sizeof(U16) == sizeof(uint16));
 	static_assert(sizeof(U32) == sizeof(uint32));
 
-	static constexpr U16 kExpandMode6[16][16]={
+	static constexpr U16 kExpandMode6[16][16] = {
 		{ 0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111 },
 		{ 0x0000, 0x0200, 0x2000, 0x2200, 0x0002, 0x0202, 0x2002, 0x2202, 0x0020, 0x0220, 0x2020, 0x2220, 0x0022, 0x0222, 0x2022, 0x2222 },
 		{ 0x0000, 0x0400, 0x4000, 0x4400, 0x0004, 0x0404, 0x4004, 0x4404, 0x0040, 0x0440, 0x4040, 0x4440, 0x0044, 0x0444, 0x4044, 0x4444 },
@@ -1092,22 +1094,22 @@ void ATAnticEmulator::Decode(int offset) {
 	// CMC
 	static constexpr U16 kExpandMode16[16][16] =
 	{
-/*708 */{ 0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111 },	//0 (color selector in ctrl byte)
-/*709 */{ 0x0000, 0x0200, 0x2000, 0x2200, 0x0002, 0x0202, 0x2002, 0x2202, 0x0020, 0x0220, 0x2020, 0x2220, 0x0022, 0x0222, 0x2022, 0x2222 },	//1
-/*710 */{ 0x0000, 0x0300, 0x3000, 0x3300, 0x0003, 0x0303, 0x3003, 0x3303, 0x0030, 0x0330, 0x3030, 0x3330, 0x0033, 0x0333, 0x3033, 0x3333 },	//2
-/*711 */{ 0x0000, 0x0400, 0x4000, 0x4400, 0x0004, 0x0404, 0x4004, 0x4404, 0x0040, 0x0440, 0x4040, 0x4440, 0x0044, 0x0444, 0x4044, 0x4444 },	//3
-/*706 */{ 0x0000, 0x0500, 0x5000, 0x5500, 0x0005, 0x0505, 0x5005, 0x5505, 0x0050, 0x0550, 0x5050, 0x5550, 0x0055, 0x0555, 0x5055, 0x5555 },	//4
-/*707 */{ 0x0000, 0x0600, 0x6000, 0x6600, 0x0006, 0x0606, 0x6006, 0x6606, 0x0060, 0x0660, 0x6060, 0x6660, 0x0066, 0x0666, 0x6066, 0x6666 },	//5
-/*708S*/{ 0x0000, 0x0700, 0x7000, 0x7700, 0x0007, 0x0707, 0x7007, 0x7707, 0x0070, 0x0770, 0x7070, 0x7770, 0x0077, 0x0777, 0x7077, 0x7777 },	//6
-/*709S*/{ 0x0000, 0x0800, 0x8000, 0x8800, 0x0008, 0x0808, 0x8008, 0x8808, 0x0080, 0x0880, 0x8080, 0x8880, 0x0088, 0x0888, 0x8088, 0x8888 },	//7
-/*710S*/{ 0x0000, 0x0900, 0x9000, 0x9900, 0x0009, 0x0909, 0x9009, 0x9909, 0x0090, 0x0990, 0x9090, 0x9990, 0x0099, 0x0999, 0x9099, 0x9999 },	//8
-/*711S*/{ 0x0000, 0x0A00, 0xA000, 0xAA00, 0x000A, 0x0A0A, 0xA00A, 0xAA0A, 0x00A0, 0x0AA0, 0xA0A0, 0xAAA0, 0x00AA, 0x0AAA, 0xA0AA, 0xAAAA },	//9
-/*704S*/{ 0x0000, 0x0B00, 0xB000, 0xBB00, 0x000B, 0x0B0B, 0xB00B, 0xBB0B, 0x00B0, 0x0BB0, 0xB0B0, 0xBBB0, 0x00BB, 0x0BBB, 0xB0BB, 0xBBBB },	//A
-/*705S*/{ 0x0000, 0x0C00, 0xC000, 0xCC00, 0x000C, 0x0C0C, 0xC00C, 0xCC0C, 0x00C0, 0x0CC0, 0xC0C0, 0xCCC0, 0x00CC, 0x0CCC, 0xC0CC, 0xCCCC },	//B
-/*706S*/{ 0x0000, 0x0D00, 0xD000, 0xDD00, 0x000D, 0x0D0D, 0xD00D, 0xDD0D, 0x00D0, 0x0DD0, 0xD0D0, 0xDDD0, 0x00DD, 0x0DDD, 0xD0DD, 0xDDDD },	//C
-/*707S*/{ 0x0000, 0x0E00, 0xE000, 0xEE00, 0x000E, 0x0E0E, 0xE00E, 0xEE0E, 0x00E0, 0x0EE0, 0xE0E0, 0xEEE0, 0x00EE, 0x0EEE, 0xE0EE, 0xEEEE },	//D
-/*712S*/{ 0x0000, 0x0F00, 0xF000, 0xFF00, 0x000F, 0x0F0F, 0xF00F, 0xFF0F, 0x00F0, 0x0FF0, 0xF0F0, 0xFFF0, 0x00FF, 0x0FFF, 0xF0FF, 0xFFFF },	//E
-/*712S*/{ 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000 }	//F for now use this for "invisible char" (ie screen BG) since there are only have 15 values available to send to GTIA (0x0000 is screen background)
+		/*708 */{ 0x0000, 0x0100, 0x1000, 0x1100, 0x0001, 0x0101, 0x1001, 0x1101, 0x0010, 0x0110, 0x1010, 0x1110, 0x0011, 0x0111, 0x1011, 0x1111 },	//0 (color selector in ctrl byte)
+		/*709 */{ 0x0000, 0x0200, 0x2000, 0x2200, 0x0002, 0x0202, 0x2002, 0x2202, 0x0020, 0x0220, 0x2020, 0x2220, 0x0022, 0x0222, 0x2022, 0x2222 },	//1
+		/*710 */{ 0x0000, 0x0300, 0x3000, 0x3300, 0x0003, 0x0303, 0x3003, 0x3303, 0x0030, 0x0330, 0x3030, 0x3330, 0x0033, 0x0333, 0x3033, 0x3333 },	//2
+		/*711 */{ 0x0000, 0x0400, 0x4000, 0x4400, 0x0004, 0x0404, 0x4004, 0x4404, 0x0040, 0x0440, 0x4040, 0x4440, 0x0044, 0x0444, 0x4044, 0x4444 },	//3
+		/*706 */{ 0x0000, 0x0500, 0x5000, 0x5500, 0x0005, 0x0505, 0x5005, 0x5505, 0x0050, 0x0550, 0x5050, 0x5550, 0x0055, 0x0555, 0x5055, 0x5555 },	//4
+		/*707 */{ 0x0000, 0x0600, 0x6000, 0x6600, 0x0006, 0x0606, 0x6006, 0x6606, 0x0060, 0x0660, 0x6060, 0x6660, 0x0066, 0x0666, 0x6066, 0x6666 },	//5
+		/*708S*/{ 0x0000, 0x0700, 0x7000, 0x7700, 0x0007, 0x0707, 0x7007, 0x7707, 0x0070, 0x0770, 0x7070, 0x7770, 0x0077, 0x0777, 0x7077, 0x7777 },	//6
+		/*709S*/{ 0x0000, 0x0800, 0x8000, 0x8800, 0x0008, 0x0808, 0x8008, 0x8808, 0x0080, 0x0880, 0x8080, 0x8880, 0x0088, 0x0888, 0x8088, 0x8888 },	//7
+		/*710S*/{ 0x0000, 0x0900, 0x9000, 0x9900, 0x0009, 0x0909, 0x9009, 0x9909, 0x0090, 0x0990, 0x9090, 0x9990, 0x0099, 0x0999, 0x9099, 0x9999 },	//8
+		/*711S*/{ 0x0000, 0x0A00, 0xA000, 0xAA00, 0x000A, 0x0A0A, 0xA00A, 0xAA0A, 0x00A0, 0x0AA0, 0xA0A0, 0xAAA0, 0x00AA, 0x0AAA, 0xA0AA, 0xAAAA },	//9
+		/*704S*/{ 0x0000, 0x0B00, 0xB000, 0xBB00, 0x000B, 0x0B0B, 0xB00B, 0xBB0B, 0x00B0, 0x0BB0, 0xB0B0, 0xBBB0, 0x00BB, 0x0BBB, 0xB0BB, 0xBBBB },	//A
+		/*705S*/{ 0x0000, 0x0C00, 0xC000, 0xCC00, 0x000C, 0x0C0C, 0xC00C, 0xCC0C, 0x00C0, 0x0CC0, 0xC0C0, 0xCCC0, 0x00CC, 0x0CCC, 0xC0CC, 0xCCCC },	//B
+		/*706S*/{ 0x0000, 0x0D00, 0xD000, 0xDD00, 0x000D, 0x0D0D, 0xD00D, 0xDD0D, 0x00D0, 0x0DD0, 0xD0D0, 0xDDD0, 0x00DD, 0x0DDD, 0xD0DD, 0xDDDD },	//C
+		/*707S*/{ 0x0000, 0x0E00, 0xE000, 0xEE00, 0x000E, 0x0E0E, 0xE00E, 0xEE0E, 0x00E0, 0x0EE0, 0xE0E0, 0xEEE0, 0x00EE, 0x0EEE, 0xE0EE, 0xEEEE },	//D
+		/*712S*/{ 0x0000, 0x0F00, 0xF000, 0xFF00, 0x000F, 0x0F0F, 0xF00F, 0xFF0F, 0x00F0, 0x0FF0, 0xF0F0, 0xFFF0, 0x00FF, 0x0FFF, 0xF0FF, 0xFFFF },	//E
+		/*712S*/{ 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000 }	//F for now use this for "invisible char" (ie screen BG) since there are only have 15 values available to send to GTIA (0x0000 is screen background)
 	};
 
 	static constexpr U32 kExpandMode8[16]={
@@ -1390,7 +1392,7 @@ void ATAnticEmulator::Decode(int offset) {
 			case 6:		// 20 column text, 5 colors, 8 scanlines
 			case 7:		// 20 column text, 5 colors, 16 scanlines
 				for(; x < limit; x += 4) {
-					const uint8 c = *src++;
+					const uint8 c = *src++;		// CMC
 					const uint8 d = *chdata++;
 
 					const U16 *VDRESTRICT tbl = kExpandMode6[c >> 6];
@@ -1402,34 +1404,34 @@ void ATAnticEmulator::Decode(int offset) {
 
 			case 16:	// 20 column text, 5 or 16 colors, independent fg/bg, 8 scanlines   CMC
 			case 17:	// 20 column text, 5 or 16 colors, independent fg/bg, 16 scanlines
+			{
+				const U16(*tableBase)[16] = mDblXColor ? kExpandMode16 : kExpandMode6;	// keep this test out of the inner loop
+				for (; x < limit; x += 4)
 				{
-					const U16(*tableBase)[16] = mDblXColor ? kExpandMode16 : kExpandMode6;	// keep this test out of the inner loop
-					for (; x < limit; x += 4)
-					{
-						uint8 d = *chdata;  chdata += 2;					// because antic is still reading a bitmap row for the ctrl byte, skip that data - it is garbage (TODO: add new DMA modes so ctrl byte is skipped and only pixdata is stored in the buffer)
-						const uint8 himask = ((*src++) & 128) ? 0xff : 0;	// check for inverse char code
-						const uint8 cc = *src++;							// read char ctrl byte
-						const uint8 inv = himask & mCharInvert;
-						d &= (~himask | mCharBlink);
-						d ^= inv;
+					uint8 d = *chdata;  chdata += 2;					// because antic is still reading a bitmap row for the ctrl byte, skip that data - it is garbage (TODO: add new DMA modes so ctrl byte is skipped and only pixdata is stored in the buffer)
+					const uint8 himask = ((*src++) & 128) ? 0xff : 0;	// check for inverse char code
+					const uint8 cc = *src++;							// read char ctrl byte
+					const uint8 inv = himask & mCharInvert;
+					d &= (~himask | mCharBlink);
+					d ^= inv;
 
-						const U16* tbl = tableBase[cc & 0xF];	// get fg color idx
-						const uint8 bgidx = cc >> 4;						// get bg color idx
-						*(U16*)(dst + 0) = tbl[d >> 4];
-						*(U16*)(dst + 2) = tbl[d & 15];
-						if (bgidx != 0)										// if bg is 0, don't do the new bg code; instead, use the standard fg-bg (70x/712) color combo
-						{
-							d = ~d;											// invert the character bitmap data so the bg color is applied and the fg is turned off
-							tbl = tableBase[bgidx];							// gives range of 704-711 since we're only in this block if bg != 0, so only kExpandMode6 rows 1-3 are used
-							((U16*)(dst + 0))->x |= tbl[d >> 4].x;			// merge the bg color onto the fg (TODO: fix this slowness)
-							((U16*)(dst + 0))->y |= tbl[d >> 4].y;
-							((U16*)(dst + 2))->x |= tbl[d & 15].x;
-							((U16*)(dst + 2))->y |= tbl[d & 15].y;
-						}
-						dst += 4;
+					const U16* tbl = tableBase[cc & 0xF];				// get fg color idx
+					const uint8 bgidx = cc >> 4;						// get bg color idx
+					*(U16*)(dst + 0) = tbl[d >> 4];
+					*(U16*)(dst + 2) = tbl[d & 15];
+					if (bgidx != 0)										// if bg is 0, don't do the new bg code; instead, use the standard fg-bg (70x/712) color combo
+					{
+						d = ~d;											// invert the character bitmap data so the bg color is applied and the fg is turned off
+						tbl = tableBase[bgidx];							// gives range of 704-711 since we're only in this block if bg != 0, so only kExpandMode6 rows 1-3 are used
+						((U16*)(dst + 0))->x |= tbl[d >> 4].x;			// merge the bg color onto the fg (TODO: fix this slowness)
+						((U16*)(dst + 0))->y |= tbl[d >> 4].y;
+						((U16*)(dst + 2))->x |= tbl[d & 15].x;
+						((U16*)(dst + 2))->y |= tbl[d & 15].y;
 					}
+					dst += 4;
 				}
-				break;
+			}
+			break;
 
 			case 8:
 				for(; x < limit; x += 8) {
@@ -1631,6 +1633,10 @@ void ATAnticEmulator::Decode(int offset) {
 						mAbnormalDecodeShifter |= d;
 					}
 
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+						if (++mPFDecodeOffset >= 63)
+							mPFDecodeOffset = 0;
+					}
 
 					*dst++ = (uint8)kExpandMode6[mPFDecodeAbCharInv][mAbnormalDecodeShifter >> 4].x;
 				}
@@ -1657,7 +1663,7 @@ void ATAnticEmulator::Decode(int offset) {
 						mAbnormalDecodeShifter |= d;
 					}
 
-					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit+2]) {
+					if ((x + 2 >= (int)mPFDMAVEnd ? decodePattern2 : mAbnormalDecodePattern) & kBits[bit + 2]) {
 						if (++mPFDecodeOffset >= 63)
 							mPFDecodeOffset = 0;
 					}
@@ -1859,7 +1865,7 @@ void ATAnticEmulator::WriteByte(uint8 reg, uint8 value) {
 
 	switch(reg) {
 		case 0x00:	// DMACTL [D400]
-			value &= 0x7F;
+			value &= 0x7F;	// CMC
 
 			if (value != mDMACTL) {
 				// Ugh. We need to check whether we have crossed the current start or stop boundaries
@@ -2011,7 +2017,7 @@ void ATAnticEmulator::DumpStatus() {
 		, mDMACTL & 0x10 ? " 1-line" : " 2-line"
 		, mDMACTL & 0x20 ? " dlist" : ""
 		, mDMACTL & 0x40 ? " dbl67" : ""		// CMC
-		);
+	);
 	ATConsolePrintf("CHACTL = %02X  :%s%s%s\n"
 		, mCHACTL
 		, mCHACTL & 0x10 ? " xcolors" : ""		// CMC
@@ -2263,7 +2269,7 @@ void ATAnticEmulator::BeginLoadState(ATSaveStateReader& reader) {
 
 void ATAnticEmulator::LoadStateArch(ATSaveStateReader& reader) {
 	mDMACTL	= reader.ReadUint8() & 0x3F;
-	mCHACTL	= reader.ReadUint8() & 0x0F;
+	mCHACTL = reader.ReadUint8() & 0x0F;	// CMC
 	mDLIST	= reader.ReadUint16();
 	mHSCROL	= reader.ReadUint8() & 0x0F;
 	mVSCROL	= reader.ReadUint8() & 0x0F;
@@ -2823,7 +2829,7 @@ void ATAnticEmulator::UpdateDMAPattern() {
 			case 3:
 			case 4:
 			case 5:
-			case 16:
+			case 16:	// CMC
 			case 17:
 				textFetchMode = 5;
 				graphicFetchMode = 3;

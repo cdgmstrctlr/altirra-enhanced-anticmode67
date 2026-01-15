@@ -132,10 +132,8 @@ void ATDeviceDiskDrive::Init() {
 void ATDeviceDiskDrive::Shutdown() {
 	MountDisk(nullptr);
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 
 	mpScheduler = nullptr;
 }
@@ -174,8 +172,7 @@ void ATDeviceDiskDrive::InitScheduling(ATScheduler *sch, ATScheduler *slowsch) {
 
 void ATDeviceDiskDrive::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-
-	mgr->AddDevice(this);
+	mpSIOInterface = mgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -276,14 +273,14 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdGetHighSpeedIndex() {
 	if (mpEmulationProfile->mHighSpeedIndex < 0)
 		return kCmdResponse_Fail_NAK;
 
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->SendComplete();
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->SendComplete();
 
 //	const uint8 hsindex = (uint8)mpEmulationProfile->mHighSpeedIndex;
 	const uint8 hsindex = 8;
-	mpSIOMgr->SendData(&hsindex, 1, true);
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->SendData(&hsindex, 1, true);
+	mpSIOInterface->EndCommand();
 
 	return kCmdResponse_Start;
 }
@@ -304,11 +301,11 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadSector() {
 		// back an error
 		mFDCStatus = 0xEF;
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendError();
-		mpSIOMgr->SendData(mSectorBuffer, sectorSize, true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendError();
+		mpSIOInterface->SendData(mSectorBuffer, sectorSize, true);
+		mpSIOInterface->EndCommand();
 	} else {
 		// apply initial command processing, ACK offset, and FDC command offset
 		const uint32 initialDelay = 7231;
@@ -379,8 +376,7 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadSector() {
 		// Warp disk rotation to end of sector
 		uint32 finalRotationalOffset = VDRoundToInt(psi.mRotPos * mCyclesPerRotation);
 
-		//if (mpSIOMgr->IsAccelRequest())
-			finalRotationalOffset += kFDCStartReadToStartCompleteCycles + kReturnDataCycles;
+		finalRotationalOffset += kFDCStartReadToStartCompleteCycles + kReturnDataCycles;
 		
 		finalRotationalOffset %= mCyclesPerRotation;
 
@@ -402,35 +398,35 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadSector() {
 					: ""
 				);
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
 
 		if (mbAccurateTiming)
-			mpSIOMgr->Delay(rotationalDelayCycles + kFDCStartReadToStartCompleteCycles);
+			mpSIOInterface->Delay(rotationalDelayCycles + kFDCStartReadToStartCompleteCycles);
 
 		if (mFDCStatus == 0xFF)
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->SendComplete();
 		else
-			mpSIOMgr->SendError();
+			mpSIOInterface->SendError();
 
-		mpSIOMgr->SendData(mSectorBuffer, sectorSize, true);
+		mpSIOInterface->SendData(mSectorBuffer, sectorSize, true);
 
 		mpFenceFn = [finalRotationalOffset, this]() {
 			mRotationOffset = finalRotationalOffset;
 			mRotationTime = ATSCHEDULER_GETTIME(mpScheduler);
 		};
-		mpSIOMgr->InsertFence(0);
+		mpSIOInterface->InsertFence(0);
 
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->EndCommand();
 	}
 
 	return kCmdResponse_Start;
 }
 
 IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdGetStatus() {
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->SendComplete();
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->SendComplete();
 
 	uint8 status[4] = {
 		0,
@@ -455,8 +451,8 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdGetStatus() {
 	if (mbLastOpError)
 		status[0] += 0x04;
 
-	mpSIOMgr->SendData(status, 4, true);
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->SendData(status, 4, true);
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }
 
@@ -468,16 +464,16 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdPutSector() {
 	
 	uint32 sectorSize = mpDiskImage->GetSectorSize(sector - 1);
 
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->ReceiveData('P', sectorSize, true);
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->ReceiveData('P', sectorSize, true);
 	return kCmdResponse_Start;
 }
 
 void ATDeviceDiskDrive::OnCmdPutSector2(const void *buf, uint32 len) {
 	if (mbReadOnly) {
-		mpSIOMgr->SendError();
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->SendError();
+		mpSIOInterface->EndCommand();
 		return;
 	}
 
@@ -489,13 +485,13 @@ void ATDeviceDiskDrive::OnCmdPutSector2(const void *buf, uint32 len) {
 	try {
 		mpDiskImage->WriteVirtualSector(sector - 1, buf, len);
 	} catch(const MyError&) {
-		mpSIOMgr->SendError();
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->SendError();
+		mpSIOInterface->EndCommand();
 		return;
 	}
 
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->EndCommand();	
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->EndCommand();	
 }
 
 IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdWriteSector() {
@@ -506,16 +502,16 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdWriteSector() {
 	
 	uint32 sectorSize = mpDiskImage->GetSectorSize(sector - 1);
 
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->ReceiveData('W', sectorSize, true);
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->ReceiveData('W', sectorSize, true);
 	return kCmdResponse_Start;
 }
 
 void ATDeviceDiskDrive::OnCmdWriteSector2(const void *buf, uint32 len) {
 	if (mbReadOnly) {
-		mpSIOMgr->SendError();
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->SendError();
+		mpSIOInterface->EndCommand();
 		return;
 	}
 
@@ -527,24 +523,24 @@ void ATDeviceDiskDrive::OnCmdWriteSector2(const void *buf, uint32 len) {
 	try {
 		mpDiskImage->WriteVirtualSector(sector - 1, buf, len);
 	} catch(const MyError&) {
-		mpSIOMgr->SendError();
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->SendError();
+		mpSIOInterface->EndCommand();
 		return;
 	}
 
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->EndCommand();
 }
 
 IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdReadPERCOMBlock() {
 	if (!mpEmulationProfile->mbPERCOMSupported)
 		return kCmdResponse_Fail_NAK;
 
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->SendData(mPERCOM, sizeof mPERCOM, true);
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->SendData(mPERCOM, sizeof mPERCOM, true);
+	mpSIOInterface->EndCommand();
 
 	return kCmdResponse_Start;
 }
@@ -553,11 +549,11 @@ IATDeviceSIO::CmdResponse ATDeviceDiskDrive::OnCmdWritePERCOMBlock() {
 	if (!mpEmulationProfile->mbPERCOMSupported)
 		return kCmdResponse_Fail_NAK;
 
-	mpSIOMgr->BeginCommand();
-	mpSIOMgr->SendACK();
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->ReceiveData(0x4F, sizeof mPERCOM, true);
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->BeginCommand();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->ReceiveData(0x4F, sizeof mPERCOM, true);
+	mpSIOInterface->EndCommand();
 
 	return kCmdResponse_Start;
 }

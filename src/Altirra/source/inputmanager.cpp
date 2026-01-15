@@ -22,7 +22,9 @@
 #include <vd2/system/registry.h>
 #include <vd2/system/strutil.h>
 #include <vd2/Dita/accel.h>
+#include "inputdefs.h"
 #include "inputmanager.h"
+#include "inputmap.h"
 #include "inputcontroller.h"
 #include "joystick.h"
 
@@ -70,203 +72,6 @@ struct ATInputManager::PresetMapDef {
 	std::initializer_list<ATInputMap::Controller> mControllers;
 	std::initializer_list<ATInputMap::Mapping> mMappings;
 };
-
-ATInputMap::ATInputMap()
-	: mSpecificInputUnit(-1)
-	, mbQuickMap(false)
-{
-}
-
-ATInputMap::~ATInputMap() {
-}
-
-const wchar_t *ATInputMap::GetName() const {
-	return mName.c_str();
-}
-
-void ATInputMap::SetName(const wchar_t *name) {
-	mName = name;
-}
-
-bool ATInputMap::UsesPhysicalPort(int portIdx) const {
-	for(Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end()); it != itEnd; ++it) {
-		const Controller& c = *it;
-
-		switch(c.mType) {
-			case kATInputControllerType_Joystick:
-			case kATInputControllerType_STMouse:
-			case kATInputControllerType_5200Controller:
-			case kATInputControllerType_LightPen:
-			case kATInputControllerType_Tablet:
-			case kATInputControllerType_KoalaPad:
-			case kATInputControllerType_AmigaMouse:
-			case kATInputControllerType_Keypad:
-			case kATInputControllerType_Trackball_CX80:
-			case kATInputControllerType_5200Trackball:
-			case kATInputControllerType_Driving:
-			case kATInputControllerType_Keyboard:
-			case kATInputControllerType_LightGun:
-			case kATInputControllerType_PowerPad:
-			case kATInputControllerType_LightPenStack:
-				if (c.mIndex == portIdx)
-					return true;
-				break;
-
-			case kATInputControllerType_Paddle:
-				if ((c.mIndex >> 1) == portIdx)
-					return true;
-				break;
-		}
-	}
-
-	return false;
-}
-
-void ATInputMap::Clear() {
-	mControllers.clear();
-	mMappings.clear();
-	mSpecificInputUnit = -1;
-}
-
-uint32 ATInputMap::GetControllerCount() const {
-	return (uint32)mControllers.size();
-}
-
-bool ATInputMap::HasControllerType(ATInputControllerType type) const {
-	return std::find_if(mControllers.begin(), mControllers.end(),
-		[=](const Controller& c) { return c.mType == type; }) != mControllers.end();
-}
-
-const ATInputMap::Controller& ATInputMap::GetController(uint32 i) const {
-	return mControllers[i];
-}
-
-uint32 ATInputMap::AddController(ATInputControllerType type, uint32 index) {
-	uint32 cindex = (uint32)mControllers.size();
-	Controller& c = mControllers.push_back();
-
-	c.mType = type;
-	c.mIndex = index;
-
-	return cindex;
-}
-
-void ATInputMap::AddControllers(std::initializer_list<Controller> controllers) {
-	mControllers.insert(mControllers.end(), controllers.begin(), controllers.end());
-}
-
-uint32 ATInputMap::GetMappingCount() const {
-	return (uint32)mMappings.size();
-}
-
-const ATInputMap::Mapping& ATInputMap::GetMapping(uint32 i) const {
-	return mMappings[i];
-}
-
-void ATInputMap::AddMapping(uint32 inputCode, uint32 controllerId, uint32 code) {
-	Mapping& m = mMappings.push_back();
-
-	m.mInputCode = inputCode;
-	m.mControllerId = controllerId;
-	m.mCode = code;
-}
-
-void ATInputMap::AddMappings(std::initializer_list<Mapping> mappings) {
-	mMappings.insert(mMappings.end(), mappings.begin(), mappings.end());
-}
-
-bool ATInputMap::Load(VDRegistryKey& key, const char *name) {
-	int len = key.getBinaryLength(name);
-
-	if (len < 16)
-		return false;
-
-	vdfastvector<uint32> heap;
-	const uint32 heapWords = (len + 3) >> 2;
-	heap.resize(heapWords, 0);
-
-	if (!key.getBinary(name, (char *)heap.data(), len))
-		return false;
-
-	const uint32 version = heap[0];
-	uint32 headerWords = 4;
-	if (version == 2)
-		headerWords = 5;
-	else if (version != 1)
-		return false;
-
-	uint32 nameLen = heap[1];
-	uint32 nameWords = (nameLen + 1) >> 1;
-	uint32 ctrlCount = heap[2];
-	uint32 mapCount = heap[3];
-
-	if (headerWords >= 5) {
-		mSpecificInputUnit = heap[4];
-	} else {
-		mSpecificInputUnit = -1;
-	}
-
-	if (((nameLen | ctrlCount | mapCount) & 0xff000000) || headerWords + nameWords + 2*ctrlCount + 3*mapCount > heapWords)
-		return false;
-
-	const uint32 *src = heap.data() + headerWords;
-
-	mName.assign((const wchar_t *)src, (const wchar_t *)src + nameLen);
-	src += nameWords;
-
-	mControllers.resize(ctrlCount);
-	for(uint32 i=0; i<ctrlCount; ++i) {
-		Controller& c = mControllers[i];
-
-		c.mType = (ATInputControllerType)src[0];
-		c.mIndex = src[1];
-		src += 2;
-	}
-
-	mMappings.resize(mapCount);
-	for(uint32 i=0; i<mapCount; ++i) {
-		Mapping& m = mMappings[i];
-
-		m.mInputCode = src[0];
-		m.mControllerId = src[1];
-		m.mCode = src[2];
-		src += 3;
-	}
-
-	return true;
-}
-
-void ATInputMap::Save(VDRegistryKey& key, const char *name) {
-	vdfastvector<uint32> heap;
-
-	heap.push_back(2);
-	heap.push_back(mName.size());
-	heap.push_back((uint32)mControllers.size());
-	heap.push_back((uint32)mMappings.size());
-	heap.push_back(mSpecificInputUnit);
-
-	uint32 offset = (uint32)heap.size();
-	heap.resize(heap.size() + ((mName.size() + 1) >> 1), 0);
-
-	mName.copy((wchar_t *)&heap[offset], mName.size());
-
-	for(Controllers::const_iterator it(mControllers.begin()), itEnd(mControllers.end()); it != itEnd; ++it) {
-		const Controller& c = *it;
-
-		heap.push_back(c.mType);
-		heap.push_back(c.mIndex);
-	}
-
-	for(Mappings::const_iterator it(mMappings.begin()), itEnd(mMappings.end()); it != itEnd; ++it) {
-		const Mapping& m = *it;
-
-		heap.push_back(m.mInputCode);
-		heap.push_back(m.mControllerId);
-		heap.push_back(m.mCode);
-	}
-
-	key.setBinary(name, (const char *)heap.data(), (int)heap.size() * 4);
-}
 
 ///////////////////////////////////////////////////////////////////////
 
@@ -325,32 +130,8 @@ void ATInputManager::ResetToDefaults() {
 		for(uint32 i=0; i<ccnt; ++i) {
 			const auto& controller = imap->GetController(i);
 
-			switch(controller.mType) {
-				case kATInputControllerType_5200Controller:
-				case kATInputControllerType_5200Trackball:
-					if (!mb5200Mode)
-						goto reject;
-					break;
-
-				case kATInputControllerType_Joystick:
-				case kATInputControllerType_Paddle:
-				case kATInputControllerType_STMouse:
-				case kATInputControllerType_Console:
-				case kATInputControllerType_LightPen:
-				case kATInputControllerType_Tablet:
-				case kATInputControllerType_KoalaPad:
-				case kATInputControllerType_AmigaMouse:
-				case kATInputControllerType_Keypad:
-				case kATInputControllerType_Trackball_CX80:
-				case kATInputControllerType_Driving:
-				case kATInputControllerType_Keyboard:
-				case kATInputControllerType_LightGun:
-				case kATInputControllerType_PowerPad:
-				case kATInputControllerType_LightPenStack:
-					if (mb5200Mode)
-						goto reject;
-					break;
-			}
+			if (ATInputIs5200ControllerType(controller.mType) != mb5200Mode)
+				goto reject;
 		}
 
 		AddInputMap(imap);
@@ -398,76 +179,45 @@ void ATInputManager::ColdReset() {
 }
 
 void ATInputManager::Poll(float dt) {
-	uint32 avgres = ((mMouseAvgQueue[0] + mMouseAvgQueue[1] + mMouseAvgQueue[2] + mMouseAvgQueue[3] + 0x00020002) & 0xfffcfffc) >> 2;
-	int avgx = (avgres & 0xffff) - 0x2000;
-	int avgy = (avgres >> 16) - 0x2000;
+	uint32 avgres = mMouseAvgQueue[0] + mMouseAvgQueue[1] + mMouseAvgQueue[2] + mMouseAvgQueue[3];
+	int avgx = (avgres & 0xffff) - 0x8000;
+	int avgy = (avgres >> 16) - 0x8000;
 	int avgax = abs(avgx);
 	int avgay = abs(avgy);
 
-	// tan 22.5 deg = 0.4142135623730950488016887242097 ~= 53/128
-	if (avgax * 53 >= avgay * 128)
-		avgy = 0;
+	// ignore very small deltas
+	if (avgax <= 1 && avgay <= 1) {
+		avgax = 0;
+		avgay = 0;
+	} else {
+		// tan 22.5 deg = 0.4142135623730950488016887242097 ~= 53/128
+		if (avgax * 53 >= avgay * 128)
+			avgy = 0;
 
-	if (avgay * 53 >= avgax * 128)
-		avgx = 0;
+		if (avgay * 53 >= avgax * 128)
+			avgx = 0;
+	}
 
-	if (avgx < 0)
-		OnButtonDown(0, kATInputCode_MouseLeft);
-	else
-		OnButtonUp(0, kATInputCode_MouseLeft);
-
-	if (avgx > 0)
-		OnButtonDown(0, kATInputCode_MouseRight);
-	else
-		OnButtonUp(0, kATInputCode_MouseRight);
-
-	if (avgy < 0)
-		OnButtonDown(0, kATInputCode_MouseUp);
-	else
-		OnButtonUp(0, kATInputCode_MouseUp);
-
-	if (avgy > 0)
-		OnButtonDown(0, kATInputCode_MouseDown);
-	else
-		OnButtonUp(0, kATInputCode_MouseDown);
+	OnButtonChanged(0, kATInputCode_MouseLeft, avgx < 0);
+	OnButtonChanged(0, kATInputCode_MouseRight, avgx > 0);
+	OnButtonChanged(0, kATInputCode_MouseUp, avgy < 0);
+	OnButtonChanged(0, kATInputCode_MouseDown, avgy > 0);
 
 	mMouseAvgQueue[++mMouseAvgIndex & 3] = 0x20002000;
 
 	const int wheelDelta = VDRoundToInt(mMouseWheelAccum);
 	mMouseWheelAccum -= (float)wheelDelta;
 
-	if (wheelDelta < 0)
-		OnButtonDown(0, kATInputCode_MouseWheelUp);
-	else
-		OnButtonUp(0, kATInputCode_MouseWheelUp);
-
-	if (wheelDelta > 0)
-		OnButtonDown(0, kATInputCode_MouseWheelDown);
-	else
-		OnButtonUp(0, kATInputCode_MouseWheelDown);
-
-	if (wheelDelta)
-		OnButtonDown(0, kATInputCode_MouseWheel);
-	else
-		OnButtonUp(0, kATInputCode_MouseWheel);
+	OnButtonChanged(0, kATInputCode_MouseWheelUp, wheelDelta < 0);
+	OnButtonChanged(0, kATInputCode_MouseWheelDown, wheelDelta > 0);
+	OnButtonChanged(0, kATInputCode_MouseWheel, wheelDelta != 0);
 
 	const int hwheelDelta = VDRoundToInt(mMouseHWheelAccum);
 	mMouseHWheelAccum -= (float)hwheelDelta;
 
-	if (hwheelDelta < 0)
-		OnButtonDown(0, kATInputCode_MouseHWheelLeft);
-	else
-		OnButtonUp(0, kATInputCode_MouseHWheelLeft);
-
-	if (hwheelDelta > 0)
-		OnButtonDown(0, kATInputCode_MouseHWheelRight);
-	else
-		OnButtonUp(0, kATInputCode_MouseHWheelRight);
-
-	if (hwheelDelta)
-		OnButtonDown(0, kATInputCode_MouseHWheel);
-	else
-		OnButtonUp(0, kATInputCode_MouseHWheel);
+	OnButtonChanged(0, kATInputCode_MouseHWheelLeft, hwheelDelta < 0);
+	OnButtonChanged(0, kATInputCode_MouseHWheelRight, hwheelDelta > 0);
+	OnButtonChanged(0, kATInputCode_MouseHWheel, hwheelDelta != 0);
 
 	// process mappings
 	for(Mappings::iterator it(mMappings.begin()), itEnd(mMappings.end()); it != itEnd; ++it) {
@@ -605,6 +355,13 @@ bool ATInputManager::IsInputMapped(int unit, uint32 inputCode) const {
 		|| mMappings.find(inputCode | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift)) != mMappings.end();
 }
 
+void ATInputManager::OnButtonChanged(int unit, int id, bool down) {
+	if (down)
+		OnButtonDown(unit, id);
+	else
+		OnButtonUp(unit, id);
+}
+
 void ATInputManager::OnButtonDown(int unit, int id) {
 	Buttons::iterator it(mButtons.insert(Buttons::value_type(id, 0)).first);
 	uint32 oldVal = it->second;
@@ -667,14 +424,6 @@ void ATInputManager::ReleaseButtons(uint32 idmin, uint32 idmax) {
 }
 
 void ATInputManager::OnAxisInput(int unit, int axis, sint32 value, sint32 deadifiedValue) {
-	auto spow = [](float f) { return f<0 ? -powf(-f, 1.0f) : +powf(f, 1.0f); };
-
-	float fv = spow((float)value / 65536.0f);
-	float fdv = spow((float)deadifiedValue / 65536.0f);
-
-	value = (int)(65536.0f * fv);
-	deadifiedValue = (int)(65536.0f * fdv);
-
 	ActivateAnalogMappings(axis, value, deadifiedValue);
 	ActivateAnalogMappings(axis | kATInputCode_SpecificUnit | (unit << kATInputCode_UnitShift), value, deadifiedValue);
 }
@@ -1650,14 +1399,7 @@ void ATInputManager::RebuildMappings() {
 			if (itC != controllerMap.end()) {
 				controllerTable[i] = itC->second;
 			} else {
-				bool is5200Controller = false;
-
-				switch(c.mType) {
-					case kATInputControllerType_5200Controller:
-					case kATInputControllerType_5200Trackball:
-						is5200Controller = true;
-						break;
-				}
+				const bool is5200Controller = ATInputIs5200ControllerType(c.mType);
 
 				// skip controller if it is not compatible with current mode
 				if (is5200Controller != mb5200Mode && c.mType != kATInputControllerType_InputState && c.mType != kATInputControllerType_Console)

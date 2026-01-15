@@ -75,10 +75,8 @@ void ATSIO2SDEmulator::Shutdown() {
 		mpUIRenderer = nullptr;
 	}
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATSIO2SDEmulator::WarmReset() {
@@ -98,7 +96,7 @@ void ATSIO2SDEmulator::InitIndicators(IATDeviceIndicatorManager *r) {
 
 void ATSIO2SDEmulator::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATSIO2SDEmulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -220,47 +218,47 @@ IATDeviceSIO::CmdResponse ATSIO2SDEmulator::OnSerialAccelCommand(const ATDeviceS
 }
 
 ATSIO2SDEmulator::CmdResponse ATSIO2SDEmulator::DoReadCommand(const void *data, uint32 len) {
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 	if (mbHighSpeedPhase)
-		mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-	mpSIOMgr->SendACK();
-	mpSIOMgr->Delay(1000);
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->Delay(1000);
-	mpSIOMgr->SendData(data, len, true);
-	mpSIOMgr->EndCommand();
+		mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+	mpSIOInterface->SendACK();
+	mpSIOInterface->Delay(1000);
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->Delay(1000);
+	mpSIOInterface->SendData(data, len, true);
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }
 
 ATSIO2SDEmulator::CmdResponse ATSIO2SDEmulator::DoWriteCommand(uint32 len) {
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 	if (mbHighSpeedPhase)
-		mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-	mpSIOMgr->SendACK();
-	mpSIOMgr->ReceiveData(mCommand.mCommand, len, true);
-	mpSIOMgr->Delay(1000);
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->EndCommand();
+		mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+	mpSIOInterface->SendACK();
+	mpSIOInterface->ReceiveData(mCommand.mCommand, len, true);
+	mpSIOInterface->Delay(1000);
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }
 
 ATSIO2SDEmulator::CmdResponse ATSIO2SDEmulator::DoImpliedCommand() {
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 	if (mbHighSpeedPhase)
-		mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
-	mpSIOMgr->SendACK();
-	mpSIOMgr->Delay(1000);
-	mpSIOMgr->SendComplete();
-	mpSIOMgr->EndCommand();
+		mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+	mpSIOInterface->SendACK();
+	mpSIOInterface->Delay(1000);
+	mpSIOInterface->SendComplete();
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }
 
 ATSIO2SDEmulator::CmdResponse ATSIO2SDEmulator::DoNAKCommand() {
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 	if (mbHighSpeedPhase)
-		mpSIOMgr->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
+		mpSIOInterface->SetTransferRate((mHighSpeedIndex + 7) * 2, (mHighSpeedIndex + 7) * 20);
 
-	mpSIOMgr->SendNAK();
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->SendNAK();
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }

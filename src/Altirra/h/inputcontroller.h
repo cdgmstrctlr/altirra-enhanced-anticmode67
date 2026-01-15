@@ -23,7 +23,7 @@
 #include <vd2/system/vectors.h>
 #include <at/atcore/notifylist.h>
 #include <at/atcore/scheduler.h>
-#include "inputtypes.h"
+#include "inputdefs.h"
 
 class IATDevicePortManager;
 class IATDeviceControllerPort;
@@ -35,93 +35,6 @@ class ATGTIALightSensor;
 class ATPIAEmulator;
 class ATPortInputController;
 struct ATInputPointerInfo;
-
-///////////////////////////////////////////////////////////////////////////
-
-enum ATInputTrigger : uint32 {
-	kATInputTrigger_Button0		= 0x0000,
-	kATInputTrigger_Up			= 0x0100,
-	kATInputTrigger_Down		= 0x0101,
-	kATInputTrigger_Left		= 0x0102,
-	kATInputTrigger_Right		= 0x0103,
-	kATInputTrigger_ScrollUp	= 0x0104,
-	kATInputTrigger_ScrollDown	= 0x0105,
-	kATInputTrigger_Start		= 0x0200,
-	kATInputTrigger_Select		= 0x0201,
-	kATInputTrigger_Option		= 0x0202,
-	kATInputTrigger_Turbo		= 0x0203,
-	kATInputTrigger_ColdReset	= 0x0204,
-	kATInputTrigger_WarmReset	= 0x0205,
-	kATInputTrigger_Rewind		= 0x0206,
-	kATInputTrigger_RewindMenu	= 0x0207,
-	kATInputTrigger_KeySpace	= 0x0300,
-	kATInputTrigger_5200_0		= 0x0400,
-	kATInputTrigger_5200_1		= 0x0401,
-	kATInputTrigger_5200_2		= 0x0402,
-	kATInputTrigger_5200_3		= 0x0403,
-	kATInputTrigger_5200_4		= 0x0404,
-	kATInputTrigger_5200_5		= 0x0405,
-	kATInputTrigger_5200_6		= 0x0406,
-	kATInputTrigger_5200_7		= 0x0407,
-	kATInputTrigger_5200_8		= 0x0408,
-	kATInputTrigger_5200_9		= 0x0409,
-	kATInputTrigger_5200_Star	= 0x040A,
-	kATInputTrigger_5200_Pound	= 0x040B,
-	kATInputTrigger_5200_Start	= 0x040C,
-	kATInputTrigger_5200_Pause	= 0x040D,
-	kATInputTrigger_5200_Reset	= 0x040E,
-	kATInputTrigger_UILeft		= 0x0500,
-	kATInputTrigger_UIRight		= 0x0501,
-	kATInputTrigger_UIUp		= 0x0502,
-	kATInputTrigger_UIDown		= 0x0503,
-	kATInputTrigger_UIAccept	= 0x0504,	// PSx[X], Xbox[A]
-	kATInputTrigger_UIReject	= 0x0505,	// PSx[O], Xbox[B]
-	kATInputTrigger_UIMenu		= 0x0506,	// PSx[T], Xbox[Y]
-	kATInputTrigger_UIOption	= 0x0507,	// PSx[S], Xbox[X]
-	kATInputTrigger_UISwitchLeft	= 0x0508,
-	kATInputTrigger_UISwitchRight	= 0x0509,
-	kATInputTrigger_UILeftShift		= 0x050A,
-	kATInputTrigger_UIRightShift	= 0x050B,
-	kATInputTrigger_Axis0		= 0x0800,
-	kATInputTrigger_Flag0		= 0x0900,
-	kATInputTrigger_ClassMask	= 0xFF00,
-	kATInputTrigger_Mask		= 0xFFFF,
-
-	// D2D: Button state as usual.
-	// D2A: Absolute positioning.
-	// A2D: Threshold.
-	// A2A: Absolute positioning.
-	kATInputTriggerMode_Default		= 0x00000000,
-
-	kATInputTriggerMode_AutoFire	= 0x00010000,
-
-	kATInputTriggerMode_Toggle		= 0x00020000,
-	kATInputTriggerMode_ToggleAF	= 0x00030000,
-
-	// D2D: N/A
-	// D2A: Accumulate deltas.
-	// A2D: N/A
-	// A2A: Accumulate deltas.
-	kATInputTriggerMode_Relative	= 0x00040000,
-
-	// D2D: N/A
-	// D2A: Position -> Value.
-	// A2D: N/A
-	// A2A: Position -> Value.
-	kATInputTriggerMode_Absolute	= 0x00050000,
-
-	// D2D: Starts on, invert state.
-	// D2A: N/A
-	// A2D: N/A
-	// A2A: Axis reversed.
-	kATInputTriggerMode_Inverted	= 0x00060000,
-
-	kATInputTriggerMode_Mask		= 0x000F0000,
-	kATInputTriggerSpeed_Mask		= 0x00F00000,
-	kATInputTriggerSpeed_Shift		= 20,
-	kATInputTriggerAccel_Mask		= 0x0F000000,
-	kATInputTriggerAccel_Shift		= 24
-};
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -329,15 +242,17 @@ public:
 	void AddDelta(int delta);
 	void SetTrigger(bool enable);
 
-	virtual void SetDigitalTrigger(uint32 trigger, bool state);
-	virtual void ApplyAnalogInput(uint32 trigger, int ds);
-	virtual void ApplyImpulse(uint32 trigger, int ds);
+	void SetDigitalTrigger(uint32 trigger, bool state) override;
+	void ApplyAnalogInput(uint32 trigger, int ds) override;
+	void ApplyImpulse(uint32 trigger, int ds) override;
 
-	virtual void Tick();
+	void Tick() override;
 
-	virtual void OnDetach();
+	void OnDetach() override;
 
-protected:
+private:
+	void SetRawHiPos(int hiPos);
+
 	bool mbSecond = false;
 	bool mbLeft = false;
 	bool mbRight = false;

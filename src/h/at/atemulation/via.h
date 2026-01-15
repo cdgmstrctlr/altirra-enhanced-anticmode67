@@ -19,8 +19,10 @@
 #define f_AT_VIA_H
 
 #include <vd2/system/function.h>
+#include <vd2/system/unknown.h>
 #include <at/atcore/scheduler.h>
 
+class ATConsoleOutput;
 class IATObjectState;
 template<typename T> class vdrefptr;
 
@@ -33,14 +35,25 @@ enum ATVIAOutputBit {
 
 class ATVIA6522Emulator : public IATSchedulerCallback {
 public:
+	static constexpr auto kTypeID = "ATVIA6522Emulator"_vdtypeid;
+
 	ATVIA6522Emulator();
 	~ATVIA6522Emulator();
 
 	void Init(ATScheduler *sch);
 	void Shutdown();
 
-	void SetPortAInput(uint8 val);
-	void SetPortBInput(uint8 val);
+	void DumpStatus(ATConsoleOutput& out);
+
+	// Return the current output as a packed word: CB2 & CA2 & PB & PA.
+	// Note that this does NOT include inputs, it only includes driven outputs.
+	// Undriven port A/B outputs are returned as 1.
+	uint32 GetOutput() const {
+		return mCurrentOutput;
+	}
+
+	void SetPortAInput(uint8 val, uint8 mask = 0xFF);
+	void SetPortBInput(uint8 val, uint8 mask = 0xFF);
 	void SetCA1Input(bool state);
 	void SetCA2Input(bool state);
 	void SetCB1Input(bool state);
@@ -80,12 +93,16 @@ protected:
 		kEventId_CA2Assert = 1,
 		kEventId_CA2Deassert,
 		kEventId_CB2Assert,
-		kEventId_CB2Deassert
+		kEventId_CB2Deassert,
+		kEventId_T1Update,
 	};
 
 	void SetIF(uint8 mask);
 	void ClearIF(uint8 mask);
+	uint32 ComputeOutput() const;
 	void UpdateOutput();
+	void UpdateT1Event();
+	void UpdateT1State();
 
 	uint8	mIRB;
 	uint8	mIRA;
@@ -102,6 +119,9 @@ protected:
 	uint8	mPCR;
 	uint8	mIFR;
 	uint8	mIER;
+	uint8	mTimerPB7;
+	uint8	mTimerPB7Mask;
+	bool	mbTimer1UnderflowInProgress = false;
 	bool	mCA1Input;
 	bool	mCA2Input;
 	bool	mCB1Input;
@@ -110,9 +130,16 @@ protected:
 	bool	mCB2;
 	bool	mbIrqState;
 
-	ATScheduler *mpScheduler;
-	ATEvent *mpEventCA2Update;
-	ATEvent *mpEventCB2Update;
+	uint8	mPortAInput = 0;
+	uint8	mPortBInput = 0;
+	uint32	mCurrentOutput = 0x3FFFF;
+
+	uint64	mT1LastUpdate = 0;
+
+	ATScheduler *mpScheduler = nullptr;
+	ATEvent *mpEventCA2Update = nullptr;
+	ATEvent *mpEventCB2Update = nullptr;
+	ATEvent *mpEventT1Update = nullptr;
 
 	ATVIA6522OutputFn mpOutputFn;
 	void *mpOutputFnData;

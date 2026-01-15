@@ -158,7 +158,7 @@ void ATDevice1025Full::Init() {
 	spec.mbBit0Top = true;
 	spec.mNumPins = 7;
 
-	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(spec);
+	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(g_ATDeviceDefPrinter1025Full.mpName, spec);
 }
 
 void ATDevice1025Full::Shutdown() {

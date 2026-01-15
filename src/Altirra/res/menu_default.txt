@@ -278,7 +278,10 @@ Debu&g
 	Record &Audio...					{Record.Audio}
 	Record &Video...					{Record.Video}
 	Record &SAP type R...				{Record.SAPTypeR}
+	Record V&GM...						{Record.VGM}
+	---
 	&Stop Recording						{Record.Stop}
+	&Pause/Resume Recording				{Record.PauseResume}
 	
 &Tools
 	&Disk Explorer...					{Tools.DiskExplorer}
@@ -288,7 +291,6 @@ Debu&g
 	---
 	First Time Setup...					{Tools.SetupWizard}
 	---
-	&Options...							{Tools.OptionsDialog}
 	&Keyboard Shortcuts...				{Tools.KeyboardShortcutsDialog}
 	&Compatibility Database...			{Tools.CompatDBDialog}
 	Advanced Configuration...			{Tools.AdvancedConfiguration}

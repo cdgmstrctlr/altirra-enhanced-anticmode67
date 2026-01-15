@@ -1,11 +1,33 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2024 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #include <stdafx.h>
 #include <windows.h>
 #include <windowsx.h>
 #include <richedit.h>
+#include <shldisp.h>
+#include <shlguid.h>
+#include <shlobj_core.h>
+#include <shobjidl.h>
 #include <commctrl.h>
 #include <tom.h>
 #include <uxtheme.h>
+#include <ranges>
 
+#include <vd2/system/color.h>
 #include <vd2/system/w32assist.h>
 #include <vd2/system/strutil.h>
 #include <vd2/system/thunk.h>
@@ -16,8 +38,10 @@
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Kasumi/resample.h>
 #include <vd2/Riza/bitmap.h>
+#include <at/atcore/comsupport_win32.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/theme_win32.h>
+#include <at/atnativeui/uiframe.h>
 #include <at/atnativeui/uiproxies.h>
 
 #pragma comment(lib, "oleaut32")
@@ -52,7 +76,7 @@ namespace {
 		v5.bV5ProfileSize = 0;
 	}
 
-	void AddImagesToImageList(HIMAGELIST hImageList, const VDPixmap& px, uint32 imgw, uint32 imgh) {
+	void AddImagesToImageList(HIMAGELIST hImageList, const VDPixmap& px, uint32 imgw, uint32 imgh, uint32 backgroundColor) {
 		if (px.format != nsVDPixmap::kPixFormat_XRGB8888) {
 			VDFAIL("Image list not in correct format.");
 			return;
@@ -72,7 +96,6 @@ namespace {
 			AlphaBitmapHeader hdr(imgw, imgh);
 
 			void *bits;
-
 			HBITMAP hbm = CreateDIBSection(hdc2, (BITMAPINFO *)&hdr, DIB_RGB_COLORS, &bits, nullptr, 0);
 			if (hbm) {
 				VDPixmap pxbuf = VDGetPixmapForBitmap(hdr.bi, bits);
@@ -83,27 +106,64 @@ namespace {
 
 				GdiFlush();
 
-				VDPixmapResample(pxbuf, px, IVDPixmapResampler::kFilterCubic);
+				vdautoptr<IVDPixmapResampler> r(VDCreatePixmapResampler());
+
+				r->SetFilters(IVDPixmapResampler::kFilterCubic, IVDPixmapResampler::kFilterCubic, false);
+				r->SetSplineFactor(-0.65f);
+				r->SetLinear(false);
+				bool rsinited = r->Init(imgw, imgh, nsVDPixmap::kPixFormat_XRGB8888, srcw, srch, nsVDPixmap::kPixFormat_XRGB8888);
+
+				VDMemcpyRect(alphasrc.data, alphasrc.pitch, px.data, px.pitch, srcw*4, srch);
+
+				for(int y = 0; y < alphasrc.h; ++y) {
+					uint8 *row = alphasrc.GetPixelRow<uint8>(y);
+
+					for(int x = 0; x < alphasrc.w; ++x) {
+						row[0] = (uint8)(((row[0] * row[3] + 128) * 257) >> 16);
+						row[1] = (uint8)(((row[1] * row[3] + 128) * 257) >> 16);
+						row[2] = (uint8)(((row[2] * row[3] + 128) * 257) >> 16);
+						row += 4;
+					}
+				}
+
+				if (rsinited)
+					r->Process(pxbuf, alphasrc);
 
 				// We can't guarantee that the resampler will handle alpha, so resample alpha as color
 				// and remerge.
-				VDMemcpyRect(alphasrc.data, alphasrc.pitch, px.data, px.pitch, srcw*4, srch);
 
-				uint32 numDwords = alphasrc.size() / 4;
-				for(uint32 i = 0; i < numDwords; ++i) {
-					((uint32 *)alphasrc.data)[i] >>= 24;
-				}
+				for(int y = 0; y < alphasrc.h; ++y) {
+					uint32 *row = alphasrc.GetPixelRow<uint32>(y);
 
-				VDPixmapResample(alphadst, alphasrc, IVDPixmapResampler::kFilterCubic);
-
-				for(uint32 y=0; y<imgh; ++y) {
-					const uint32 *VDRESTRICT src = (const uint32 *)((const char *)alphadst.data + alphadst.pitch * y);
-					uint32 *VDRESTRICT dst = (uint32 *)((char *)pxbuf.data + pxbuf.pitch * y);
-
-					for(uint32 x=0; x<imgw; ++x) {
-						dst[x] = (dst[x] & 0x00FFFFFF) + (src[x] << 24);
+					for(int x = 0; x < alphasrc.w; ++x) {
+						row[x] >>= 24;
 					}
 				}
+
+				if (rsinited)
+					r->Process(alphadst, alphasrc);
+
+				VDColorARGB bk = VDColorARGB::FromARGB8(backgroundColor).Premultiply();
+
+				uint32 allAlpha = 0;
+				for(uint32 y=0; y<imgh; ++y) {
+					const uint32 *VDRESTRICT src = alphadst.GetPixelRow<const uint32>(y);
+					uint32 *VDRESTRICT dst = pxbuf.GetPixelRow<uint32>(y);
+
+					for(uint32 x=0; x<imgw; ++x) {
+						VDColorARGB c = VDColorARGB::FromARGB8((dst[x] & 0xffffff) + (src[x] << 24));
+						allAlpha |= src[x];
+
+						dst[x] = bk.PremulBlend(c).DivideAlpha().ToARGB8();
+					}
+				}
+
+				// Check if the image is fully transparent. If so, we need to hack around the image list's
+				// attempt to detect alpha -- it checks the alpha bytes of all pixels and ignores the alpha
+				// completely if it's all zero. This turns a fully transparent icon into a solid square,
+				// which isn't what we want.
+				if (!allAlpha)
+					*(uint32 *)pxbuf.data |= 0x01000000;
 					
 				ImageList_Add(hImageList, hbm, nullptr);
 
@@ -113,6 +173,94 @@ namespace {
 			DeleteDC(hdc2);
 		}
 	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+VDUIImageListW32::VDUIImageListW32() {
+}
+
+VDUIImageListW32::~VDUIImageListW32() {
+	ReleasePrevImageList();
+
+	if (mhImageList) {
+		ImageList_Destroy(mhImageList);
+		mhImageList = nullptr;
+	}
+}
+
+bool VDUIImageListW32::IsEmpty() const {
+	return mImages.empty();
+}
+
+VDZHIMAGELIST VDUIImageListW32::SetImageSize(int size, uint32 bgColor) {
+	if (mImageSize == size || mBgColor == bgColor)
+		return nullptr;
+
+	mImageSize = size;
+	mBgColor = bgColor;
+
+	if (mImages.empty())
+		return nullptr;
+
+	HIMAGELIST hNewImageList = ImageList_Create(mImageSize, mImageSize, ILC_COLOR32, 0, 8);
+
+	if (!hNewImageList)
+		return nullptr;
+
+	for(const VDPixmapBuffer& pxbuf : mImages)
+		AddImagesToImageList(hNewImageList, pxbuf, mImageSize, mImageSize, mBgColor);
+
+	if (mhImageListPrev)
+		ImageList_Destroy(mhImageListPrev);
+
+	mhImageListPrev = mhImageList;
+	mhImageList = hNewImageList;
+
+	return hNewImageList;
+}
+
+void VDUIImageListW32::ReleasePrevImageList() {
+	if (mhImageListPrev) {
+		ImageList_Destroy(mhImageListPrev);
+		mhImageListPrev = nullptr;
+	}
+}
+
+VDZHIMAGELIST VDUIImageListW32::AddEmptyImage() {
+	uint32 c = 0x00FFFFFF;
+	VDPixmap pxEmpty {};
+	pxEmpty.format = nsVDPixmap::kPixFormat_XRGB8888;
+	pxEmpty.data = &c;
+	pxEmpty.w = 1;
+	pxEmpty.h = 1;
+
+	return AddImages(pxEmpty);
+}
+
+VDZHIMAGELIST VDUIImageListW32::AddImages(const VDPixmap& px) {
+	if (px.h <= 0)
+		return nullptr;
+
+	int numImages = px.w / px.h;
+	if (numImages <= 0)
+		return nullptr;
+
+	HIMAGELIST hNewImageList = nullptr;
+
+	if (!mhImageList && mImageSize) {
+		mhImageList = ImageList_Create(mImageSize, mImageSize, ILC_COLOR32, 0, 8);
+		hNewImageList = mhImageList;
+	}
+
+	for(int i=0; i<numImages; ++i) {
+		const VDPixmap& pxImage = VDPixmapClip(px, px.h * i, 0, px.h, px.h);
+
+		mImages.emplace_back(pxImage);
+		AddImagesToImageList(mhImageList, pxImage, mImageSize, mImageSize, mBgColor);
+	}
+
+	return hNewImageList;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -167,6 +315,10 @@ VDZLRESULT VDUIProxyControl::On_WM_VSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
 
 bool VDUIProxyControl::On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) {
 	return false;
+}
+
+VDZHBRUSH VDUIProxyControl::On_WM_CTLCOLORSTATIC(VDZWPARAM wParam, VDZLPARAM lParam) {
+	return nullptr;
 }
 
 void VDUIProxyControl::OnFontChanged() {
@@ -240,6 +392,13 @@ bool VDUIProxyMessageDispatcherW32::TryDispatch(VDZUINT msg, VDZWPARAM wParam, V
 		}
 
 		return false;
+	}
+
+	if (msg == WM_CTLCOLORSTATIC) {
+		if (HBRUSH hbr = TryDispatch_WM_CTLCOLORSTATIC(wParam, lParam)) {
+			result = (VDZLRESULT)hbr;
+			return true;
+		}
 	}
 
 	if (msg == WM_DESTROY)
@@ -325,6 +484,15 @@ VDZLRESULT VDUIProxyMessageDispatcherW32::Dispatch_WM_NOTIFY(VDZWPARAM wParam, V
 	return 0;
 }
 
+VDZHBRUSH VDUIProxyMessageDispatcherW32::TryDispatch_WM_CTLCOLORSTATIC(VDZWPARAM wParam, VDZLPARAM lParam) {
+	VDUIProxyControl *control = GetControl((HWND)lParam);
+
+	if (control)
+		return control->On_WM_CTLCOLORSTATIC(wParam, lParam);
+
+	return nullptr;
+}
+
 void VDUIProxyMessageDispatcherW32::DispatchFontChanged() {
 	for(HashChain& hc : mHashTable) {
 		for(VDUIProxyControl *control : hc) {
@@ -354,11 +522,23 @@ VDUIProxyControl *VDUIProxyMessageDispatcherW32::GetControl(VDZHWND hwnd) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+struct VDUIProxyListView::Private {
+	static LRESULT CALLBACK StaticListViewSubclass(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR thisPtr) {
+		return ((VDUIProxyListView *)thisPtr)->ListViewSubclassProc(hwnd, msg, wParam, lParam);
+	}
+};
+
 VDUIProxyListView::VDUIProxyListView() {
 }
 
 void VDUIProxyListView::Attach(VDZHWND hwnd) {
 	VDUIProxyControl::Attach(hwnd);
+
+	// make sure the list view is set to share image lists
+	DWORD dwStyle = GetWindowLong(hwnd, GWL_STYLE);
+
+	if (!(dwStyle & LVS_SHAREIMAGELISTS))
+		SetWindowLong(hwnd, GWL_STYLE, dwStyle | LVS_SHAREIMAGELISTS);
 
 	if (ATUIIsDarkThemeActive()) {
 		const auto& tc = ATUIGetThemeColors();
@@ -370,10 +550,28 @@ void VDUIProxyListView::Attach(VDZHWND hwnd) {
 		ListView_SetTextColor(mhwnd, fg);
 
 		ListView_SetExtendedListViewStyleEx(mhwnd, LVS_EX_GRIDLINES, 0);
+
+		if (ATUIIsDarkThemeActive()) {
+			mhwndHeader = ListView_GetHeader(hwnd);
+
+			if (mhwndHeader) {
+				SetWindowSubclass(
+					mhwnd,
+					Private::StaticListViewSubclass,
+					1,
+					(DWORD_PTR)this
+				);
+			}
+		}
 	}
 }
 
 void VDUIProxyListView::Detach() {
+	if (mhwnd) {
+		RemoveWindowSubclass(mhwnd, Private::StaticListViewSubclass, 1);
+		ListView_SetImageList(mhwnd, nullptr, LVSIL_SMALL);
+	}
+
 	Clear();
 
 	if (mBoldFont) {
@@ -428,6 +626,17 @@ void VDUIProxyListView::AutoSizeColumns(bool expandlast) {
 void VDUIProxyListView::Clear() {
 	if (mhwnd)
 		SendMessage(mhwnd, LVM_DELETEALLITEMS, 0, 0);
+}
+
+void VDUIProxyListView::ClearAllColumns() {
+	if (!mhwnd)
+		return;
+
+	uint32 n = GetColumnCount();
+	for(uint32 i=n; i; --i)
+		ListView_DeleteColumn(mhwnd, i - 1);
+
+	mColumnWidthCache.clear();
 }
 
 void VDUIProxyListView::ClearExtraColumns() {
@@ -519,7 +728,8 @@ void VDUIProxyListView::SetActivateOnEnterEnabled(bool enabled) {
 }
 
 void VDUIProxyListView::EnsureItemVisible(int index) {
-	ListView_EnsureVisible(mhwnd, index, FALSE);
+	if (index >= 0)
+		ListView_EnsureVisible(mhwnd, index, FALSE);
 }
 
 int VDUIProxyListView::GetVisibleTopIndex() {
@@ -570,6 +780,17 @@ uint32 VDUIProxyListView::GetItemId(int index) const {
 	return 0;
 }
 
+int VDUIProxyListView::FindVirtualItem(const IVDUIListViewVirtualItem& item) const {
+	if (!mhwnd)
+		return -1;
+
+	LVFINDINFOW find {};
+	find.flags = LVFI_PARAM;
+	find.lParam = (LPARAM)&item;
+
+	return SendMessage(mhwnd, LVM_FINDITEM, -1, (LPARAM)&find);
+}
+
 void VDUIProxyListView::InsertColumn(int index, const wchar_t *label, int width, bool rightAligned) {
 	VDASSERT(index || !rightAligned);
 
@@ -597,6 +818,10 @@ int VDUIProxyListView::InsertItem(int item, const wchar_t *text) {
 	itemw.pszText	= (LPWSTR)text;
 
 	return (int)SendMessageW(mhwnd, LVM_INSERTITEMW, 0, (LPARAM)&itemw);
+}
+
+int VDUIProxyListView::AddVirtualItem(IVDUIListViewVirtualItem& item) {
+	return InsertVirtualItem(-1, &item);
 }
 
 int VDUIProxyListView::InsertVirtualItem(int item, IVDUIListViewVirtualItem *lvvi) {
@@ -701,6 +926,21 @@ void VDUIProxyListView::SetItemCheckedVisible(int item, bool checked) {
 	ListView_SetItemState(mhwnd, item, INDEXTOSTATEIMAGEMASK(0), LVIS_STATEIMAGEMASK);
 }
 
+void VDUIProxyListView::AddImages(const VDPixmap& px) {
+	HIMAGELIST hImageList = nullptr;
+
+	if (mhwnd && mImageList.IsEmpty()) {
+		mImageList.SetImageSize(ComputeImageSize(), ATUIGetThemeColors().mContentBg);
+		hImageList = mImageList.AddEmptyImage();
+		if (hImageList)
+			ListView_SetImageList(mhwnd, hImageList, LVSIL_SMALL);
+	}
+
+	hImageList = mImageList.AddImages(px);
+	if (hImageList)
+		ListView_SetImageList(mhwnd, hImageList, LVSIL_SMALL);
+}
+
 void VDUIProxyListView::SetItemImage(int item, uint32 imageIndex) {
 	LVITEMW itemw = {};
 
@@ -758,6 +998,10 @@ void VDUIProxyListView::SetOnItemDoubleClicked(vdfunction<void(int)> fn) {
 
 void VDUIProxyListView::SetOnItemContextMenu(vdfunction<void(ContextMenuEvent&)> fn) {
 	mpOnItemContextMenu = std::move(fn);
+}
+
+void VDUIProxyListView::SetOnItemLabelChanging(vdfunction<bool(LabelChangingEvent&)> fn) {
+	mpOnItemLabelChanging = std::move(fn);
 }
 
 void VDUIProxyListView::SetOnItemCustomStyle(vdfunction<bool(IVDUIListViewVirtualItem&, sint32&, bool&)> fn) {
@@ -880,24 +1124,27 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			}
 			break;
 
-		case LVN_ENDLABELEDITA:
+		case LVN_BEGINLABELEDITW:
 			{
-				const NMLVDISPINFOA *di = (const NMLVDISPINFOA *)hdr;
-				if (di->item.pszText) {
-					const VDStringW label(VDTextAToW(di->item.pszText));
-					LabelChangedEvent event = {
-						true,
-						di->item.iItem,
-						label.c_str()
-					};
+				const NMLVDISPINFOW *di = (const NMLVDISPINFOW *)hdr;
 
-					mEventItemLabelEdited.Raise(this, &event);
+				if (mpOnItemLabelChanging) {
+					LabelChangingEvent event;
+					event.mIndex = di->item.iItem;
+					event.mbUseReplacementEditText = false;
 
-					if (!event.mbAllowEdit)
-						return FALSE;
+					if (!mpOnItemLabelChanging(event))
+						return TRUE;
+
+					if (event.mbUseReplacementEditText) {
+						HWND hwndEdit = (HWND)SendMessage(mhwnd, LVM_GETEDITCONTROL, 0, 0);
+						
+						if (hwndEdit)
+							SetWindowTextW(hwndEdit, event.mReplacementEditText.c_str());
+					}
 				}
 			}
-			return TRUE;
+			return FALSE;
 
 		case LVN_ENDLABELEDITW:
 			{
@@ -951,28 +1198,6 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			}
 			break;
 
-		case NM_RCLICK:
-			{
-				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
-
-				ContextMenuEvent event;
-				event.mIndex = nmia->iItem;
-
-				POINT pt = nmia->ptAction;
-				ClientToScreen(mhwnd, &pt);
-				event.mX = pt.x;
-				event.mY = pt.y;
-				event.mbHandled = false;
-				mEventItemContextMenu.Raise(this, event);
-
-				if (mpOnItemContextMenu)
-					mpOnItemContextMenu(event);
-
-				if (event.mbHandled)
-					return TRUE;
-			}
-			return FALSE;
-
 		case NM_DBLCLK:
 			{
 				const NMITEMACTIVATE *nmia = (const NMITEMACTIVATE *)hdr;
@@ -993,7 +1218,7 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 			return 0;
 
 		case NM_CUSTOMDRAW:
-			if (mpOnItemCustomStyle) {
+			if (bool doDarkDisabled = !IsWindowEnabled(mhwnd) && ATUIIsDarkThemeActive(); mpOnItemCustomStyle || doDarkDisabled) {
 				NMLVCUSTOMDRAW& nmcd = *(NMLVCUSTOMDRAW *)hdr;
 
 				if (nmcd.nmcd.dwDrawStage == CDDS_PREPAINT) {
@@ -1001,7 +1226,11 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 				} else if (nmcd.nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
 					auto *item = (IVDUIListViewVirtualItem *)nmcd.nmcd.lItemlParam;
 
-					if (item) {
+					// For dark mode, we need to override the background color for items.
+					if (doDarkDisabled)
+						nmcd.clrTextBk = ATUIGetThemeColorsW32().mStaticBgCRef;
+
+					if (item && mpOnItemCustomStyle) {
 						sint32 color = -1;
 						bool bold = false;
 
@@ -1038,6 +1267,60 @@ VDZLRESULT VDUIProxyListView::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
 	return 0;
 }
 
+bool VDUIProxyListView::On_WM_CONTEXTMENU(VDZWPARAM wParam, VDZLPARAM lParam) {
+	ContextMenuEvent event;
+
+	event.mIndex = -1;
+
+	LVHITTESTINFO ht {};
+
+	vdpoint32 spt(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+	if (spt.x == -1 && spt.y == -1) {
+		// keyboard activation
+		bool havePoint = false;
+		event.mIndex = GetSelectedIndex();
+
+		if (event.mIndex >= 0) {
+			ListView_EnsureVisible(mhwnd, event.mIndex, FALSE);
+
+			RECT r {};
+			if (ListView_GetItemRect(mhwnd, event.mIndex, &r, LVIR_BOUNDS)) {
+				// We bias to the left side as that feels a bit better than the center.
+				const vdpoint32& itemPoint = TransformClientToScreen(vdpoint32(r.left + ((r.right - r.left) >> 2), (r.top + r.bottom) >> 1));
+
+				event.mX = itemPoint.x;
+				event.mY = itemPoint.y;
+				havePoint = true;
+			}
+		}
+
+		if (!havePoint) {
+			const vdsize32& sz = GetClientSize();
+			vdpoint32 cpt { sz.w >> 1, sz.h >> 1 };
+
+			const vdpoint32& screenCenter = TransformClientToScreen(cpt);
+			event.mX = screenCenter.x;
+			event.mY = screenCenter.y;
+		}
+	} else {
+		// mouse activation
+		vdpoint32 cpt = TransformScreenToClient(spt);
+		ht.pt.x = cpt.x;
+		ht.pt.y = cpt.y;
+		event.mIndex = ListView_HitTest(mhwnd, &ht);
+		event.mX = spt.x;
+		event.mY = spt.y;
+	}
+
+	event.mbHandled = false;
+	mEventItemContextMenu.Raise(this, event);
+
+	if (mpOnItemContextMenu)
+		mpOnItemContextMenu(event);
+
+	return event.mbHandled;
+}
+
 void VDUIProxyListView::OnFontChanged() {
 	// Windows 10 ver 1703 has a problem with leaving list view items at ridiculous height when
 	// moving a window from higher to lower DPI in per monitor V2 mode. To work around this
@@ -1051,6 +1334,133 @@ void VDUIProxyListView::OnFontChanged() {
 		DeleteObject(mBoldFont);
 		mBoldFont = nullptr;
 	}
+
+	HIMAGELIST hNewImageList = mImageList.SetImageSize(ComputeImageSize(), 0);
+	if (hNewImageList) {
+		ListView_SetImageList(mhwnd, hNewImageList, LVSIL_SMALL);
+		mImageList.ReleasePrevImageList();
+	}
+}
+
+int VDUIProxyListView::ComputeImageSize() {
+	if (HFONT hfont = (HFONT)SendMessage(mhwnd, WM_GETFONT, 0, 0)) {
+		if (HDC hdc = GetDC(mhwnd)) {
+			if (HGDIOBJ hOldFont = SelectObject(hdc, hfont)) {
+				TEXTMETRICW tm = {};
+					
+				if (GetTextMetricsW(hdc, &tm)) {
+					return tm.tmAscent + tm.tmDescent;
+				}
+
+				SelectObject(hdc, hOldFont);
+			}
+
+			ReleaseDC(mhwnd, hdc);
+		}
+	}
+
+	return 16;
+}
+
+VDZLRESULT VDUIProxyListView::ListViewSubclassProc(VDZHWND hwnd, VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) {
+	switch(msg) {
+		case WM_ERASEBKGND:
+			if (ATUIIsDarkThemeActive() && !IsWindowEnabled(hwnd)) {
+				if (RECT r; GetClientRect(hwnd, &r)) {
+					FillRect((HDC)wParam, &r, ATUIGetThemeColorsW32().mStaticBgBrush);
+					return TRUE;
+				}
+			}
+			break;
+
+		case WM_NOTIFY:
+			if (ATUIIsDarkThemeActive() && lParam) {
+				const NMHDR& hdr = *(const NMHDR *)lParam;
+
+				if (hdr.code == NM_CUSTOMDRAW && hdr.hwndFrom == mhwndHeader) {
+					const NMCUSTOMDRAW& nmcd = *(const NMCUSTOMDRAW *)lParam;
+
+					const ATUIThemeColors& colors = ATUIGetThemeColors();
+					const COLORREF bg = VDSwizzleU32(colors.mListViewHeaderBg) >> 8;
+					const COLORREF fg = VDSwizzleU32(colors.mListViewHeaderFg) >> 8;
+
+					if (nmcd.dwDrawStage == CDDS_PREPAINT) {
+						SetDCBrushColor(nmcd.hdc, bg);
+
+						RECT r;
+						if (GetClientRect(hdr.hwndFrom, &r)) {
+							int n = Header_GetItemCount(mhwndHeader);
+
+							if (!n) {
+								FillRect(nmcd.hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+								return CDRF_SKIPDEFAULT;
+							}
+
+							// The header control will by default fill the area after the last column.
+							// Defeat this by filling it with the desired color, and then excluding it
+							// from the clip rect.
+
+							RECT rLast {};
+							Header_GetItemRect(hdr.hwndFrom, n - 1, &rLast);
+
+							if (r.right > rLast.right) {
+								RECT r2 = r;
+								r2.left = rLast.right;
+								FillRect(nmcd.hdc, &r2, (HBRUSH)GetStockObject(DC_BRUSH));
+
+								IntersectClipRect(nmcd.hdc, 0, 0, rLast.right, r.bottom);
+							}
+
+							return CDRF_NOTIFYITEMDRAW;
+						}
+					} else if (nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+						if (nmcd.rc.right <= nmcd.rc.left)
+							return CDRF_DODEFAULT;
+
+						// fill the background and draw the divider line at the end
+						RECT r = nmcd.rc;
+						--r.right;
+						SetDCBrushColor(nmcd.hdc, bg);
+						FillRect(nmcd.hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+
+						r.left = r.right;
+						++r.right;
+						SetDCBrushColor(nmcd.hdc, VDSwizzleU32(colors.mListViewHeaderDivider) >> 8);
+						FillRect(nmcd.hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+
+						// draw text if there is room
+						int margin = ATUIGetDpiScaledSystemMetricForWindowW32(mhwndHeader, SM_CXEDGE) * 3;
+
+						r = nmcd.rc;
+						r.left += margin;
+						r.right -= margin;
+
+						if (r.right > r.left) {
+							WCHAR text[256];
+							text[0] = L'\0';
+
+							HDITEMW hdi {};
+							hdi.mask = HDI_TEXT;
+							hdi.pszText = text;
+							hdi.cchTextMax = 256;
+
+							Header_GetItem(mhwndHeader, nmcd.dwItemSpec, &hdi);
+
+							SetBkColor(nmcd.hdc, bg);
+							SetBkMode(nmcd.hdc, OPAQUE);
+							SetTextColor(nmcd.hdc, fg);
+
+							DrawTextW(nmcd.hdc, text, -1, &r, DT_VCENTER | DT_SINGLELINE | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
+						}
+
+						return CDRF_SKIPDEFAULT;
+					}
+				}
+			}
+			break;
+	}
+
+	return DefSubclassProc(hwnd, msg, wParam, lParam);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1596,6 +2006,27 @@ void VDUIProxyComboBoxControl::AddItem(const wchar_t *s) {
 	SendMessageW(mhwnd, CB_ADDSTRING, 0, (LPARAM)s);
 }
 
+void VDUIProxyComboBoxControl::InsertItem(int index, const wchar_t *s) {
+	if (!mhwnd)
+		return;
+
+	SendMessageW(mhwnd, CB_INSERTSTRING, index, (LPARAM)s);
+}
+
+void VDUIProxyComboBoxControl::DeleteItem(int index) {
+	if (!mhwnd)
+		return;
+
+	SendMessageW(mhwnd, CB_DELETESTRING, index, 0);
+}
+
+int VDUIProxyComboBoxControl::GetItemCount() const {
+	if (!mhwnd)
+		return 0;
+
+	return SendMessageW(mhwnd, CB_GETCOUNT, 0, 0);
+}
+
 int VDUIProxyComboBoxControl::GetSelection() const {
 	if (!mhwnd)
 		return -1;
@@ -1608,8 +2039,132 @@ void VDUIProxyComboBoxControl::SetSelection(int index) {
 		SendMessage(mhwnd, CB_SETCURSEL, index, 0);
 }
 
+void VDUIProxyComboBoxControl::DeselectText() {
+	if (mhwnd)
+		SendMessageW(mhwnd, CB_SETEDITSEL, 0, MAKELONG(-1, 0));
+}
+
 void VDUIProxyComboBoxControl::SetOnSelectionChanged(vdfunction<void(int)> fn) {
 	mpOnSelectionChangedFn = std::move(fn);
+}
+
+void VDUIProxyComboBoxControl::SetOnEndEdit(vdfunction<bool(const wchar_t *)> fn) {
+	mpOnEndEditFn = std::move(fn);
+}
+
+void VDUIProxyComboBoxControl::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	COMBOBOXINFO cbi { sizeof(COMBOBOXINFO) };
+
+	LONG style = GetWindowLong(hwnd, GWL_STYLE);
+
+	if ((style & 3) == CBS_DROPDOWN && GetComboBoxInfo(hwnd, &cbi)) {
+		mhwndEdit = cbi.hwndItem;
+
+		if (mhwndEdit) {
+			SetWindowSubclass(
+				mhwndEdit,
+				[](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData) -> LPARAM {
+					VDUIProxyComboBoxControl *self = (VDUIProxyComboBoxControl *)refData;
+
+					switch(msg) {
+						case WM_KEYDOWN:
+							if (wParam == VK_RETURN) {
+								if (self->mpOnEndEditFn) {
+									self->mpOnEndEditFn(self->GetCaption().c_str());
+
+									// eat return
+									return 0;
+								}
+							}
+							break;
+
+						case WM_CHAR:
+							if (wParam == '\r')
+								return 0;
+
+							break;
+
+						default:
+							break;
+					}
+
+					return DefSubclassProc(hwnd, msg, wParam, lParam);
+				},
+				1,
+				(DWORD_PTR)this
+			);
+		}
+	}
+
+	SetWindowSubclass(
+		hwnd,
+		[](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData) -> LPARAM {
+			if (ATUIIsDarkThemeActive()) {
+				switch(msg) {
+					case WM_ERASEBKGND:
+						return FALSE;
+
+					case WM_PAINT: {
+						PAINTSTRUCT ps;
+						HDC hdc = BeginPaint(hwnd, &ps);
+
+						if (hdc) {
+							int cx = ATUIGetDpiScaledSystemMetricForWindowW32(hwnd, SM_CXEDGE)*2;
+							int cy = ATUIGetDpiScaledSystemMetricForWindowW32(hwnd, SM_CYEDGE)*2;
+
+							if (RECT r; GetClientRect(hwnd, &r)) {
+								const ATUIThemeColorsW32& theme = ATUIGetThemeColorsW32();
+
+								FillRect(hdc, &r, IsWindowEnabled(hwnd) ? theme.mComboBoxBgBrush : theme.mStaticBgBrush);
+
+								RECT rTop { r.left, r.top, r.right, r.top + 1 };
+								RECT rLeft { r.left, r.top + 1, r.left + 1, r.bottom - 1 };
+								RECT rRight { r.right - 1, r.top + 1, r.right, r.bottom - 1 };
+								RECT rBottom { r.left, r.bottom - 1, r.right, r.bottom};
+
+								FillRect(hdc, &rTop, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rLeft, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rRight, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rBottom, theme.mComboBoxBorderBrush);
+
+								IntersectClipRect(hdc, cx, cy, r.right - cx, r.bottom - cy);
+
+								COMBOBOXINFO cbi {};
+								cbi.cbSize = sizeof(COMBOBOXINFO);
+
+								if (GetComboBoxInfo(hwnd, &cbi)) {
+									ExcludeClipRect(hdc, cbi.rcItem.right, 0, cbi.rcButton.left, r.bottom);
+								}
+							}
+
+							DefSubclassProc(hwnd, msg, (WPARAM)hdc, lParam);
+							EndPaint(hwnd, &ps);
+						}
+
+						return 0;
+					}
+
+					case WM_CTLCOLOREDIT:
+						if (ATUIIsDarkThemeActive()) {
+							const auto& tcw32 = ATUIGetThemeColorsW32();
+							HDC hdc = (HDC)wParam;
+
+							SetTextColor(hdc, tcw32.mStaticFgCRef);
+							SetBkColor(hdc, tcw32.mComboBoxBgCRef);
+
+							return (INT_PTR)tcw32.mComboBoxBgBrush;
+						}
+						break;
+				}
+			}
+
+			return DefSubclassProc(hwnd, msg, wParam, lParam);
+		},
+		1,
+		(DWORD_PTR)this
+	);
 }
 
 VDZLRESULT VDUIProxyComboBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -1620,6 +2175,28 @@ VDZLRESULT VDUIProxyComboBoxControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM l
 			mpOnSelectionChangedFn(idx);
 
 		mSelectionChanged.Raise(this, idx);
+	}
+	else if (HIWORD(wParam) == CBN_SELENDOK) {
+		if (mpOnEndEditFn) {
+			int index = GetSelection();
+
+			if (index >= 0) {
+				int len = SendMessage(mhwnd, CB_GETLBTEXTLEN, index, 0);
+
+				if (len >= 0) {
+					VDStringW str;
+					str.resize(len + 1);
+
+					int actualLen = SendMessage(mhwnd, CB_GETLBTEXT, index, (LPARAM)str.data());
+
+					if (actualLen >= 0 && actualLen <= len) {
+						str.resize(actualLen);
+
+						mpOnEndEditFn(str.c_str());
+					}
+				}
+			}
+		}
 	}
 
 	return 0;
@@ -1676,12 +2253,90 @@ void VDUIProxyComboBoxExControl::SetSelection(int index) {
 		SendMessage(mhwnd, CB_SETCURSEL, index, 0);
 }
 
+void VDUIProxyComboBoxExControl::DeselectText() {
+	if (mhwnd)
+		SendMessageW(mhwnd, CB_SETEDITSEL, 0, MAKELONG(-1, 0));
+}
+
 void VDUIProxyComboBoxExControl::SetOnSelectionChanged(vdfunction<void(int)> fn) {
 	mpOnSelectionChangedFn = std::move(fn);
 }
 
 void VDUIProxyComboBoxExControl::SetOnEndEdit(vdfunction<bool(const wchar_t *)> fn) {
 	mpOnEndEditFn = std::move(fn);
+}
+
+void VDUIProxyComboBoxExControl::Attach(VDZHWND hwnd) {
+	VDUIProxyControl::Attach(hwnd);
+
+	if (ATUIIsDarkThemeActive()) {
+		SetWindowSubclass(
+			hwnd,
+			[](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR subclassId, DWORD_PTR refData) -> LPARAM {
+				switch(msg) {
+					case WM_ERASEBKGND:
+						return FALSE;
+
+					case WM_PAINT: {
+						PAINTSTRUCT ps;
+						HDC hdc = BeginPaint(hwnd, &ps);
+
+						if (hdc) {
+							int cx = ATUIGetDpiScaledSystemMetricForWindowW32(hwnd, SM_CXEDGE)*2;
+							int cy = ATUIGetDpiScaledSystemMetricForWindowW32(hwnd, SM_CYEDGE)*2;
+
+							if (RECT r; GetClientRect(hwnd, &r)) {
+								const ATUIThemeColorsW32& theme = ATUIGetThemeColorsW32();
+
+								SetDCBrushColor(hdc, VDSwizzleU32(ATUIGetThemeColors().mComboBoxBg) >> 8);
+								FillRect(hdc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+
+								RECT rTop { r.left, r.top, r.right, r.top + 1 };
+								RECT rLeft { r.left, r.top + 1, r.left + 1, r.bottom - 1 };
+								RECT rRight { r.right - 1, r.top + 1, r.right, r.bottom - 1 };
+								RECT rBottom { r.left, r.bottom - 1, r.right, r.bottom};
+
+								FillRect(hdc, &rTop, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rLeft, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rRight, theme.mComboBoxBorderBrush);
+								FillRect(hdc, &rBottom, theme.mComboBoxBorderBrush);
+
+								IntersectClipRect(hdc, cx, cy, r.right - cx, r.bottom - cy);
+
+								COMBOBOXINFO cbi {};
+								cbi.cbSize = sizeof(COMBOBOXINFO);
+
+								if (GetComboBoxInfo(hwnd, &cbi)) {
+									ExcludeClipRect(hdc, cbi.rcItem.right, 0, cbi.rcButton.left, r.bottom);
+								}
+							}
+
+							DefSubclassProc(hwnd, msg, (WPARAM)hdc, lParam);
+							EndPaint(hwnd, &ps);
+						}
+
+						return 0;
+					}
+
+					case WM_CTLCOLOREDIT:
+						if (ATUIIsDarkThemeActive()) {
+							const auto& tcw32 = ATUIGetThemeColorsW32();
+							HDC hdc = (HDC)wParam;
+
+							SetTextColor(hdc, tcw32.mStaticFgCRef);
+							SetBkColor(hdc, tcw32.mComboBoxBgCRef);
+
+							return (INT_PTR)tcw32.mComboBoxBgBrush;
+						}
+						break;
+				}
+
+				return DefSubclassProc(hwnd, msg, wParam, lParam);
+			},
+			1,
+			(DWORD_PTR)nullptr
+		);
+	}
 }
 
 VDZLRESULT VDUIProxyComboBoxExControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -1785,7 +2440,7 @@ uint32 VDUIProxyTreeViewControl::GetSelectedItemId() const {
 }
 
 IVDUITreeViewVirtualItem *VDUIProxyTreeViewControl::GetVirtualItem(NodeRef ref) const {
-	if (!mhwnd)
+	if (!mhwnd || !ref)
 		return NULL;
 
 	TVITEMW itemw = {0};
@@ -1858,11 +2513,12 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddVirtualItem(NodeR
 	hti = (HTREEITEM)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
 
 	if (hti) {
+		item->AddRef();
+		item->SetTreeNode((NodeRef)hti);
+
 		if (parent != kNodeRoot) {
 			TreeView_Expand(mhwnd, (HTREEITEM)parent, TVE_EXPAND);
 		}
-
-		item->AddRef();
 	}
 
 	return (NodeRef)hti;
@@ -1892,6 +2548,22 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddIndexedItem(NodeR
 	return (NodeRef)hti;
 }
 
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::AddHiddenNode(NodeRef parent, NodeRef insertAfter) {
+	if (!mhwnd)
+		return NULL;
+
+	TVINSERTSTRUCTW isw = { 0 };
+
+	isw.hParent = (HTREEITEM)parent;
+	isw.hInsertAfter = (HTREEITEM)insertAfter;
+	isw.itemex.mask = TVIF_STATEEX;
+	isw.itemex.uStateEx = TVIS_EX_FLAT;
+
+	HTREEITEM hti = (HTREEITEM)SendMessageW(mhwnd, TVM_INSERTITEMW, 0, (LPARAM)&isw);
+
+	return (NodeRef)hti;
+}
+
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetRootNode() const {
 	if (mhwnd)
 		return (NodeRef)TreeView_GetRoot(mhwnd);
@@ -1899,11 +2571,19 @@ VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetRootNode() const 
 		return kNodeNull;
 }
 
-VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetChildNode(NodeRef ref) const {
-	if (mhwnd)
-		return (NodeRef)TreeView_GetChild(mhwnd, (HTREEITEM)ref);
-	else
+VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetChildNode(NodeRef ref, uint32 index) const {
+	if (!mhwnd)
 		return kNodeNull;
+
+	ref = (NodeRef)TreeView_GetChild(mhwnd, (HTREEITEM)ref);
+
+	while(ref && index) {
+		index--;
+
+		ref = (NodeRef)TreeView_GetNextSibling(mhwnd, (HTREEITEM)ref);
+	}
+
+	return ref;
 }
 
 VDUIProxyTreeViewControl::NodeRef VDUIProxyTreeViewControl::GetParentNode(NodeRef ref) const {
@@ -1982,6 +2662,75 @@ void VDUIProxyTreeViewControl::EditNodeLabel(NodeRef node) {
 	::SendMessageW(mhwnd, TVM_EDITLABELW, 0, (LPARAM)(HTREEITEM)node);
 }
 
+void VDUIProxyTreeViewControl::MoveVirtualNodes(NodeRef newParent, NodeRef node) {
+	if (!mhwnd)
+		return;
+
+	struct NodeInfo {
+		vdrefptr<IVDUITreeViewVirtualItem> mpVirtualItem;
+		int parentIndex = -1;
+		TVITEMW itemw {};
+	};
+
+	vdvector<NodeInfo> nodes;
+
+	const auto processNode = [&](NodeRef node2, int parentIndex, const auto& self) -> void {
+		auto& nodeInfo = nodes.emplace_back();
+
+		nodeInfo.parentIndex = parentIndex;
+		nodeInfo.itemw.mask = TVIF_HANDLE | TVIF_IMAGE | TVIF_PARAM | TVIF_SELECTEDIMAGE | TVIF_STATE;
+		nodeInfo.itemw.hItem = (HTREEITEM)node2;
+		nodeInfo.itemw.stateMask = TVIS_OVERLAYMASK | TVIS_STATEIMAGEMASK;
+
+		if (TreeView_GetItem(mhwnd, &nodeInfo.itemw)) {
+			nodeInfo.mpVirtualItem = (IVDUITreeViewVirtualItem *)nodeInfo.itemw.lParam;
+
+			parentIndex = (int)nodes.size() - 1;
+
+			HTREEITEM child = TreeView_GetChild(mhwnd, (HTREEITEM)node2);
+			while(child) {
+				self((NodeRef)child, parentIndex, self);
+
+				child = TreeView_GetNextSibling(mhwnd, child);
+			}
+		} else {
+			nodes.pop_back();
+		}
+	};
+
+	// gather all nodes
+	processNode(node, -1, processNode);
+
+	// destroy nodes child first
+	for(const NodeInfo& nodeInfo : std::ranges::views::reverse(nodes)) {
+		TreeView_DeleteItem(mhwnd, nodeInfo.itemw.hItem);
+	}
+
+	// reconstruct node tree at new parent
+	for(NodeInfo& nodeInfo : nodes) {
+		TVINSERTSTRUCTW isw {};
+
+		if (nodeInfo.parentIndex < 0) {
+			isw.hParent = (HTREEITEM)newParent;
+		} else {
+			isw.hParent = nodes[nodeInfo.parentIndex].itemw.hItem;
+			if (!isw.hParent)
+				continue;
+		}
+
+		isw.hInsertAfter = TVI_LAST;
+		isw.item = nodeInfo.itemw;
+		isw.item.mask = TVIF_IMAGE | TVIF_PARAM | TVIF_SELECTEDIMAGE | TVIF_STATE | TVIF_TEXT;
+		isw.item.pszText = LPSTR_TEXTCALLBACKW;
+
+		nodeInfo.itemw.hItem = TreeView_InsertItem(mhwnd, &isw);
+		if (nodeInfo.itemw.hItem && nodeInfo.mpVirtualItem) {
+			nodeInfo.mpVirtualItem->SetTreeNode((NodeRef)(nodeInfo.itemw.hItem));
+			nodeInfo.mpVirtualItem.release();
+		}
+	}
+}
+
 namespace {
 	int CALLBACK TreeNodeCompareFn(LPARAM node1, LPARAM node2, LPARAM comparer) {
 		if (!node1)
@@ -2000,12 +2749,12 @@ bool VDUIProxyTreeViewControl::HasChildren(NodeRef parent) const {
 	return mhwnd && TreeView_GetChild(mhwnd, parent) != NULL;
 }
 
-void VDUIProxyTreeViewControl::EnumChildren(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback) {
+void VDUIProxyTreeViewControl::EnumChildren(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback) const {
 	if (!mhwnd)
 		return;
 
 	TVITEMW itemw = {0};
-	itemw.mask = LVIF_PARAM;
+	itemw.mask = TVIF_PARAM;
 
 	HTREEITEM hti = TreeView_GetChild(mhwnd, parent);
 	while(hti) {
@@ -2017,7 +2766,7 @@ void VDUIProxyTreeViewControl::EnumChildren(NodeRef parent, const vdfunction<voi
 	}
 }
 
-void VDUIProxyTreeViewControl::EnumChildrenRecursive(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback) {
+void VDUIProxyTreeViewControl::EnumChildrenRecursive(NodeRef parent, const vdfunction<void(IVDUITreeViewVirtualItem *)>& callback) const {
 	if (!mhwnd)
 		return;
 
@@ -2028,7 +2777,7 @@ void VDUIProxyTreeViewControl::EnumChildrenRecursive(NodeRef parent, const vdfun
 	vdfastvector<HTREEITEM> traversalStack;
 
 	TVITEMW itemw = {0};
-	itemw.mask = LVIF_PARAM;
+	itemw.mask = TVIF_PARAM;
 	for(;;) {
 		while(current) {
 			itemw.hItem = current;
@@ -2109,7 +2858,7 @@ void VDUIProxyTreeViewControl::InitImageList(uint32 n, uint32 width, uint32 heig
 }
 
 void VDUIProxyTreeViewControl::AddImage(const VDPixmap& px) {
-	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight);
+	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight, 0);
 }
 
 void VDUIProxyTreeViewControl::AddImages(uint32 n, const VDPixmap& px) {
@@ -2200,8 +2949,14 @@ void VDUIProxyTreeViewControl::Detach() {
 		mImageList = nullptr;
 	}
 
-	if (!mbIndexedMode)
-		EnumChildrenRecursive(kNodeRoot, [](IVDUITreeViewVirtualItem *vi) { vi->Release(); });
+	if (!mbIndexedMode) {
+		EnumChildrenRecursive(kNodeRoot,
+			[](IVDUITreeViewVirtualItem *vi) {
+				vi->SetTreeNode({});
+				vi->Release();
+			}
+		);
+	}
 }
 
 VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -2256,8 +3011,10 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 				const NMTREEVIEWA *nmtv = (const NMTREEVIEWA *)hdr;
 				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)nmtv->itemOld.lParam;
 
-				if (lvvi)
+				if (lvvi) {
+					lvvi->SetTreeNode({});
 					lvvi->Release();
+				}
 			}
 			break;
 
@@ -2266,8 +3023,10 @@ VDZLRESULT VDUIProxyTreeViewControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lP
 				const NMTREEVIEWW *nmtv = (const NMTREEVIEWW *)hdr;
 				IVDUITreeViewVirtualItem *lvvi = (IVDUITreeViewVirtualItem *)nmtv->itemOld.lParam;
 
-				if (lvvi)
+				if (lvvi) {
+					lvvi->SetTreeNode({});
 					lvvi->Release();
+				}
 			}
 			break;
 
@@ -2612,6 +3371,163 @@ bool VDUIProxyTreeViewControl::IsValidNodeRef(NodeRef node) const {
 
 /////////////////////////////////////////////////////////////////////////////
 
+class VDUIProxyEditControl::AutoCompleteStringBuffer : public vdrefcount {
+public:
+	vdfastvector<wchar_t> mStrings;
+	vdfastvector<wchar_t> mFilteredStrings;
+	size_t mOffsetLimit = 0;
+
+	void AddString(const wchar_t *s);
+	void Finalize();
+};
+
+void VDUIProxyEditControl::AutoCompleteStringBuffer::AddString(const wchar_t *s) {
+	size_t n = wcslen(s);
+
+	mStrings.insert(mStrings.end(), s, s + n + 1);
+}
+
+void VDUIProxyEditControl::AutoCompleteStringBuffer::Finalize() {
+	mFilteredStrings = mStrings;
+	mOffsetLimit = mFilteredStrings.size();
+}
+
+class VDUIProxyEditControl::AutoCompleteStringSource : public ATCOMQIW32<ATCOMBaseW32<IEnumString>, IEnumString, IUnknown> {
+public:
+	AutoCompleteStringSource(AutoCompleteStringBuffer& buffer);
+
+	HRESULT STDMETHODCALLTYPE Next(ULONG count, LPOLESTR *strOut, ULONG *actual) override;
+	HRESULT STDMETHODCALLTYPE Skip(ULONG count) override;
+	HRESULT STDMETHODCALLTYPE Reset() override;
+	HRESULT STDMETHODCALLTYPE Clone(IEnumString **obj) override;
+
+	void Refilter(const wchar_t *substr);
+
+private:
+	vdrefptr<AutoCompleteStringBuffer> mpBuffer;
+	size_t mOffset = 0;
+};
+
+VDUIProxyEditControl::AutoCompleteStringSource::AutoCompleteStringSource(AutoCompleteStringBuffer& buffer)
+	: mpBuffer(&buffer)
+{
+}
+
+HRESULT STDMETHODCALLTYPE VDUIProxyEditControl::AutoCompleteStringSource::Next(ULONG count, LPOLESTR *strOut, ULONG *actual) {
+	if (actual)
+		*actual = 0;
+
+	if (count == 0)
+		return S_OK;
+
+	if (!strOut)
+		return E_POINTER;
+
+	*actual = 0;
+	std::fill(strOut, strOut + count, nullptr);
+
+	vdspan buf(mpBuffer->mFilteredStrings);
+	const size_t bufSize = mpBuffer->mOffsetLimit;
+
+	ULONG i = 0;
+	size_t offset = mOffset;
+
+	while(i < count && offset < bufSize) {
+		const size_t startOffset = offset;
+
+		while(buf[offset++])
+			;
+
+		const size_t endOffset = offset;
+		const size_t len = endOffset - startOffset;
+
+		OLECHAR *str = (OLECHAR *)CoTaskMemAlloc(sizeof(OLECHAR) * len);
+		if (!str) {
+			while(i) {
+				CoTaskMemFree(strOut[--i]);
+
+				strOut[i] = nullptr;
+			}
+
+			return E_OUTOFMEMORY;
+		}
+
+		for(size_t j = 0; j < len; ++j)
+			str[j] = (OLECHAR)buf[startOffset + j];
+
+		strOut[i++] = str;
+	}
+
+	mOffset = offset;
+
+	if (actual)
+		*actual = i;
+
+	return i < count ? S_FALSE : S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDUIProxyEditControl::AutoCompleteStringSource::Skip(ULONG count) {
+	vdspan buf(mpBuffer->mFilteredStrings);
+	const size_t n = buf.size();
+
+	while(count--) {
+		if (mOffset >= n)
+			return S_FALSE;
+
+		while(buf[mOffset++])
+			;
+	}
+
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDUIProxyEditControl::AutoCompleteStringSource::Reset() {
+	mOffset = 0;
+
+	return S_OK;
+}
+
+HRESULT STDMETHODCALLTYPE VDUIProxyEditControl::AutoCompleteStringSource::Clone(IEnumString **obj) {
+	if (!obj)
+		return E_POINTER;
+
+	AutoCompleteStringSource *clone = new(std::nothrow) AutoCompleteStringSource(*this);
+	if (!clone)
+		return E_OUTOFMEMORY;
+
+	clone->AddRef();
+	*obj = clone;
+	return S_OK;
+}
+
+void VDUIProxyEditControl::AutoCompleteStringSource::Refilter(const wchar_t *substr) {
+	if (!substr || !*substr) {
+		mpBuffer->mFilteredStrings = mpBuffer->mStrings;
+		mpBuffer->mOffsetLimit = mpBuffer->mFilteredStrings.size();
+		return;
+	}
+
+	size_t offset = 0;
+	size_t offsetLimit = mpBuffer->mStrings.size();
+	mpBuffer->mFilteredStrings.resize(offsetLimit);
+	wchar_t *dst0 = mpBuffer->mFilteredStrings.data();
+	wchar_t *dst = dst0;
+
+	while(offset < offsetLimit) {
+		const wchar_t *s = &mpBuffer->mStrings[offset];
+		size_t len = wcslen(s);
+
+		if (VDTextContainsSubstringMatchByLocale(VDStringSpanW(s), VDStringSpanW(substr))) {
+			memcpy(dst, s, (len + 1) * sizeof(dst[0]));
+			dst += (len + 1);
+		}
+
+		offset += len + 1;
+	}
+
+	mpBuffer->mOffsetLimit = (size_t)(dst - dst0);
+}
+
 VDUIProxyEditControl::VDUIProxyEditControl() {
 }
 
@@ -2622,6 +3538,16 @@ VDZLRESULT VDUIProxyEditControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lPara
 	if (HIWORD(wParam) == EN_CHANGE) {
 		if (mpOnTextChanged)
 			mpOnTextChanged(this);
+
+		if (mpAutoCompleteSource) {
+			mpAutoCompleteSource->Refilter(GetText().c_str());
+
+			if (mpAutoComplete) {
+				vdrefptr<IAutoCompleteDropDown> dropDown;
+				if (SUCCEEDED(mpAutoComplete->QueryInterface<IAutoCompleteDropDown>(~dropDown)))
+					dropDown->ResetEnumerator();
+			}
+		}
 	}
 
 	return 0;
@@ -2642,6 +3568,35 @@ void VDUIProxyEditControl::SetText(const wchar_t *s) {
 void VDUIProxyEditControl::SetReadOnly(bool ro) {
 	if (mhwnd)
 		::SendMessage(mhwnd, EM_SETREADONLY, ro ? TRUE : FALSE, FALSE);
+}
+
+void VDUIProxyEditControl::SetAutoCompleteList(vdspan<const wchar_t * const> completeList) {
+	if (!mhwnd)
+		return;
+
+	mpAutoComplete = nullptr;
+
+	vdrefptr<IAutoComplete2> ac;
+	HRESULT hr = ::CoCreateInstance(CLSID_AutoComplete, nullptr, CLSCTX_INPROC_SERVER, __uuidof(IAutoComplete2), (void **)~ac);
+	if (SUCCEEDED(hr)) {
+		vdrefptr buffer(new AutoCompleteStringBuffer);
+
+		for(const wchar_t *s : completeList) {
+			buffer->AddString(s);
+		}
+		
+		buffer->Finalize();
+
+		vdrefptr source(new AutoCompleteStringSource(*buffer));
+
+		if (SUCCEEDED(ac->Init(mhwnd, static_cast<IEnumString *>(&*source), nullptr, nullptr))) {
+			ac->SetOptions(ACO_AUTOSUGGEST | ACO_UPDOWNKEYDROPSLIST | ACO_NOPREFIXFILTERING);
+		}
+
+		mpAutoCompleteSource = std::move(source);
+	}
+
+	mpAutoComplete = std::move(ac);
 }
 
 void VDUIProxyEditControl::SelectAll() {
@@ -2970,8 +3925,28 @@ VDZLRESULT VDUIProxyButtonControl::On_WM_COMMAND(VDZWPARAM wParam, VDZLPARAM lPa
 	return 0;
 }
 
+VDZLRESULT VDUIProxyButtonControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lParam) {
+	const NMHDR& hdr = *(const NMHDR *)lParam;
+
+	if (hdr.code == BCN_DROPDOWN) {
+		if (mpOnDropDown)
+			mpOnDropDown();
+	}
+
+	return 0;
+}
+
 void VDUIProxyButtonControl::SetOnClicked(vdfunction<void()> fn) {
 	mpOnClicked = std::move(fn);
+}
+
+void VDUIProxyButtonControl::SetOnDropDown(vdfunction<void()> fn) {
+	mpOnDropDown = std::move(fn);
+}
+
+void VDUIProxyButtonControl::ShowElevationNeeded() {
+	if (mhwnd)
+		SendMessage(mhwnd, BCM_SETSHIELD, 0, TRUE);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -3095,7 +4070,7 @@ void VDUIProxyToolbarControl::InitImageList(uint32 n, uint32 width, uint32 heigh
 }
 
 void VDUIProxyToolbarControl::AddImage(const VDPixmap& px) {
-	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight);
+	AddImagesToImageList(mImageList, px, mImageWidth, mImageHeight, 0);
 }
 
 void VDUIProxyToolbarControl::AddImages(uint32 n, const VDPixmap& px) {
@@ -3207,6 +4182,11 @@ VDZLRESULT VDUIProxyToolbarControl::On_WM_NOTIFY(VDZWPARAM wParam, VDZLPARAM lPa
 		switch(tbcd.nmcd.dwDrawStage) {
 			case CDDS_PREPAINT:
 				return CDRF_NOTIFYITEMDRAW;
+
+			case CDDS_PREERASE:
+				if (RECT r; GetClientRect(mhwnd, &r))
+					FillRect(tbcd.nmcd.hdc, &r, ATUIGetThemeColorsW32().mStaticBgBrush);
+				return CDRF_SKIPDEFAULT;
 
 			case CDDS_ITEMPREPAINT:
 				tbcd.clrText = ATUIGetThemeColorsW32().mStaticFgCRef;
@@ -3321,46 +4301,57 @@ sint32 VDUIProxyScrollBarControl::GetValue() const {
 }
 
 void VDUIProxyScrollBarControl::SetValue(sint32 v) {
-	if (!mhwnd)
-		return;
-
-	SCROLLINFO si { sizeof(SCROLLINFO) };
-	si.fMask = SIF_POS;
-	si.nPos = v;
-	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+	SetParams(v, std::nullopt, std::nullopt);
 }
 
 void VDUIProxyScrollBarControl::SetRange(sint32 minVal, sint32 maxVal) {
-	if (!mhwnd)
-		return;
-
-	SCROLLINFO si { sizeof(SCROLLINFO) };
-	si.fMask = SIF_ALL;
-	if (!GetScrollInfo(mhwnd, SB_CTL, &si))
-		return;
-
-	if (maxVal < minVal)
-		maxVal = minVal;
-
-	si.nMin = minVal;
-	si.nMax = maxVal;
-	si.nPos = std::clamp<sint32>(si.nPos, minVal, maxVal);
-
-	si.fMask = SIF_DISABLENOSCROLL | SIF_RANGE | SIF_POS;
-	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+	SetParams(std::nullopt, std::make_pair(minVal, maxVal), std::nullopt);
 }
 
 void VDUIProxyScrollBarControl::SetPageSize(sint32 pageSize) {
+	SetParams(std::nullopt, std::nullopt, pageSize);
+}
+
+void VDUIProxyScrollBarControl::SetParams(
+	std::optional<sint32> value,
+	std::optional<std::pair<sint32, sint32>> range,
+	std::optional<sint32> pageSize
+)
+{
 	if (!mhwnd)
 		return;
 
 	SCROLLINFO si { sizeof(SCROLLINFO) };
-	si.fMask = SIF_PAGE | SIF_DISABLENOSCROLL;
 
-	si.nPage = std::max<sint32>(1, pageSize);
+	if (value.has_value()) {
+		si.fMask = SIF_POS;
+		si.nPos = value.value();
+	}
 
-	si.fMask = SIF_DISABLENOSCROLL | SIF_PAGE;
-	SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
+	if (range.has_value()) {
+		auto [rangeMin, rangeMax] = range.value();
+
+		if (rangeMax < rangeMin)
+			rangeMax = rangeMin;
+
+		si.nMin = rangeMin;
+		si.nMax = rangeMax;
+
+		// read back the position if needed, then clamp it
+		if (!(si.fMask & SIF_POS))
+			si.nPos = GetValue();
+
+		si.nPos = std::clamp(si.nPos, si.nMin, si.nMax);
+		si.fMask |= SIF_DISABLENOSCROLL | SIF_RANGE | SIF_POS;
+	}
+
+	if (pageSize.has_value()) {
+		si.nPage = std::max<sint32>(1, pageSize.value());
+		si.fMask |= SIF_DISABLENOSCROLL | SIF_PAGE;
+	}
+
+	if (si.fMask | (SIF_PAGE | SIF_RANGE | SIF_POS))
+		SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
 }
 
 VDZLRESULT VDUIProxyScrollBarControl::On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM lParam) {
@@ -3424,7 +4415,7 @@ VDZLRESULT VDUIProxyScrollBarControl::On_WM_HSCROLL(VDZWPARAM wParam, VDZLPARAM 
 		SetScrollInfo(mhwnd, SB_CTL, &si, TRUE);
 
 		if (mpFnOnValueChanged)
-			mpFnOnValueChanged(si.nPos, LOWORD(lParam) == SB_THUMBTRACK);
+			mpFnOnValueChanged(si.nPos, LOWORD(wParam) == SB_THUMBTRACK);
 	}
 
 	return 0;
@@ -3445,4 +4436,33 @@ VDUIProxyStatusBarControl::~VDUIProxyStatusBarControl() {
 void VDUIProxyStatusBarControl::AutoLayout() {
 	if (mhwnd)
 		SendMessage(mhwnd, WM_SIZE, 0, 0);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+VDUIProxyStaticControl::VDUIProxyStaticControl() {
+}
+
+VDUIProxyStaticControl::~VDUIProxyStaticControl() {
+}
+
+void VDUIProxyStaticControl::SetBgOverrideColor(uint32 rgb) {
+	sint32 v = rgb & 0xFFFFFF;
+
+	if (mBgColor != v) {
+		mBgColor = v;
+
+		Invalidate();
+	}
+}
+
+VDZHBRUSH VDUIProxyStaticControl::On_WM_CTLCOLORSTATIC(VDZWPARAM wParam, VDZLPARAM lParam) {
+	if (mBgColor < 0)
+		return nullptr;
+
+	HDC hdc = (HDC)wParam;
+
+	SetDCBrushColor(hdc, VDSwizzleU32(mBgColor) >> 8);
+
+	return (HBRUSH)GetStockObject(DC_BRUSH);
 }

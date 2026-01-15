@@ -359,13 +359,23 @@ void ATDeviceSuperSALT::StartADC() {
 	uint8 bus = ComputeDirBus();
 
 	static constexpr float kBaseVoltages[16] {
-		5.0f, 5.0f, 5.0f, 5.0f, 5.0f, 5.0f,
-		0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-		5.0f,
+		5.0f,		//  0: test assembly +5V
+		5.0f,		//  1: SIO +5V
+		5.0f,		//  2: port 1 +5V
+		5.0f,		//  3: port 2 +5V
+		5.0f,		//  4: port 3 +5V
+		5.0f,		//  5: port 4 +5V
+		0.0f,		//  6: SIO ground
+		0.0f,		//  7: port 1 ground
+		0.0f,		//  8: port 2 ground
+		0.0f,		//  9: port 3 ground
+		0.0f,		// 10: port 4 ground
+		5.0f,		// 11: SIO motor control
 		12.0f * (10.0f / 24.0f),
-		2.5f,
-		2.5f,
-		0.0f
+					// 12: SIO +12V, rescaled to 5V for ADC
+		2.5f,		// 13: computer positive AC current-as-voltage
+		2.5f,		// 14: computer negative AC current-as-voltage
+		0.0f		// 15: test assembly ground
 	};
 
 	const auto voltageToCode = [](float v) -> uint8 {
@@ -380,9 +390,49 @@ void ATDeviceSuperSALT::StartADC() {
 	const int idx = bus & 15;
 	uint8 adcVal = kBaseValues[idx];
 
-	// SIO motor needs to be special-cased
-	if (idx == 11) {
-		adcVal = voltageToCode(mpSIOMgr->IsSIOMotorAsserted() ? 5.0f : 0.0f);
+	// Only 400/800 have ports 3/4. For other devices, ports 3/4 will be
+	// unconnected on the test assembly, so the +5V inputs will be pulled
+	// down to ground and the ground inputs pulled up to +5V.
+	IATDeviceSystemInfo& devsysinfo = *GetService<IATDeviceSystemInfo>();
+	const auto& sysinfo = devsysinfo.GetSystemInfo();
+
+	static constexpr auto kValue0V = voltageToCode(0.0f);
+	static constexpr auto kValue5V = voltageToCode(5.0f);
+
+	// There is a slight amount of leakage in the test assembly for the motor
+	// control and 9VAC current measurements. These values are from an actual
+	// test assembly connected to a 65XE.
+	// https://forums.atariage.com/topic/358862-altirra-420-released/page/25/#findComment-5647505
+	static constexpr auto kValueMotorLow = voltageToCode(0.18f);
+	static constexpr auto kValueUnconnectedAC = voltageToCode(0.72f);
+
+	switch(idx) {
+		case 4:		// port 3 +5V
+		case 5:		// port 4 +5V
+			if (!sysinfo.mbHasPort34)
+				adcVal = kValue0V;
+			break;
+
+		case 9:		// port 3 ground
+		case 10:	// port 4 ground
+			if (!sysinfo.mbHasPort34)
+				adcVal = kValue5V;
+			break;
+
+		case 11:	// SIO motor
+			adcVal = mpSIOMgr->IsSIOMotorAsserted() ? kValue5V : kValueMotorLow;
+			break;
+
+		case 12:	// SIO +12V
+			if (!sysinfo.mbHasSIO12V)
+				adcVal = kValue0V;
+			break;
+
+		case 13:	// computer +AC
+		case 14:	// computer -AC
+			if (!sysinfo.mbHas9VACPower)
+				adcVal = kValueUnconnectedAC;
+			break;
 	}
 	
 	g_ATLCSuperSALT("ADC started: %d -> %02X\n", idx, adcVal);

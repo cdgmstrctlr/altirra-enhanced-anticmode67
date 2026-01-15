@@ -71,11 +71,13 @@ private:
 
 	alignas(16) uint8 mBitCountTab[256];
 	alignas(16) uint8 mShuffleTab[256][8];
+	alignas(16) uint8 mPackLeftTab[256][8];
 #elif defined(VD_CPU_ARM64)
 	void Decode_NEON(const ATSaveStateMemoryBuffer& src, uint8 *dst, uint32 rowSize, size_t rowCount) const;
 
 	alignas(16) uint8 mBitCountTab[256];
 	alignas(16) uint8 mShuffleTab[256][8];
+	alignas(16) uint8 mPackLeftTab[256][8];
 #endif
 };
 

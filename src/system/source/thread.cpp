@@ -154,6 +154,11 @@ void VDThread::ThreadWait() {
 	}
 }
 
+void VDThread::ThreadCancelSynchronousIo() {
+	if (isThreadAttached())
+		CancelSynchronousIo(mhThread);
+}
+
 bool VDThread::isThreadActive() {
 	if (isThreadAttached()) {
 		if (WAIT_TIMEOUT == WaitForSingleObject((HANDLE)mhThread, 0))
@@ -299,4 +304,41 @@ void VDSemaphore::Reset(int count) {
 
 	if (count)
 		ReleaseSemaphore(mKernelSema, count, NULL);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void VDRWLock::LockExclusive() noexcept {
+	static_assert(sizeof(mpSRWLock) == sizeof(SRWLOCK));
+	static_assert(alignof(decltype(mpSRWLock)) == alignof(SRWLOCK));
+
+	AcquireSRWLockExclusive((SRWLOCK *)&mpSRWLock);
+}
+
+void VDRWLock::UnlockExclusive() noexcept {
+	ReleaseSRWLockExclusive((SRWLOCK *)&mpSRWLock);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void VDConditionVariable::Wait(VDRWLock& rwLock) noexcept {
+	static_assert(sizeof(mpCondVar) == sizeof(CONDITION_VARIABLE));
+	static_assert(alignof(decltype(mpCondVar)) == sizeof(CONDITION_VARIABLE));
+
+	if (!SleepConditionVariableSRW(
+		(CONDITION_VARIABLE *)&mpCondVar,
+		(SRWLOCK *)&rwLock.mpSRWLock,
+		INFINITE,
+		0))
+	{
+		VDRaiseInternalFailure();
+	}
+}
+
+void VDConditionVariable::NotifyOne() noexcept {
+	WakeConditionVariable((CONDITION_VARIABLE *)&mpCondVar);
+}
+
+void VDConditionVariable::NotifyAll() noexcept {
+	WakeAllConditionVariable((CONDITION_VARIABLE *)&mpCondVar);
 }

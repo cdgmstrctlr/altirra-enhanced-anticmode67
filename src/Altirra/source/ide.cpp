@@ -529,8 +529,8 @@ void ATIDEEmulator::TimerCallback() {
 	if (mpDisk) {
 		try {
 			mpDisk->Flush();
-		} catch(const MyError& e) {
-			g_ATLCIDEError("IDE: I/O ERROR ON DELAYED FLUSH: %s\n", e.gets());
+		} catch(const VDException& e) {
+			g_ATLCIDEError("IDE: I/O ERROR ON DELAYED FLUSH: %ls\n", e.wc_str());
 		}
 	}
 }
@@ -634,8 +634,8 @@ void ATIDEEmulator::UpdateStatus() {
 						} else {
 							try {
 								mpDisk->ReadSectors(mTransferBuffer.data(), lba, nsecs);
-							} catch(const MyError& e) {
-								g_ATLCIDEError("IDE: I/O ERROR: %s\n", e.gets());
+							} catch(const VDException& e) {
+								g_ATLCIDEError("IDE: I/O ERROR: %ls\n", e.wc_str());
 								AbortCommand(kATIDEError_UNC);
 								return;
 							}
@@ -717,8 +717,8 @@ void ATIDEEmulator::UpdateStatus() {
 
 					try {
 						mpDisk->WriteSectors(mTransferBuffer.data(), mTransferLBA, mTransferSectorCount);
-					} catch(const MyError& e) {
-						g_ATLCIDEError("IDE: I/O ERROR: %s\n", e.gets());
+					} catch(const VDException& e) {
+						g_ATLCIDEError("IDE: I/O ERROR: %ls\n", e.wc_str());
 						AbortCommand(kATIDEError_UNC);
 						return;
 					}

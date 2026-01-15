@@ -154,11 +154,8 @@ void ATTapePieceTable::Clear() {
 
 bool ATTapePieceTable::WriteBlankData(ATCassetteWriteCursor& cursor, uint32 len0, bool insert) {
 	// check if write would go beyond end and clamp
-	bool truncated = false;
-
 	if (cursor.mPosition > kATCassetteDataLimit) {
 		cursor.mPosition = kATCassetteDataLimit;
-		truncated = true;
 	}
 
 	uint32 len = std::min<uint32>(len0, insert ? kATCassetteDataLimit - mLength : kATCassetteDataLimit - cursor.mPosition);
@@ -540,8 +537,8 @@ void ATTapePieceTable::Validate() const {
 	VDASSERT(!mSpans.back().mpImageBlock);
 	VDASSERT(mLength == mSpans.back().mStart);
 
-	uint32 pos = 0;
-	uint8 lastType = 255;
+	[[maybe_unused]] uint32 pos = 0;
+	[[maybe_unused]] uint8 lastType = 255;
 
 	for(const ATTapeImageSpan& block : mSpans) {
 		VDASSERT(block.mStart >= pos);

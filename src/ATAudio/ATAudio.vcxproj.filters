@@ -44,6 +44,18 @@
     <ClCompile Include="source\audiooutwaveout.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\audioconvolutionplayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiosampleplayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiosamplepool.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiosamplebuffer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\stdafx.h">
@@ -69,6 +81,18 @@
     </ClInclude>
     <ClInclude Include="..\h\at\ataudio\audioout.h">
       <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\ataudio\audioconvolutionplayer.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\ataudio\audiosampleplayer.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\h\at\ataudio\audiosamplepool.h">
+      <Filter>Interface Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\at\ataudio\audiosamplebuffer.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

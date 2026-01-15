@@ -29,6 +29,12 @@
 #include <math.h>
 #include <vd2/system/vdtypes.h>
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+#include <intrin.h>
+#elif defined(VD_CPU_ARM64)
+#include <arm_neon.h>
+#endif
+
 // Constants
 namespace nsVDMath {
 	static constexpr float	kfPi = 3.1415926535897932384626433832795f;
@@ -41,6 +47,8 @@ namespace nsVDMath {
 	static constexpr double	krLn10 = 2.3025850929940456840179914546844;
 	static constexpr float	kfOneOverLn10 = 0.43429448190325182765112891891661f;
 	static constexpr double	krOneOverLn10 = 0.43429448190325182765112891891661;
+	static constexpr double	kfSqrt2 = 1.4142135623730950488016887242097f;
+	static constexpr double	krSqrt2 = 1.4142135623730950488016887242097;
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -111,21 +119,31 @@ sint64 VDRoundToInt64(float x);
 sint64 VDRoundToInt64(double x);
 
 inline sint32 VDRoundToIntFast(float x) {
-	union {
-		float f;
-		sint32 i;
-	} u = {x + 12582912.0f};		// 2^22+2^23
-
-	return (sint32)u.i - 0x4B400000;
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	return (int)_mm_cvtss_si32(_mm_set_ss(x));
+#elif defined(VD_CPU_ARM64)
+	return (int)vcvtns_s32_f32(x);
+#else
+	return (int)std::lrintf(x);
+#endif
 }
 
 inline sint32 VDRoundToIntFastFullRange(double x) {
-	union {
-		double f;
-		sint32 i[2];
-	} u = {x + 6755399441055744.0f};		// 2^51+2^52
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	return (int)_mm_cvtsd_si32(_mm_set_sd(x));
+#elif defined(VD_CPU_ARM64)
+	return (int)vcvtnd_s64_f64(x);
+#else
+	return (int)std::lrint(x);
+#endif
+}
 
-	return (sint32)u.i[0];
+inline float VDRoundFast(float x) {
+#if defined(VD_CPU_ARM64)
+	return vrndns_f32(x);
+#else
+	return x >= -0x1p24f && x <= 0x1p24f ? (float)VDRoundToIntFast(x) : x;
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -184,27 +202,17 @@ inline constexpr sint64 VDCeilToInt64(double x) {
 ///////////////////////////////////////////////////////////////////////////
 /// Convert a value from [-~1..1] to [-32768, 32767] with clamping.
 inline sint16 VDClampedRoundFixedToInt16Fast(float x) {
-	union {
-		float f;
-		sint32 i;
-	} u = {x * 32767.0f + 12582912.0f};		// 2^22+2^23
+	sint32 v = VDRoundToIntFast(x * 32767.0f);
 
-	sint32 v = (sint32)u.i - 0x4B3F8000;
+	if (v != (sint16)v)
+		v = (~v >> 31) ^ 0x8000;
 
-	if ((uint32)v >= 0x10000)
-		v = ~v >> 31;
-
-	return (sint16)(v - 0x8000);
+	return (sint16)v;
 }
 
 /// Convert a value from [0..1] to [0..255] with clamping.
 inline uint8 VDClampedRoundFixedToUint8Fast(float x) {
-	union {
-		float f;
-		sint32 i;
-	} u = {x * 255.0f + 12582912.0f};		// 2^22+2^23
-
-	sint32 v = (sint32)u.i - 0x4B400000;
+	sint32 v = (sint32)(x * 255.0f + 0.5f);
 
 	if ((uint32)v >= 0x100)
 		v = ~v >> 31;

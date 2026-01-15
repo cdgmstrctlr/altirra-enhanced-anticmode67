@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/vdstl_algorithm.h>
 #include <at/atcore/cio.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/snapshotimpl.h>
@@ -56,6 +57,176 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATSIOManager::StepType)
 	{ ATSIOManager::kStepType_EndCommand,					"end" },
 AT_DEFINE_ENUM_TABLE_END(ATSIOManager::StepType, ATSIOManager::kStepType_None);
 
+////////////////////////////////////////////////////////////////////////////////
+
+class ATSaveStateSioManager final : public ATSnapExchangeObject<ATSaveStateSioManager, "ATSaveStateSioManager"> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("command_cycles_per_bit", &mCommandCyclesPerBit);
+		rw.Transfer("command_buffer_index", &mCommandBufferIndex);
+		rw.TransferArray("command_buffer", mCommandBuffer);
+
+		if constexpr (rw.IsReader) {
+			if (mCommandBufferIndex > 5)
+				throw ATInvalidSaveStateException();
+		}
+	}
+
+	uint32 mCommandCyclesPerBit = 0;
+	uint8 mCommandBufferIndex = 0;
+	uint8 mCommandBuffer[5] {};
+};
+
+class ATSaveStateSioActiveCommand final : public ATSnapExchangeObject<ATSaveStateSioActiveCommand, "ATSaveStateSioActiveCommand"> {
+public:
+	template<typename T>
+	void Exchange(T& rw) {
+		rw.Transfer("device_id", &mDeviceId);
+		rw.Transfer("transfer_start_time", &mTransferStartTime);
+		rw.Transfer("transfer_index", &mTransferIndex);
+		rw.Transfer("transfer_error", &mbTransferError);
+		rw.Transfer("transfer_cycles_per_bit", &mTransferCyclesPerBit);
+		rw.Transfer("transfer_cycles_per_byte", &mTransferCyclesPerByte);
+		rw.Transfer("transmit_synchronous", &mbTransmitSynchronous);
+		rw.Transfer("current_step", &mpCurrentStep);
+		rw.Transfer("step_delay", &mStepDelay);
+		rw.Transfer("steps", &mSteps);
+		rw.Transfer("queue_time", &mQueueTime);
+		rw.Transfer("queue_cycles_per_byte", &mQueueCyclesPerByte);
+		rw.Transfer("command_frame_end_time", &mCommandFrameEndTime);
+		rw.Transfer("command_deassert_time", &mCommandDeassertTime);
+
+		if constexpr (rw.IsReader) {
+			if (mTransferIndex > ATSIOManager::kMaxTransferSize)
+				throw ATInvalidSaveStateException();
+		}
+	}
+
+	uint8 mDeviceId = 0;
+	sint32 mTransferStartTime = 0;
+	uint32 mTransferIndex = 0;
+	bool mbTransferError = false;
+	uint32 mStepDelay = 0;
+	uint32 mTransferCyclesPerBit = 0;
+	uint32 mTransferCyclesPerByte = 0;
+	bool mbTransmitSynchronous = false;
+	sint64 mQueueTime = 0;
+	uint32 mQueueCyclesPerByte = 0;
+	sint64 mCommandFrameEndTime = 0;
+	sint64 mCommandDeassertTime = 0;
+	vdvector<vdrefptr<ATSaveStateSioCommandStep>> mSteps;
+	vdrefptr<ATSaveStateSioCommandStep> mpCurrentStep;
+};
+
+class ATSaveStateSioCommandStep final : public ATSnapExchangeObject<ATSaveStateSioCommandStep, "ATSaveStateSioCommandStep"> {
+public:
+	ATSaveStateSioCommandStep() = default;
+	ATSaveStateSioCommandStep(const ATSIOManager::Step& step)
+		: mStep(step)
+	{
+	}
+
+	template<typename T>
+	void Exchange(T& rw) {
+		ATSIOManager::StepType stepType;
+		uint32 arg1 = 0;
+		uint32 arg2 = 0;
+
+		if constexpr (rw.IsWriter) {
+			stepType = mStep.mType;
+			arg1 = 0;
+			arg2 = 0;
+
+			switch(mStep.mType) {
+				case ATSIOManager::kStepType_Delay:
+					arg1 = mStep.mDelayTicks;
+					break;
+
+				case ATSIOManager::kStepType_Send:
+				case ATSIOManager::kStepType_SendAutoProtocol:
+					arg1 = mStep.mTransferLength;
+					break;
+
+				case ATSIOManager::kStepType_Receive:
+				case ATSIOManager::kStepType_ReceiveAutoProtocol:
+					arg1 = mStep.mTransferLength;
+					arg2 = mStep.mTransferId;
+					break;
+
+				case ATSIOManager::kStepType_SetTransferRate:
+					arg1 = mStep.mTransferCyclesPerByte;
+					arg2 = mStep.mTransferCyclesPerBit;
+					break;
+
+				case ATSIOManager::kStepType_SetSynchronousTransmit:
+					arg1 = mStep.mbEnable;
+					break;
+
+				case ATSIOManager::kStepType_Fence:
+					arg1 = mStep.mFenceId;
+					break;
+
+				case ATSIOManager::kStepType_EndCommand:
+					break;
+			}
+		}
+
+		rw.TransferEnum("step_type", &stepType);
+		rw.Transfer("arg1", &arg1);
+		rw.Transfer("arg2", &arg2);
+		rw.Transfer("transfer_data", &mTransferData);
+
+		if constexpr (rw.IsReader) {
+			mStep.mType = stepType;
+
+			switch(stepType) {
+				case ATSIOManager::kStepType_Delay:
+					mStep.mDelayTicks = arg1;
+					break;
+
+				case ATSIOManager::kStepType_Send:
+				case ATSIOManager::kStepType_SendAutoProtocol:
+					mStep.mTransferLength = arg1;
+
+					if (mTransferData.size() != arg1)
+						throw ATInvalidSaveStateException();
+					break;
+
+				case ATSIOManager::kStepType_Receive:
+				case ATSIOManager::kStepType_ReceiveAutoProtocol:
+					mStep.mTransferLength = arg1;
+					mStep.mTransferId = arg2;
+					break;
+
+				case ATSIOManager::kStepType_SetTransferRate:
+					mStep.mTransferCyclesPerByte = arg1;
+					mStep.mTransferCyclesPerBit = arg2;
+
+					if (!mStep.mTransferCyclesPerByte || !mStep.mTransferCyclesPerBit)
+						throw ATInvalidSaveStateException();
+					break;
+
+				case ATSIOManager::kStepType_SetSynchronousTransmit:
+					mStep.mbEnable = arg1 != 0;
+					break;
+
+				case ATSIOManager::kStepType_Fence:
+					mStep.mFenceId = arg1;
+					break;
+
+				case ATSIOManager::kStepType_EndCommand:
+					break;
+			}
+		}
+	}
+
+	ATSIOManager::Step mStep {};
+	vdfastvector<uint8> mTransferData;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 class ATSIOManager::RawDeviceListLock {
 public:
 	RawDeviceListLock(ATSIOManager *parent);
@@ -92,8 +263,1012 @@ ATSIOManager::RawDeviceListLock::~RawDeviceListLock() {
 
 ///////////////////////////////////////////////////////////////////////////
 
-ATSIOManager::ATSIOManager() {
+class ATSIOManager::SIOInterface final : public IATDeviceSIOInterface, public IATSchedulerCallback {
+public:
+	SIOInterface(ATSIOManager& parent, IATDeviceSIO& dev);
+	~SIOInterface();
+
+	bool IsCommandActive() const;
+
+	void Shutdown();
+
+	int AddRef() override;
+	int Release() override;
+
+	uint32 GetAccelTimeSkew() const override { return mAccelTimeSkew; }
+	uint64 GetCommandQueueTime() const override { return mCommandQueueTime; }
+	uint64 GetCommandFrameEndTime() const override { return mCommandFrameEndTime; }
+	uint64 GetCommandDeassertTime() const override { return mCommandDeassertTime; }
+
+	bool IsActiveCommandAccelerated() const override { return mParent.mpAccelRequest != nullptr; }
+
+	void SetCommandDeassertCheckEnabled(bool enabled) override { mbCommandDeassertCheckEnabled = enabled; }
+	void SetCommandTruncationEnabled(bool enabled) override { mbCommandTruncationEnabled = enabled; }
+
+	void BeginCommand() override;
+	void SendData(const void *data, uint32 len, bool addChecksum) override;
+	void SendACK() override;
+	void SendNAK() override;
+	void SendComplete(bool autoDelay) override;
+	void SendError(bool autoDelay) override;
+	void ReceiveData(uint32 id, uint32 len, bool autoProtocol) override;
+	void SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) override;
+	void SetSynchronousTransmit(bool enable) override;
+	void Delay(uint32 ticks) override;
+	void InsertFence(uint32 id) override;
+	void FlushQueue() override;
+	void EndCommand() override;
+	void HandleCommand(const void *data, uint32 len, bool succeeded) override;
+
+	void SaveActiveCommandState(IATObjectState **state) const override;
+	void LoadActiveCommandState(IATObjectState *state) override;
+
+	enum class AccelResult {
+		NotHandled,
+		BypassAccel,
+		Handled
+	};
+
+	AccelResult TryAccelCommand(const ATDeviceSIORequest& devreq);
+	bool TryProcessCommand(const ATDeviceSIOCommand& cmd);
+	void CancelCommand();
+
+	bool OnReceive(uint8 c, uint32 cyclesPerBit, bool framingError, bool truncated);
+	bool OnSendReady();
+
+	void ExecuteNextStep();
+	void ResetTransfer();
+	void ResetTransferParams();
+	void UpdateTransferRateDerivedValues();
+	void ShiftTransmitBuffer();
+
+public:
+	void OnScheduledEvent(uint32 id) override;
+
+public:
+	enum {
+		kEventId_Delay = 1,
+		kEventId_Send
+	};
+
+	ATSIOManager& mParent;
+	IATDeviceSIO& mDevice;
+
+	uint32 mTransferCyclesPerBit = 0;
+	uint32 mTransferCyclesPerBitRecvMin = 0;
+	uint32 mTransferCyclesPerBitRecvMax = 0;
+	uint32 mTransferCyclesPerByte = 0;
+	uint32 mTransferStartTime = 0;	// starting cycle timestamp for transfer
+	uint32 mTransferBurstOffset = 0;
+	uint32 mTransferLastBurstOffset = 0;
+	
+	uint32 mTransferStart = 0;		// Starting offset for current transfer.
+	uint32 mTransferIndex = 0;		// Next byte to send/receive for current transfer.
+	uint32 mTransferEnd = 0;		// Stopping offset for current transfer.
+
+	bool mbTransferSend = false;	// current transfer is a send operation
+	bool mbTransferError = false;	// current transfer has a framing or baud rate error
+	bool mbTransmitSynchronous = false;	// true if sends are being done as synchronous to the receive clock
+
+	bool mbCommandActive = false;	// true if a command is in progress on this interface
+
+	bool mbCommandDeassertCheckEnabled = false;
+	bool mbCommandTruncationEnabled = false;
+
+	bool mbActiveDeviceDisk = false;
+	uint8 mActiveDeviceId = 0;
+
+	ATEvent *mpDelayEvent = nullptr;
+	ATEvent *mpTransferEvent = nullptr;
+
+	// Counts equivalent cycles that would have been passed by the events that
+	// occurred during request acceleration.
+	uint32 mAccelTimeSkew = 0;
+
+	uint64 mCommandFrameEndTime = 0;
+	uint64 mCommandDeassertTime = 0;
+	uint64 mCommandQueueTime = 0;
+	uint32 mCommandQueueCyclesPerByte = 0;
+
+	Step mCurrentStep = {};
+
+	vdfastdeque<Step> mStepQueue;
+
+	vdfastvector<uint8> mTransferBuffer;
+
+	VDAtomicInt mRefCount { 0 };
+};
+
+ATSIOManager::SIOInterface::SIOInterface(ATSIOManager& parent, IATDeviceSIO& dev)
+	: mParent(parent)
+	, mDevice(dev)
+{
 	mCurrentStep.mType = kStepType_None;
+}
+
+ATSIOManager::SIOInterface::~SIOInterface() {
+	Shutdown();
+}
+
+bool ATSIOManager::SIOInterface::IsCommandActive() const {
+	return mbCommandActive;
+}
+
+void ATSIOManager::SIOInterface::Shutdown() {
+	mParent.mpScheduler->UnsetEvent(mpDelayEvent);
+	mParent.mpScheduler->UnsetEvent(mpTransferEvent);
+}
+
+int ATSIOManager::SIOInterface::AddRef() {
+	return ++mRefCount;
+}
+
+int ATSIOManager::SIOInterface::Release() {
+	int rc = --mRefCount;
+	if (!rc) {
+		mParent.RemoveInterface(*this);
+		delete this;
+	}
+
+	return rc;
+}
+
+void ATSIOManager::SIOInterface::BeginCommand() {
+	// we may need to cancel a previous active command if truncation is enabled
+	if (mbCommandActive)
+		CancelCommand();
+
+	VDASSERT(mStepQueue.empty());
+
+	mCommandDeassertTime = mParent.mCommandDeassertTime;
+	mCommandFrameEndTime = mParent.mCommandFrameEndTime;
+	mCommandQueueTime = mParent.mpScheduler->GetTick64();
+
+	mTransferBuffer = std::move(mParent.mCachedTransferBuffer);
+	mTransferBuffer.clear();
+
+	mStepQueue.swap(mParent.mCachedStepQueue);
+	mStepQueue.clear();
+
+	mParent.BeginCommand();
+
+	if (mParent.mpAccelRequest) {
+		// Apply acceleration skew for the time it takes to send the command:
+		// - approx 1.5ms from command assert to start of command frame
+		// - 5 bytes of 94 cycles/bit
+		// - approx 0.58 ms from end of command frame to command deassert
+		mAccelTimeSkew += 2685 + 940 * 5 + 1040;
+	}
+
+	VDASSERT(!mParent.mActiveCommandInterfaces.Contains(this));
+	mParent.mActiveCommandInterfaces.Add(this);
+
+	mActiveDeviceId = mParent.mPendingDeviceId;
+	mbActiveDeviceDisk = mParent.mbPendingDeviceDisk;
+
+	ResetTransferParams();
+
+	mTransferStart = 0;
+	mTransferIndex = 0;
+	mTransferEnd = 0;
+
+	mbCommandActive = true;
+}
+
+void ATSIOManager::SIOInterface::SendData(const void *data, uint32 len, bool addChecksum) {
+	if (!IsCommandActive())
+		return;
+
+	VDASSERT(mTransferIndex <= mTransferBuffer.size());
+
+	if (!len)
+		return;
+
+	uint32 spaceRequired = len;
+
+	if (addChecksum)
+		++spaceRequired;
+
+	if (kMaxTransferSize - mTransferBuffer.size() < spaceRequired) {
+		// The transmit buffer is full -- let's see if we can shift it down.
+		ShiftTransmitBuffer();
+
+		// check again
+		if (kMaxTransferSize - mTransferBuffer.size() < spaceRequired) {
+			VDASSERT(!"No room left in transfer buffer.");
+			return;
+		}
+	}
+
+	mCommandQueueTime += (len + (addChecksum ? 1 : 0)) * mCommandQueueCyclesPerByte;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = addChecksum ? kStepType_SendAutoProtocol : kStepType_Send;
+	step.mTransferLength = spaceRequired;
+	
+	const uint8 *data8 = (const uint8 *)data;
+	mTransferBuffer.insert_range(mTransferBuffer.end(), vdspan(data8, len));
+
+	if (addChecksum)
+		mTransferBuffer.push_back(ATComputeSIOChecksum(data8, len));
+
+	ExecuteNextStep();
+}
+
+void ATSIOManager::SIOInterface::SendACK() {
+	// This command, and all other commands, need to be silently ignored when no device
+	// is active. We need to support this to allow an EndCommand() to be preemptively
+	// inserted into a command stream off of a receive callback. In that case, surrounding
+	// code that is being unwound may still attempt to push a couple of additional commands.
+	if (!IsCommandActive())
+		return;
+
+	if (mParent.mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendACK;
+	} else {
+		SendData("A", 1, false);
+	}
+}
+
+void ATSIOManager::SIOInterface::SendNAK() {
+	if (!IsCommandActive())
+		return;
+
+	if (mParent.mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendNAK;
+	} else {
+		SendData("N", 1, false);
+	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > NAK\n", mActiveDeviceId);
+}
+
+void ATSIOManager::SIOInterface::SendComplete(bool autoDelay) {
+	if (!IsCommandActive())
+		return;
+
+	// SIO protocol requires minimum 250us delay here.
+	if (autoDelay)
+		Delay(450);
+
+	if (mParent.mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendComplete;
+	} else {
+		SendData("C", 1, false);
+	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > Complete\n", mActiveDeviceId);
+}
+
+void ATSIOManager::SIOInterface::SendError(bool autoDelay) {
+	if (!IsCommandActive())
+		return;
+
+	// SIO protocol requires minimum 250us delay here.
+	if (autoDelay)
+		Delay(450);
+
+	if (mParent.mpAccelRequest) {
+		Step& step = mStepQueue.push_back();
+		step.mType = kStepType_AccelSendError;
+	} else {
+		SendData("E", 1, false);
+	}
+
+	if (g_ATLCSIOReply.IsEnabled())
+		g_ATLCSIOReply("Device %02X > Error\n", mActiveDeviceId);
+}
+
+void ATSIOManager::SIOInterface::ReceiveData(uint32 id, uint32 len, bool autoProtocol) {
+	if (!IsCommandActive())
+		return;
+
+	if (autoProtocol)
+		++len;
+
+	if (kMaxTransferSize - mTransferBuffer.size() < len) {
+		// The transmit buffer is full -- let's see if we can shift it down.
+		ShiftTransmitBuffer();
+
+		// check again
+		if (kMaxTransferSize - mTransferBuffer.size() < len) {
+			VDASSERT(!"No room left in transfer buffer.");
+			return;
+		}
+	}
+
+	mTransferBuffer.resize(mTransferBuffer.size() + len, 0);
+
+	Step& step = mStepQueue.push_back();
+	step.mType = autoProtocol ? kStepType_ReceiveAutoProtocol : kStepType_Receive;
+	step.mTransferLength = len;
+	step.mTransferId = id;
+
+	if (autoProtocol) {
+		// SIO protocol requires 850us minimum delay.
+		Delay(1530);
+		SendACK();
+	}
+
+	ExecuteNextStep();
+}
+
+void ATSIOManager::SIOInterface::SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) {
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_SetTransferRate;
+	step.mTransferCyclesPerBit = cyclesPerBit;
+	step.mTransferCyclesPerByte = cyclesPerByte;
+
+	mCommandQueueCyclesPerByte = cyclesPerByte;
+	ExecuteNextStep();
+}
+
+void ATSIOManager::SIOInterface::SetSynchronousTransmit(bool enable) {
+	if (!IsCommandActive())
+		return;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_SetSynchronousTransmit;
+	step.mbEnable = enable;
+
+	ExecuteNextStep();
+}
+
+void ATSIOManager::SIOInterface::Delay(uint32 ticks) {
+	if (!IsCommandActive())
+		return;
+
+	if (!ticks)
+		return;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_Delay;
+	step.mDelayTicks = ticks;
+
+	mCommandQueueTime += ticks;
+
+	ExecuteNextStep();
+}
+
+void ATSIOManager::SIOInterface::InsertFence(uint32 id) {
+	if (!IsCommandActive())
+		return;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_Fence;
+	step.mFenceId = id;
+}
+
+void ATSIOManager::SIOInterface::FlushQueue() {
+	mStepQueue.clear();
+}
+
+void ATSIOManager::SIOInterface::EndCommand() {
+	if (!IsCommandActive())
+		return;
+
+	Step& step = mStepQueue.push_back();
+	step.mType = kStepType_EndCommand;
+}
+
+void ATSIOManager::SIOInterface::HandleCommand(const void *data, uint32 len, bool succeeded) {
+	BeginCommand();
+	SendACK();
+
+	if (succeeded)
+		SendComplete(true);
+	else
+		SendError(true);
+
+	if (len)
+		SendData(data, len, true);
+
+	EndCommand();
+}
+
+void ATSIOManager::SIOInterface::SaveActiveCommandState(IATObjectState **ppState) const {
+	if (!IsCommandActive()) {
+		*ppState = nullptr;
+		return;
+	}
+
+	vdrefptr state(new ATSaveStateSioActiveCommand);
+
+	uint32 transferPos = mTransferEnd;
+	if (mCurrentStep.mType) {
+		ATSaveStateSioCommandStep *savedCurStep = new ATSaveStateSioCommandStep(mCurrentStep);
+
+		state->mpCurrentStep = vdrefptr(savedCurStep);
+
+		switch(mCurrentStep.mType) {
+			case kStepType_Send:
+			case kStepType_SendAutoProtocol:
+				savedCurStep->mTransferData.assign_range(vdspan(mTransferBuffer).subspan(mTransferStart, mCurrentStep.mTransferLength));
+				break;
+
+			case kStepType_Receive:
+			case kStepType_ReceiveAutoProtocol:
+				savedCurStep->mTransferData.assign_range(vdspan(mTransferBuffer).subspan(mTransferStart, mTransferIndex - mTransferStart));
+				break;
+
+			default:
+				break;
+		}
+	}
+
+	state->mSteps.reserve(mStepQueue.size());
+
+	for(const Step& step : mStepQueue) {
+		ATSaveStateSioCommandStep *savedStep = new ATSaveStateSioCommandStep(step);
+
+		state->mSteps.emplace_back(vdrefptr(savedStep));
+
+		if (step.mType == kStepType_Send || step.mType == kStepType_SendAutoProtocol) {
+			savedStep->mTransferData.assign_range(vdspan(mTransferBuffer).subspan(transferPos, step.mTransferLength));
+
+			transferPos += step.mTransferLength;
+		}
+	}
+
+	state->mDeviceId = mActiveDeviceId;
+	state->mTransferIndex = mTransferIndex - mTransferStart;
+	state->mbTransferError = mbTransferError;
+	state->mTransferCyclesPerByte = mTransferCyclesPerByte;
+	state->mTransferCyclesPerBit = mTransferCyclesPerBit;
+	state->mbTransmitSynchronous = mbTransmitSynchronous;
+
+	const uint64 t64 = mParent.mpScheduler->GetTick64();
+	state->mTransferStartTime = mpTransferEvent ? (sint32)(mTransferStartTime - (uint32)t64) : 0;
+	state->mQueueTime = (sint64)(mCommandQueueTime - t64);
+	state->mQueueCyclesPerByte = mCommandQueueCyclesPerByte;
+	state->mCommandFrameEndTime = (sint64)(mCommandFrameEndTime - t64);
+	state->mCommandDeassertTime = (sint64)(mCommandDeassertTime - t64);
+
+	if (mpTransferEvent)
+		state->mStepDelay = mParent.mpScheduler->GetTicksToEvent(mpTransferEvent);
+	else if (mpDelayEvent)
+		state->mStepDelay = mParent.mpScheduler->GetTicksToEvent(mpDelayEvent);
+
+	*ppState = state.release();
+}
+
+void ATSIOManager::SIOInterface::LoadActiveCommandState(IATObjectState *state0) {
+	if (!state0)
+		return;
+
+	try {
+		const ATSaveStateSioActiveCommand& state = atser_cast<const ATSaveStateSioActiveCommand&>(*state0);
+
+		CancelCommand();
+		ResetTransferParams();
+
+		if (state.mTransferCyclesPerByte)
+			mTransferCyclesPerByte = state.mTransferCyclesPerByte;
+
+		if (state.mTransferCyclesPerBit)
+			mTransferCyclesPerBit = state.mTransferCyclesPerBit;
+
+		mbCommandActive = true;
+		mActiveDeviceId = state.mDeviceId;
+		mbTransmitSynchronous = state.mbTransmitSynchronous;
+		mTransferStart = 0;
+		mTransferEnd = 0;
+		mbTransferError = state.mbTransferError;
+		mbTransferSend = false;
+
+		const uint64 t64 = mParent.mpScheduler->GetTick64();
+		mTransferStartTime = (uint64)state.mTransferStartTime + t64;
+		mCommandQueueTime = (uint64)state.mQueueTime + t64;
+		mCommandQueueCyclesPerByte = state.mQueueCyclesPerByte;
+		mCommandFrameEndTime = (uint64)state.mCommandFrameEndTime + t64;
+		mCommandDeassertTime = (uint64)state.mCommandDeassertTime + t64;
+
+		mTransferBuffer.clear();
+
+		if (state.mpCurrentStep) {
+			mCurrentStep = state.mpCurrentStep->mStep;
+
+			switch(mCurrentStep.mType) {
+				case kStepType_Receive:
+				case kStepType_ReceiveAutoProtocol:
+					mTransferBuffer.assign_range(state.mpCurrentStep->mTransferData);
+					mTransferBuffer.resize(mCurrentStep.mTransferLength, 0);
+
+					mTransferEnd = mCurrentStep.mTransferLength;
+					mbTransferSend = false;
+					mParent.BeginReceive(*this);
+					break;
+
+				case kStepType_Send:
+				case kStepType_SendAutoProtocol:
+					mTransferEnd = mCurrentStep.mTransferLength;
+					mbTransferSend = true;
+
+					if (state.mStepDelay)
+						mParent.mpScheduler->SetEvent(state.mStepDelay, this, kEventId_Send, mpTransferEvent);
+
+					mTransferBuffer.assign_range(state.mpCurrentStep->mTransferData);
+
+					mParent.BeginSend(*this);
+					break;
+
+				case kStepType_Delay:
+					if (state.mStepDelay)
+						mParent.mpScheduler->SetEvent(state.mStepDelay, this, kEventId_Delay, mpDelayEvent);
+					break;
+
+				default:
+					break;
+			}
+		}
+
+		mTransferIndex = state.mTransferIndex;
+		
+		if (mTransferIndex > mTransferEnd)
+			throw ATInvalidSaveStateException();
+
+		for(const auto& step : state.mSteps) {
+			if (step)
+				mStepQueue.push_back(step->mStep);
+
+			switch(step->mStep.mType) {
+				case kStepType_Send:
+				case kStepType_SendAutoProtocol:
+					mTransferBuffer.append_range(step->mTransferData);
+					break;
+
+				case kStepType_Receive:
+				case kStepType_ReceiveAutoProtocol:
+					mTransferBuffer.resize(mTransferBuffer.size() + step->mStep.mTransferLength, 0);
+					break;
+			}
+		}
+
+
+		// sanity check transfer parameters
+		if (mTransferCyclesPerBit > 100000 || mTransferCyclesPerByte > 1000000)
+			throw ATInvalidSaveStateException();
+
+		if (mTransferCyclesPerByte < mTransferCyclesPerBit * 8)
+			throw ATInvalidSaveStateException();
+
+		// derived parameter cleanup
+		mbActiveDeviceDisk = IsDiskDevice(mActiveDeviceId);
+		UpdateTransferRateDerivedValues();
+
+		mParent.mActiveCommandInterfaces.AddUnique(this);
+
+	} catch(...) {
+		CancelCommand();
+		ResetTransferParams();
+		UpdateTransferRateDerivedValues();
+		throw;
+	}
+}
+
+ATSIOManager::SIOInterface::AccelResult ATSIOManager::SIOInterface::TryAccelCommand(const ATDeviceSIORequest& devreq) {
+	IATDeviceSIO::CmdResponse response = mDevice.OnSerialAccelCommand(devreq);
+
+	switch(response) {
+		case IATDeviceSIO::kCmdResponse_NotHandled:
+		default:
+			return AccelResult::NotHandled;
+
+		case IATDeviceSIO::kCmdResponse_BypassAccel:
+			return AccelResult::BypassAccel;
+
+		case IATDeviceSIO::kCmdResponse_Fail_NAK:
+			BeginCommand();
+			SendNAK();
+			EndCommand();
+			break;
+
+		case IATDeviceSIO::kCmdResponse_Send_ACK_Complete:
+			BeginCommand();
+			SendACK();
+			SendComplete(true);
+			EndCommand();
+
+		case IATDeviceSIO::kCmdResponse_Start:
+			break;
+	}
+
+	ExecuteNextStep();
+	return AccelResult::Handled;
+}
+
+bool ATSIOManager::SIOInterface::TryProcessCommand(const ATDeviceSIOCommand& cmd) {
+	// if this device interface can't process new commands while already receiving
+	// one, ignore the command
+	if (!mbCommandTruncationEnabled && IsCommandActive())
+		return false;
+
+	// if this device interface requires command to be asserted at the end of the
+	// command and that's not the case, ignore the command
+	if (mbCommandDeassertCheckEnabled && cmd.mbEarlyCmdDeassert)
+		return false;
+
+	IATDeviceSIO::CmdResponse response = mDevice.OnSerialBeginCommand(cmd);
+
+	switch(response) {
+		case IATDeviceSIO::kCmdResponse_NotHandled:
+		default:
+			if (mbCommandActive) {
+				VDFAIL("Device implementation queued a command and returned NotHandled.");
+				CancelCommand();
+			}
+
+			return false;
+
+		case IATDeviceSIO::kCmdResponse_BypassAccel:
+			VDFAIL("OnSerialBeginCommand() must not return BypassAccel");
+			return false;
+
+		case IATDeviceSIO::kCmdResponse_Start:
+			return true;
+
+		case IATDeviceSIO::kCmdResponse_Send_ACK_Complete:
+			BeginCommand();
+			SendACK();
+			SendComplete(true);
+			EndCommand();
+			return true;
+
+		case IATDeviceSIO::kCmdResponse_Fail_NAK:
+			BeginCommand();
+			SendNAK();
+			EndCommand();
+			return true;
+	}
+}
+
+void ATSIOManager::SIOInterface::CancelCommand() {
+	if (!IsCommandActive())
+		return;
+
+	mActiveDeviceId = 0;
+
+	ResetTransfer();
+
+	mDevice.OnSerialAbortCommand();
+
+	mStepQueue.clear();
+	mCurrentStep.mType = kStepType_None;
+
+	mParent.mActiveCommandInterfaces.Remove(this);
+
+	mbCommandActive = false;
+}
+
+bool ATSIOManager::SIOInterface::OnReceive(uint8 c, uint32 cyclesPerBit, bool framingError, bool truncated) {
+	if (mTransferIndex >= mTransferEnd || mbTransferSend) {
+		mParent.EndReceive(*this);
+		return false;
+	}
+
+	// flag error if baud rate is off
+	if (cyclesPerBit < mTransferCyclesPerBitRecvMin || cyclesPerBit > mTransferCyclesPerBitRecvMax)
+		mbTransferError = true;
+
+	// We place the byte into the buffer even if a framing error occurs because
+	// typically drives do not check the stop bit (810, 1050, XF551, Indus GT).
+	mTransferBuffer[mTransferIndex++] = c;
+
+	// check if we just finished the transfer
+	if (mTransferIndex >= mTransferEnd) {
+		const uint32 transferLen = mTransferEnd - mTransferStart;
+		const uint8 *data = mTransferBuffer.data() + mTransferStart;
+		const bool checksumOK = !mbTransferError && (!transferLen || ATComputeSIOChecksum(data, transferLen - 1) == data[transferLen - 1]);
+
+		mTransferStart = mTransferEnd;
+
+		// Adjust queue time for the time actually taken during the transfer. Note that this
+		// is an offset instead of just resetting the queue time as there can be commands already
+		// queued afterward, especially for auto-protocol receives.
+		mCommandQueueTime += (uint32)(mParent.mpScheduler->GetTick() - mTransferStartTime);
+
+		if (mCurrentStep.mType == kStepType_ReceiveAutoProtocol) {
+			if (!checksumOK) {
+				mStepQueue.clear();
+				mCurrentStep.mType = kStepType_None;
+
+				// SIO protocol requires 850us minimum delay.
+				Delay(1530);
+				SendNAK();
+				EndCommand();
+
+				ExecuteNextStep();
+				return false;
+			}
+
+			mDevice.OnSerialReceiveComplete(mCurrentStep.mTransferId, data, transferLen - 1, true);
+		} else {
+			mDevice.OnSerialReceiveComplete(mCurrentStep.mTransferId, data, transferLen, checksumOK);
+		}
+
+		mParent.EndReceive(*this);
+
+		mCurrentStep.mType = kStepType_None;
+		ExecuteNextStep();
+	}
+	
+	return mbActiveDeviceDisk ? mParent.mbDiskBurstTransfersEnabled : mParent.mbBurstTransfersEnabled;
+}
+
+bool ATSIOManager::SIOInterface::OnSendReady() {
+	if (!mpTransferEvent)
+		return false;
+
+	if (!mbTransferSend)
+		return false;
+
+	if (mTransferIndex - mTransferStart < 3)
+		return true;
+
+	uint32 existingDelay = mParent.mpScheduler->GetTicksToEvent(mpTransferEvent);
+	if (existingDelay > 50) {
+		// Whenever we shorten a byte delay for burst, we extend the next byte
+		// delay by that amount. This means that we need to make sure not to
+		// double-add that amount on the next run.
+		mAccelTimeSkew -= mTransferLastBurstOffset;
+		mTransferBurstOffset = (existingDelay - 50);
+		mAccelTimeSkew += mTransferBurstOffset;
+
+		mParent.mpScheduler->SetEvent(50, this, kEventId_Send, mpTransferEvent);
+	}
+
+	return true;
+}
+
+void ATSIOManager::SIOInterface::ExecuteNextStep() {
+	while(!mCurrentStep.mType && !mStepQueue.empty()) {
+		mCurrentStep = mStepQueue.front();
+		mStepQueue.pop_front();
+
+		switch(mCurrentStep.mType) {
+			case kStepType_Send:
+			case kStepType_SendAutoProtocol:
+				if (!mParent.mpAccelRequest)
+					g_ATLCSIOSteps("Sending %u bytes (%02X)\n", mCurrentStep.mTransferLength, mTransferBuffer[mTransferIndex]);
+
+				mbTransferSend = true;
+				mTransferStart = mTransferIndex;
+				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
+				mTransferBurstOffset = 0;
+				mTransferLastBurstOffset = 0;
+				VDASSERT(mTransferEnd <= mTransferBuffer.size());
+
+				if (mParent.mpAccelRequest) {
+					if (mParent.mpAccelRequest->mMode & 0x40) {
+						const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
+						const uint32 reqLen = mParent.mpAccelRequest->mLength;
+						const uint32 minLen = std::min<uint32>(len, reqLen);
+						const uint8 *src = mTransferBuffer.data() + mTransferIndex;
+
+						for(uint32 i=0; i<minLen; ++i)
+							mParent.mpMemory->WriteByte(mParent.mAccelBufferAddress + i, src[i]);
+
+						mAccelTimeSkew += (minLen + 1) * mTransferCyclesPerByte;
+
+						uint8 checksum = ATComputeSIOChecksum(src, minLen);
+
+						if (len < reqLen) {
+							// We sent less data than SIO was expecting. This will cause a timeout.
+							*mParent.mpAccelStatus = 0x8A;
+						} else if (len > reqLen) {
+							// We sent more data than SIO was expecting. This may cause a checksum
+							// error.
+							if (checksum != src[reqLen])
+								*mParent.mpAccelStatus = 0x8F;
+						}
+
+						mParent.mpMemory->WriteByte(ATKernelSymbols::CHKSUM, checksum);
+
+						const uint32 endAddr = mParent.mAccelBufferAddress + minLen;
+						mParent.mpMemory->WriteByte(ATKernelSymbols::BUFRLO, (uint8)endAddr);
+						mParent.mpMemory->WriteByte(ATKernelSymbols::BUFRHI, (uint8)(endAddr >> 8));
+					}
+
+					mTransferIndex = mTransferEnd;
+					mCurrentStep.mType = kStepType_None;
+				} else {
+					mParent.BeginSend(*this);
+					OnScheduledEvent(kEventId_Send);
+				}
+				break;
+
+			case kStepType_Receive:
+			case kStepType_ReceiveAutoProtocol:
+				if (!mParent.mpAccelRequest)
+					g_ATLCSIOSteps("Receiving %u bytes\n", mCurrentStep.mTransferLength);
+
+				mbTransferSend = false;
+				mbTransferError = false;
+				mTransferStart = mTransferIndex;
+				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
+
+				UpdateTransferRateDerivedValues();
+
+				if (mParent.mpAccelRequest) {
+					const uint32 id = mCurrentStep.mTransferId;
+					const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_ReceiveAutoProtocol ? -1 : 0);
+					const uint32 reqLen = mParent.mpAccelRequest->mMode & 0x80 ? mParent.mpAccelRequest->mLength : 0;
+					const uint32 minLen = std::min<uint32>(len, reqLen);
+
+					for(uint32 i=0; i<minLen; ++i)
+						mTransferBuffer[mTransferStart + i] = mParent.mpMemory->ReadByte(mParent.mAccelBufferAddress + i);
+
+					mAccelTimeSkew += (minLen + 1) * (mTransferCyclesPerBit * 10);
+
+					if (reqLen < len) {
+						// SIO provided less data than we were expecting. Hmm. On an 810,
+						// this will hang the drive indefinitely until the expected bytes
+						// are provided. For now, we report a broken checksum to the device.
+						memset(mTransferBuffer.data() + mTransferStart + minLen, 0, len - minLen);
+
+						mDevice.OnSerialReceiveComplete(id, mTransferBuffer.data() + mTransferStart, len, false);
+					} else if (reqLen > len) {
+						// SIO provided more data than we were expecting. This may cause
+						// a checksum error.
+						const uint8 checksum = mParent.mpMemory->ReadByte(mParent.mAccelBufferAddress + minLen);
+
+						mDevice.OnSerialReceiveComplete(id, mTransferBuffer.data() + mTransferStart, len, checksum == ATComputeSIOChecksum(mTransferBuffer.data() + mTransferStart, minLen));
+					} else {
+						mDevice.OnSerialReceiveComplete(id, mTransferBuffer.data() + mTransferStart, len, true);
+					}
+
+					mTransferIndex = mTransferEnd;
+					mCurrentStep.mType = kStepType_None;
+				} else {
+					mParent.BeginReceive(*this);
+					mTransferStartTime = mParent.mpScheduler->GetTick();
+				}
+				break;
+
+			case kStepType_SetTransferRate:
+				mTransferCyclesPerBit = mCurrentStep.mTransferCyclesPerBit;
+				mTransferCyclesPerByte = mCurrentStep.mTransferCyclesPerByte;
+				mCurrentStep.mType = kStepType_None;
+				break;
+
+			case kStepType_SetSynchronousTransmit:
+				mbTransmitSynchronous = mCurrentStep.mbEnable;
+				mCurrentStep.mType = kStepType_None;
+				break;
+
+			case kStepType_Delay:
+				VDASSERT(mCurrentStep.mDelayTicks);
+
+				if (mParent.mpAccelRequest) {
+					mAccelTimeSkew += mCurrentStep.mDelayTicks;
+					mCurrentStep.mType = kStepType_None;
+				} else {
+					g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
+					mParent.mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpDelayEvent);
+				}
+				break;
+
+			case kStepType_Fence:
+				mCurrentStep.mType = kStepType_None;
+				mDevice.OnSerialFence(mCurrentStep.mFenceId);
+				break;
+
+			case kStepType_EndCommand:
+				if (!mParent.mpAccelRequest)
+					g_ATLCSIOSteps <<= "Ending command\n";
+
+				mbCommandActive = false;
+				mCurrentStep.mType = kStepType_None;
+
+				mStepQueue.clear();
+				mTransferBuffer.clear();
+
+				mParent.mCachedTransferBuffer.swap(mTransferBuffer);
+				mParent.mCachedStepQueue.swap(mStepQueue);
+				mParent.mActiveCommandInterfaces.Remove(this);
+				return;
+
+			case kStepType_AccelSendACK:
+			case kStepType_AccelSendComplete:
+				mAccelTimeSkew += mTransferCyclesPerByte;
+				mCurrentStep.mType = kStepType_None;
+				break;
+
+			case kStepType_AccelSendNAK:
+				*mParent.mpAccelStatus = 0x8B;		// NAK error
+				mCurrentStep.mType = kStepType_None;
+				mAccelTimeSkew += mTransferCyclesPerByte;
+				break;
+
+			case kStepType_AccelSendError:
+				*mParent.mpAccelStatus = 0x90;		// Device error
+				mCurrentStep.mType = kStepType_None;
+				mAccelTimeSkew += mTransferCyclesPerByte;
+				break;
+
+			default:
+				VDFAIL("Unknown step in step queue.");
+				break;
+		}
+	}
+}
+
+void ATSIOManager::SIOInterface::ResetTransfer() {
+	mTransferStart = 0;
+	mTransferIndex = 0;
+	mTransferEnd = 0;
+	mbTransferSend = false;
+
+	mParent.mpScheduler->UnsetEvent(mpDelayEvent);
+	mParent.mpScheduler->UnsetEvent(mpTransferEvent);
+
+	mParent.EndReceive(*this);
+	mParent.EndSend(*this);
+}
+
+void ATSIOManager::SIOInterface::ResetTransferParams() {
+	mTransferCyclesPerByte = 932;
+	mTransferCyclesPerBit = 93;
+	mbTransmitSynchronous = false;
+
+	mCommandQueueCyclesPerByte = mTransferCyclesPerByte;
+}
+
+void ATSIOManager::SIOInterface::UpdateTransferRateDerivedValues() {
+	mTransferCyclesPerBitRecvMin = mTransferCyclesPerBit - (mTransferCyclesPerBit + 19)/20;
+	mTransferCyclesPerBitRecvMax = mTransferCyclesPerBit + (mTransferCyclesPerBit + 19)/20;
+}
+
+void ATSIOManager::SIOInterface::ShiftTransmitBuffer() {
+	if (mTransferStart > 0) {
+		mTransferBuffer.erase(mTransferBuffer.begin(), mTransferBuffer.begin() + mTransferStart);
+
+		mTransferEnd -= mTransferStart;
+		mTransferIndex -= mTransferStart;
+		mTransferStart = 0;
+	}
+}
+
+void ATSIOManager::SIOInterface::OnScheduledEvent(uint32 id) {
+	switch(id) {
+		case kEventId_Delay:
+			mpDelayEvent = nullptr;
+			mCurrentStep.mType = kStepType_None;
+			ExecuteNextStep();
+			break;
+
+		case kEventId_Send:
+			mpTransferEvent = nullptr;
+			if (mTransferIndex < mTransferEnd) {
+				VDASSERT(mParent.mSendingInterfaces.Contains(this));
+				uint8 c = mTransferBuffer[mTransferIndex++];
+
+				mParent.mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mParent.mbDiskBurstTransfersEnabled : mParent.mbBurstTransfersEnabled, false, false);
+				mParent.TraceReceive(c, mTransferCyclesPerBit, false);
+
+				mParent.mpScheduler->SetEvent(mTransferCyclesPerByte + mTransferBurstOffset, this, kEventId_Send, mpTransferEvent);
+				mTransferLastBurstOffset = mTransferBurstOffset;
+				mTransferBurstOffset = 0;
+			} else {
+				mTransferStart = mTransferEnd;
+				mCurrentStep.mType = kStepType_None;
+
+				mParent.EndSend(*this);
+
+				ExecuteNextStep();
+			}
+			break;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+ATSIOManager::ATSIOManager() {
 }
 
 ATSIOManager::~ATSIOManager() {
@@ -161,6 +1336,12 @@ void ATSIOManager::Init(ATCPUEmulator *cpu, ATSimulator *sim) {
 void ATSIOManager::Shutdown() {
 	UninitHooks();
 
+	mSIOInterfaces.NotifyAllDirect(
+		[](SIOInterface *iface) {
+			iface->Shutdown();
+		}
+	);
+
 	if (mpPokey) {
 		mpPokey->SetNotifyOnBiClockChange(nullptr);
 		mpPokey->RemoveSIODevice(this);
@@ -172,12 +1353,7 @@ void ATSIOManager::Shutdown() {
 		mpPIA = nullptr;
 	}
 
-	if (mpScheduler) {
-		mpScheduler->UnsetEvent(mpDelayEvent);
-		mpScheduler->UnsetEvent(mpTransferEvent);
-		mpScheduler = nullptr;
-	}
-
+	mpScheduler = nullptr;
 	mpUIRenderer = NULL;
 	mpSim = NULL;
 	mpMemory = NULL;
@@ -187,23 +1363,33 @@ void ATSIOManager::Shutdown() {
 void ATSIOManager::ColdReset() {
 	mbLoadingState = false;
 
-	AbortActiveCommand();
+	CancelAllCommands();
 
-	mTransferLevel = 0;
-	mTransferStart = 0;
-	mTransferIndex = 0;
-	mTransferEnd = 0;
-	mbTransferSend = false;
-	mbCommandState = false;
+	mCommandBufferIndex = 0;
+	PokeyEndCommand();
+
 	mbMotorState = false;
-	mpActiveDevice = nullptr;
-	mActiveDeviceId = 0;
+	mpPendingInterface = nullptr;
+	mPendingDeviceId = 0;
 
 	WarmReset();
 }
 
 void ATSIOManager::WarmReset() {
 	mAccessedDisks = 0;
+}
+
+vdrefptr<IATObjectState> ATSIOManager::SaveState() const {
+	if (!mbCommandState && (mCommandBufferIndex == 0 || mCommandBufferIndex == 5))
+		return nullptr;
+
+	vdrefptr state(new ATSaveStateSioManager);
+
+	state->mCommandCyclesPerBit = mCommandCyclesPerBit;
+	state->mCommandBufferIndex = mCommandBufferIndex;
+	vdcopy_checked_r(state->mCommandBuffer, mCommandBuffer);
+
+	return state;
 }
 
 void ATSIOManager::ReinitHooks() {
@@ -263,7 +1449,7 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 		);
 
 	// Check if we already have a command in progress. If so, bail.
-	if (mpActiveDevice || mbCommandState)
+	if (!mActiveCommandInterfaces.IsEmpty() || mbCommandState)
 		return false;
 
 	// Abort read acceleration if the buffer overlaps the parameter region.
@@ -288,13 +1474,12 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 		return false;
 
 	uint8 status = 0x01;
-
-	mActiveDeviceId = req.mDevice;
-	UpdateActiveDeviceDerivedValues();
+	
+	SetPendingDeviceId(req.mDevice);
 
 	bool allowAccel = mbOtherSIOAccelEnabled || (mDebuggerDeviceId && mDebuggerDeviceId == req.mDevice);
 
-	if (mbActiveDeviceDisk) {
+	if (mbPendingDeviceDisk) {
 		allowAccel = mbDiskSIOAccelEnabled;
 
 		if (allowAccel && mpSim->IsDiskSIOOverrideDetectEnabled() && !(mAccessedDisks & (1 << (req.mDevice - 0x31))))
@@ -310,59 +1495,44 @@ bool ATSIOManager::TryAccelRequest(const ATSIORequest& req, bool pbi) {
 		devreq.mAUX[1] = req.mAUX[1];
 		devreq.mCyclesPerBit = 93;
 		devreq.mbStandardRate = true;
+		devreq.mbEarlyCmdDeassert = false;
 		devreq.mPollCount = mPollCount;
 		devreq.mMode = req.mMode;
 		devreq.mTimeout = req.mTimeout;
 		devreq.mLength = req.mLength;
 		devreq.mSector = req.mSector;
-
-		ResetTransfer();
 		
-		mCommandQueueTime = mCommandDeassertTime = mCommandFrameEndTime = mpScheduler->GetTick64();
+		mCommandFrameEndTime = mCommandDeassertTime = mpScheduler->GetTick64();
 
 		// Run down the device chain and see if anyone is interested in this request.
-		for(IATDeviceSIO *dev : mSIODevices) {
-			mpAccelRequest = &devreq;
-			mpAccelStatus = &status;
-			mAccelBufferAddress = req.mAddress;
+		SIOInterface::AccelResult response = SIOInterface::AccelResult::NotHandled;
 
-			mpActiveDevice = dev;
-			IATDeviceSIO::CmdResponse response = dev->OnSerialAccelCommand(devreq);
-			switch(response) {
-				case IATDeviceSIO::kCmdResponse_Start:
-					break;
+		mSIOInterfaces.NotifyWhileDirect(
+			[&, this](SIOInterface *iface) -> bool {
+				mpAccelRequest = &devreq;
+				mpAccelStatus = &status;
+				mAccelBufferAddress = req.mAddress;
 
-				case IATDeviceSIO::kCmdResponse_Send_ACK_Complete:
-					BeginCommand();
-					SendACK();
-					SendComplete();
-					EndCommand();
-					break;
+				mpPendingInterface = iface;
 
-				case IATDeviceSIO::kCmdResponse_Fail_NAK:
-					BeginCommand();
-					SendNAK();
-					EndCommand();
-					break;
+				response = iface->TryAccelCommand(devreq);
+
+				mpPendingInterface = nullptr;
+				mPendingDeviceId = 0;
+				mpAccelRequest = nullptr;
+				mpAccelStatus = nullptr;
+
+				return response == SIOInterface::AccelResult::NotHandled;
 			}
+		);
 
-			if (response != IATDeviceSIO::kCmdResponse_NotHandled) {
-				ExecuteNextStep();
-			}
+		// check if we were specifically asked not to accelerate this request
+		if (response == SIOInterface::AccelResult::BypassAccel)
+			return false;
 
-			mpActiveDevice = nullptr;
-			mActiveDeviceId = 0;
-			mpAccelRequest = nullptr;
-			mpAccelStatus = nullptr;
-
-			// check if we were specifically asked not to accelerate this request
-			if (response == IATDeviceSIO::kCmdResponse_BypassAccel)
-				return false;
-
-			// check if the device handled it
-			if (response != IATDeviceSIO::kCmdResponse_NotHandled)
-				goto handled;
-		}
+		// check if the device handled it
+		if (response == SIOInterface::AccelResult::Handled)
+			goto handled;
 
 		// Check if the command is a type 3 poll command and we have fast boot enabled.
 		// If so, keep looping until we hit 26 retries. This gives accelerated devices
@@ -502,6 +1672,10 @@ void ATSIOManager::PokeyBeginWriteSIO(uint8 c, bool command, uint32 cyclesPerBit
 }
 
 bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uint64 startTime, bool framingError, bool truncated) {
+	// drop all cyclesPerBit = 0, which are essentially truncated bytes
+	if (!cyclesPerBit)
+		return false;
+
 	if (mpTraceContext) {
 		const uint64 t = mpScheduler->GetTick64();
 
@@ -514,51 +1688,26 @@ bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uin
 		);
 	}
 
-	if (mTransferIndex < mTransferEnd && !mbTransferSend) {
-		// We place the byte into the buffer even if a framing error occurs because
-		// typically drives do not check the start bit (810, 1050, XF551, Indus GT).
-		mTransferBuffer[mTransferIndex++] = c;
+	if ((mbCommandState || mCommandBufferIndex > 0) && mCommandBufferIndex < 5) {
+		mCommandCyclesPerBit = cyclesPerBit;
 
-		if (mbCommandState)
-			mTransferCyclesPerBit = cyclesPerBit;
-		else if (cyclesPerBit < mTransferCyclesPerBitRecvMin || cyclesPerBit > mTransferCyclesPerBitRecvMax)
-			mbTransferError = true;
+		mCommandBuffer[mCommandBufferIndex] = c;
 
-		if (mTransferIndex >= mTransferEnd) {
-			if (mpActiveDevice) {
-				const uint32 transferLen = mTransferEnd - mTransferStart;
-				const uint8 *data = mTransferBuffer + mTransferStart;
-				const bool checksumOK = !mbTransferError && (!transferLen || ATComputeSIOChecksum(data, transferLen - 1) == data[transferLen - 1]);
-
-				mTransferStart = mTransferEnd;
-
-				// Adjust queue time for the time actually taken during the transfer. Note that this
-				// is an offset instead of just resetting the queue time as there can be commands already
-				// queued afterward, especially for auto-protocol receives.
-				mCommandQueueTime += (uint32)(mpScheduler->GetTick() - mTransferStartTime);
-
-				if (mCurrentStep.mType == kStepType_ReceiveAutoProtocol) {
-					if (!checksumOK) {
-						mStepQueue.clear();
-						// SIO protocol requires 850us minimum delay.
-						Delay(1530);
-						SendNAK();
-						ExecuteNextStep();
-						return false;
-					}
-
-					mpActiveDevice->OnSerialReceiveComplete(mCurrentStep.mTransferId, data, transferLen - 1, true);
-				} else {
-					mpActiveDevice->OnSerialReceiveComplete(mCurrentStep.mTransferId, data, transferLen, checksumOK);
-				}
-
-				mCurrentStep.mType = kStepType_None;
-				ExecuteNextStep();
-			} else {
-				mCommandFrameEndTime = mpScheduler->GetTick64();
-			}
+		if (++mCommandBufferIndex >= 5) {
+			mCommandFrameEndTime = mpScheduler->GetTick64();
+			if (!mbCommandState)
+				ProcessCommandFrame();
 		}
 	}
+
+	bool burst = false;
+
+	mReceivingInterfaces.NotifyAllDirect(
+		[=, this, &burst](SIOInterface *iface) {
+			if (iface->OnReceive(c, cyclesPerBit, framingError, truncated))
+				burst = true;
+		}
+	);
 
 	{
 		RawDeviceListLock lock(this);
@@ -573,28 +1722,20 @@ bool ATSIOManager::PokeyWriteSIO(uint8 c, bool command, uint32 cyclesPerBit, uin
 		}
 	}
 
-	return mpActiveDevice && (mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled);
+	return burst;
 }
 
 void ATSIOManager::PokeyBeginCommand() {
-	if (!mbLoadingState) {
-		AbortActiveCommand();
-
-		mbTransferSend = false;
-		mTransferIndex = 0;
-		mTransferLevel = 0;
-		mTransferStart = 0;
-		mTransferEnd = 5;
-	}
-
+	if (!mbLoadingState)
+		mCommandBufferIndex = 0;
+	
+	if (mpTraceChannelBusCommand)
+		mTraceCommandStartTime = mpScheduler->GetTick64();
+	
 	if (!mbCommandState) {
 		mbCommandState = true;
 
-		if (mpTraceChannelBusCommand)
-			mTraceCommandStartTime = mpScheduler->GetTick64();
-
 		RawDeviceListLock lock(this);
-
 		for(auto *rawdev : mSIORawDevices) {
 			if (rawdev)
 				rawdev->OnCommandStateChanged(mbCommandState);
@@ -608,74 +1749,17 @@ void ATSIOManager::PokeyEndCommand() {
 	
 	mbCommandState = false;
 
-	if (mpTraceChannelBusCommand)
-		mpTraceChannelBusCommand->AddTickEvent(mTraceCommandStartTime, mpScheduler->GetTick64(), L"", 0xFFC02020);
-
 	if (mbLoadingState)
 		return;
 
-	if (mTransferIndex >= mTransferEnd && ATComputeSIOChecksum(mTransferBuffer, 4) == mTransferBuffer[4]) {
-		mCommandDeassertTime = mpScheduler->GetTick64();
+	const uint64 t = mpScheduler->GetTick64();
+	mCommandDeassertTime = t;
 
-		ATDeviceSIOCommand cmd = {};
-		cmd.mDevice = mTransferBuffer[0];
-		cmd.mCommand = mTransferBuffer[1];
-		cmd.mAUX[0] = mTransferBuffer[2];
-		cmd.mAUX[1] = mTransferBuffer[3];
-		cmd.mCyclesPerBit = mTransferCyclesPerBit;
-		cmd.mbStandardRate = (mTransferCyclesPerBit >= 91 && mTransferCyclesPerBit <= 98);
-		cmd.mPollCount = mPollCount;
+	if (mpTraceChannelBusCommand)
+		mpTraceChannelBusCommand->AddTickEvent(mTraceCommandStartTime, t, L"", 0xFFC02020);
 
-		// Check if this is a type 3 poll command -- we provide assistance for these.
-		// Note that we've already recorded the poll count above.
-		UpdatePollState(cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1]);
-
-		mTransferStart = 0;
-		mTransferIndex = 0;
-		mTransferEnd = 0;
-		mTransferLevel = 0;
-		mCommandQueueTime = mCommandDeassertTime;
-
-		if (g_ATLCSIOCmd.IsEnabled())
-			g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)%s\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], ATDecodeSIOCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX), cmd.mbStandardRate ? "" : " (high-speed command frame)");
-
-		ResetTransfer();
-
-		mbActiveDeviceDisk = (cmd.mDevice >= 0x31 && cmd.mDevice <= 0x3F);
-		mActiveDeviceId = cmd.mDevice;
-
-		for(IATDeviceSIO *dev : mSIODevices) {
-			mpActiveDevice = dev;
-
-			const IATDeviceSIO::CmdResponse response = dev->OnSerialBeginCommand(cmd);
-			if (response) {
-				if (mbActiveDeviceDisk)
-					mAccessedDisks |= (1 << (cmd.mDevice - 0x31));
-
-				switch(response) {
-					case IATDeviceSIO::kCmdResponse_Start:
-						break;
-
-					case IATDeviceSIO::kCmdResponse_Send_ACK_Complete:
-						BeginCommand();
-						SendACK();
-						SendComplete();
-						EndCommand();
-						break;
-
-					case IATDeviceSIO::kCmdResponse_Fail_NAK:
-						BeginCommand();
-						SendNAK();
-						EndCommand();
-						break;
-				}
-				break;
-			}
-
-			mpActiveDevice = nullptr;
-			mActiveDeviceId = 0;
-		}
-	}
+	if (mCommandBufferIndex >= 5)
+		ProcessCommandFrame();
 
 	{
 		RawDeviceListLock lock(this);
@@ -688,9 +1772,6 @@ void ATSIOManager::PokeyEndCommand() {
 }
 
 void ATSIOManager::PokeySerInReady() {
-	if (!(mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled))
-		return;
-
 	{
 		RawDeviceListLock lock(this);
 
@@ -700,26 +1781,12 @@ void ATSIOManager::PokeySerInReady() {
 		}
 	}
 
-	if (!mpTransferEvent)
-		return;
-
-	if (!mbTransferSend)
-		return;
-
-	if (mTransferIndex - mTransferStart < 3)
-		return;
-
-	uint32 existingDelay = mpScheduler->GetTicksToEvent(mpTransferEvent);
-	if (existingDelay > 50) {
-		// Whenever we shorten a byte delay for burst, we extend the next byte
-		// delay by that amount. This means that we need to make sure not to
-		// double-add that amount on the next run.
-		mAccelTimeSkew -= mTransferLastBurstOffset;
-		mTransferBurstOffset = (existingDelay - 50);
-		mAccelTimeSkew += mTransferBurstOffset;
-
-		mpScheduler->SetEvent(50, this, kEventId_Send, mpTransferEvent);
-	}
+	mSendingInterfaces.NotifyAllDirect(
+		[this](SIOInterface *iface) {
+			if (!iface->OnSendReady())
+				mSendingInterfaces.Remove(iface);
+		}
+	);
 }
 
 void ATSIOManager::PokeySetBreak(bool enabled) {
@@ -733,22 +1800,21 @@ void ATSIOManager::PokeySetBreak(bool enabled) {
 	}
 }
 
-void ATSIOManager::AddDevice(IATDeviceSIO *dev) {
-	mSIODevices.push_back(dev);
-}
+vdrefptr<IATDeviceSIOInterface> ATSIOManager::AddDevice(IATDeviceSIO *dev) {
+	vdrefptr p(new SIOInterface(*this, *dev));
 
-void ATSIOManager::RemoveDevice(IATDeviceSIO *dev) {
-	auto it = std::find(mSIODevices.begin(), mSIODevices.end(), dev);
+	mSIOInterfaces.Add(p);
 
-	if (it != mSIODevices.end())
-		mSIODevices.erase(it);
-
-	if (mpActiveDevice == dev) {
-		AbortActiveCommand();
-	}
+	return p;
 }
 
 void ATSIOManager::BeginCommand() {
+	if (!mpPendingInterface)
+		return;
+
+	if (mbPendingDeviceDisk)
+		mAccessedDisks |= (1 << (mPendingDeviceId - 0x31));
+
 	if (mpAccelRequest) {
 		g_ATLCSIOAccel("Accelerating device %02X cmd %02X aux %02X%02X (%04X) buffer %04X length %04X\n"
 			, mpAccelRequest->mDevice
@@ -759,229 +1825,6 @@ void ATSIOManager::BeginCommand() {
 			, mAccelBufferAddress
 			, mpAccelRequest->mLength);
 	}
-
-	mTransferStart = 0;
-	mTransferIndex = 0;
-	mTransferEnd = 0;
-	mTransferLevel = 0;
-}
-
-void ATSIOManager::SendData(const void *data, uint32 len, bool addChecksum) {
-	VDASSERT(mTransferIndex <= mTransferLevel);
-
-	if (!len)
-		return;
-
-	uint32 spaceRequired = len;
-
-	if (addChecksum)
-		++spaceRequired;
-
-	if (vdcountof(mTransferBuffer) - mTransferLevel < spaceRequired) {
-		// The transmit buffer is full -- let's see if we can shift it down.
-		ShiftTransmitBuffer();
-
-		// check again
-		if (vdcountof(mTransferBuffer) - mTransferLevel < spaceRequired) {
-			VDASSERT(!"No room left in transfer buffer.");
-			return;
-		}
-	}
-
-	mCommandQueueTime += (len + (addChecksum ? 1 : 0)) * mCommandQueueCyclesPerByte;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = addChecksum ? kStepType_SendAutoProtocol : kStepType_Send;
-	step.mTransferLength = spaceRequired;
-	
-	memcpy(mTransferBuffer + mTransferLevel, data, len);
-
-	if (addChecksum)
-		mTransferBuffer[mTransferLevel + len] = ATComputeSIOChecksum(mTransferBuffer + mTransferLevel, len);
-
-	mTransferLevel += spaceRequired;
-
-	ExecuteNextStep();
-}
-
-void ATSIOManager::SendACK() {
-	// This command, and all other commands, need to be silently ignored when no device
-	// is active. We need to support this to allow an EndCommand() to be preemptively
-	// inserted into a command stream off of a receive callback. In that case, surrounding
-	// code that is being unwound may still attempt to push a couple of additional commands.
-	if (!mpActiveDevice)
-		return;
-
-	if (mpAccelRequest) {
-		Step& step = mStepQueue.push_back();
-		step.mType = kStepType_AccelSendACK;
-	} else {
-		SendData("A", 1, false);
-	}
-}
-
-void ATSIOManager::SendNAK() {
-	if (!mpActiveDevice)
-		return;
-
-	if (mpAccelRequest) {
-		Step& step = mStepQueue.push_back();
-		step.mType = kStepType_AccelSendNAK;
-	} else {
-		SendData("N", 1, false);
-	}
-
-	if (g_ATLCSIOReply.IsEnabled())
-		g_ATLCSIOReply("Device %02X > NAK\n", mActiveDeviceId);
-}
-
-void ATSIOManager::SendComplete(bool autoDelay) {
-	if (!mpActiveDevice)
-		return;
-
-	// SIO protocol requires minimum 250us delay here.
-	if (autoDelay)
-		Delay(450);
-
-	if (mpAccelRequest) {
-		Step& step = mStepQueue.push_back();
-		step.mType = kStepType_AccelSendComplete;
-	} else {
-		SendData("C", 1, false);
-	}
-
-	if (g_ATLCSIOReply.IsEnabled())
-		g_ATLCSIOReply("Device %02X > Complete\n", mActiveDeviceId);
-}
-
-void ATSIOManager::SendError(bool autoDelay) {
-	if (!mpActiveDevice)
-		return;
-
-	// SIO protocol requires minimum 250us delay here.
-	if (autoDelay)
-		Delay(450);
-
-	if (mpAccelRequest) {
-		Step& step = mStepQueue.push_back();
-		step.mType = kStepType_AccelSendError;
-	} else {
-		SendData("E", 1, false);
-	}
-
-	if (g_ATLCSIOReply.IsEnabled())
-		g_ATLCSIOReply("Device %02X > Error\n", mActiveDeviceId);
-}
-
-void ATSIOManager::ReceiveData(uint32 id, uint32 len, bool autoProtocol) {
-	if (!mpActiveDevice)
-		return;
-
-	if (autoProtocol)
-		++len;
-
-	if (vdcountof(mTransferBuffer) - mTransferLevel < len) {
-		// The transmit buffer is full -- let's see if we can shift it down.
-		ShiftTransmitBuffer();
-
-		// check again
-		if (vdcountof(mTransferBuffer) - mTransferLevel < len) {
-			VDASSERT(!"No room left in transfer buffer.");
-			return;
-		}
-	}
-
-	memset(mTransferBuffer + mTransferLevel, 0, len);
-	mTransferLevel += len;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = autoProtocol ? kStepType_ReceiveAutoProtocol : kStepType_Receive;
-	step.mTransferLength = len;
-	step.mTransferId = id;
-
-	if (autoProtocol) {
-		// SIO protocol requires 850us minimum delay.
-		Delay(1530);
-		SendACK();
-	}
-
-	ExecuteNextStep();
-}
-
-void ATSIOManager::SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) {
-	if (!mpActiveDevice)
-		return;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = kStepType_SetTransferRate;
-	step.mTransferCyclesPerBit = cyclesPerBit;
-	step.mTransferCyclesPerByte = cyclesPerByte;
-
-	mCommandQueueCyclesPerByte = cyclesPerByte;
-
-	ExecuteNextStep();
-}
-
-void ATSIOManager::SetSynchronousTransmit(bool enable) {
-	if (!mpActiveDevice)
-		return;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = kStepType_SetSynchronousTransmit;
-	step.mbEnable = enable;
-
-	ExecuteNextStep();
-}
-
-void ATSIOManager::Delay(uint32 ticks) {
-	if (!mpActiveDevice)
-		return;
-
-	if (!ticks)
-		return;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = kStepType_Delay;
-	step.mDelayTicks = ticks;
-
-	mCommandQueueTime += ticks;
-
-	ExecuteNextStep();
-}
-
-void ATSIOManager::InsertFence(uint32 id) {
-	if (!mpActiveDevice)
-		return;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = kStepType_Fence;
-	step.mFenceId = id;
-}
-
-void ATSIOManager::FlushQueue() {
-	mStepQueue.clear();
-}
-
-void ATSIOManager::EndCommand() {
-	if (!mpActiveDevice)
-		return;
-
-	Step& step = mStepQueue.push_back();
-	step.mType = kStepType_EndCommand;
-}
-
-void ATSIOManager::HandleCommand(const void *data, uint32 len, bool succeeded) {
-	SendACK();
-
-	if (succeeded)
-		SendComplete();
-	else
-		SendError();
-
-	if (len)
-		SendData(data, len, true);
-
-	EndCommand();
 }
 
 uint32 ATSIOManager::GetCyclesPerBitRecv() const {
@@ -999,215 +1842,6 @@ uint32 ATSIOManager::GetCyclesPerBitSend() const {
 uint32 ATSIOManager::GetCyclesPerBitBiClock() const {
 	// Double period because we need a full cycle hi+lo per bit.
 	return mpPokey->GetSerialBidirectionalClockPeriod() * 2;
-}
-
-class ATSaveStateSioCommandStep final : public ATSnapExchangeObject<ATSaveStateSioCommandStep, "ATSaveStateSioCommandStep"> {
-public:
-	ATSaveStateSioCommandStep() = default;
-	ATSaveStateSioCommandStep(const ATSIOManager::Step& step)
-		: mStep(step)
-	{
-	}
-
-	template<typename T>
-	void Exchange(T& rw) {
-		ATSIOManager::StepType stepType;
-		uint32 arg1 = 0;
-		uint32 arg2 = 0;
-
-		if constexpr (rw.IsWriter) {
-			stepType = mStep.mType;
-			arg1 = 0;
-			arg2 = 0;
-
-			switch(mStep.mType) {
-				case ATSIOManager::kStepType_Delay:
-					arg1 = mStep.mDelayTicks;
-					break;
-
-				case ATSIOManager::kStepType_Send:
-				case ATSIOManager::kStepType_SendAutoProtocol:
-					arg1 = mStep.mTransferLength;
-					break;
-
-				case ATSIOManager::kStepType_Receive:
-				case ATSIOManager::kStepType_ReceiveAutoProtocol:
-					arg1 = mStep.mTransferLength;
-					arg2 = mStep.mTransferId;
-					break;
-
-				case ATSIOManager::kStepType_SetTransferRate:
-					arg1 = mStep.mTransferCyclesPerByte;
-					arg2 = mStep.mTransferCyclesPerBit;
-					break;
-
-				case ATSIOManager::kStepType_SetSynchronousTransmit:
-					arg1 = mStep.mbEnable;
-					break;
-
-				case ATSIOManager::kStepType_Fence:
-					arg1 = mStep.mFenceId;
-					break;
-
-				case ATSIOManager::kStepType_EndCommand:
-					break;
-			}
-		}
-
-		rw.TransferEnum("step_type", &stepType);
-		rw.Transfer("arg1", &arg1);
-		rw.Transfer("arg2", &arg2);
-		rw.Transfer("transfer_data", &mTransferData);
-
-		if constexpr (rw.IsReader) {
-			mStep.mType = stepType;
-
-			switch(stepType) {
-				case ATSIOManager::kStepType_Delay:
-					mStep.mDelayTicks = arg1;
-					break;
-
-				case ATSIOManager::kStepType_Send:
-				case ATSIOManager::kStepType_SendAutoProtocol:
-					mStep.mTransferLength = arg1;
-
-					if (mTransferData.size() != arg1)
-						throw ATInvalidSaveStateException();
-					break;
-
-				case ATSIOManager::kStepType_Receive:
-				case ATSIOManager::kStepType_ReceiveAutoProtocol:
-					mStep.mTransferLength = arg1;
-					mStep.mTransferId = arg2;
-					break;
-
-				case ATSIOManager::kStepType_SetTransferRate:
-					mStep.mTransferCyclesPerByte = arg1;
-					mStep.mTransferCyclesPerBit = arg2;
-
-					if (!mStep.mTransferCyclesPerByte || !mStep.mTransferCyclesPerBit)
-						throw ATInvalidSaveStateException();
-					break;
-
-				case ATSIOManager::kStepType_SetSynchronousTransmit:
-					mStep.mbEnable = arg1 != 0;
-					break;
-
-				case ATSIOManager::kStepType_Fence:
-					mStep.mFenceId = arg1;
-					break;
-
-				case ATSIOManager::kStepType_EndCommand:
-					break;
-			}
-		}
-	}
-
-	ATSIOManager::Step mStep {};
-	vdfastvector<uint8> mTransferData;
-};
-
-class ATSaveStateSioActiveCommand final : public ATSnapExchangeObject<ATSaveStateSioActiveCommand, "ATSaveStateSioActiveCommand"> {
-public:
-	template<typename T>
-	void Exchange(T& rw) {
-		rw.Transfer("device_id", &mDeviceId);
-		rw.Transfer("transfer_start_time", &mTransferStartTime);
-		rw.Transfer("transfer_start", &mTransferStart);
-		rw.Transfer("transfer_index", &mTransferIndex);
-		rw.Transfer("transfer_error", &mbTransferError);
-		rw.Transfer("transfer_cycles_per_bit", &mTransferCyclesPerBit);
-		rw.Transfer("transfer_cycles_per_byte", &mTransferCyclesPerByte);
-		rw.Transfer("transmit_synchronous", &mbTransmitSynchronous);
-		rw.Transfer("current_step", &mpCurrentStep);
-		rw.Transfer("step_delay", &mStepDelay);
-		rw.Transfer("steps", &mSteps);
-		rw.Transfer("queue_time", &mQueueTime);
-		rw.Transfer("queue_cycles_per_byte", &mQueueCyclesPerByte);
-		rw.Transfer("command_frame_end_time", &mCommandFrameEndTime);
-		rw.Transfer("command_deassert_time", &mCommandDeassertTime);
-
-		if constexpr (rw.IsReader) {
-			if (mTransferIndex > ATSIOManager::kMaxTransferSize)
-				throw ATInvalidSaveStateException();
-		}
-	}
-
-	uint8 mDeviceId = 0;
-	sint32 mTransferStartTime = 0;
-	uint32 mTransferIndex = 0;
-	uint32 mTransferStart = 0;
-	bool mbTransferError = false;
-	uint32 mStepDelay = 0;
-	uint32 mTransferCyclesPerBit = 0;
-	uint32 mTransferCyclesPerByte = 0;
-	bool mbTransmitSynchronous = false;
-	sint64 mQueueTime = 0;
-	uint32 mQueueCyclesPerByte = 0;
-	sint64 mCommandFrameEndTime = 0;
-	sint64 mCommandDeassertTime = 0;
-	vdvector<vdrefptr<ATSaveStateSioCommandStep>> mSteps;
-	vdrefptr<ATSaveStateSioCommandStep> mpCurrentStep;
-};
-
-void ATSIOManager::SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **ppState) const {
-	if (!device || device != mpActiveDevice) {
-		*ppState = nullptr;
-		return;
-	}
-
-	vdrefptr state(new ATSaveStateSioActiveCommand);
-
-	uint32 transferPos = mTransferEnd;
-	if (mCurrentStep.mType) {
-		ATSaveStateSioCommandStep *savedCurStep = new ATSaveStateSioCommandStep(mCurrentStep);
-
-		state->mpCurrentStep = vdrefptr(savedCurStep);
-
-		if (mCurrentStep.mType == kStepType_Send || mCurrentStep.mType == kStepType_SendAutoProtocol) {
-			savedCurStep->mTransferData.resize(mCurrentStep.mTransferLength);
-			memcpy(savedCurStep->mTransferData.data(), mTransferBuffer + mTransferStart, mCurrentStep.mTransferLength);
-
-			// transferPos already points to end
-		}
-	}
-
-	state->mSteps.reserve(mStepQueue.size());
-
-	for(const Step& step : mStepQueue) {
-		ATSaveStateSioCommandStep *savedStep = new ATSaveStateSioCommandStep(step);
-
-		state->mSteps.emplace_back(vdrefptr(savedStep));
-
-		if (step.mType == kStepType_Send || step.mType == kStepType_SendAutoProtocol) {
-			savedStep->mTransferData.resize(step.mTransferLength);
-			memcpy(savedStep->mTransferData.data(), mTransferBuffer + transferPos, step.mTransferLength);
-
-			transferPos += step.mTransferLength;
-		}
-	}
-
-	state->mDeviceId = mActiveDeviceId;
-	state->mTransferStart = mTransferStart;
-	state->mTransferIndex = mTransferIndex - mTransferStart;
-	state->mbTransferError = mbTransferError;
-	state->mTransferCyclesPerByte = mTransferCyclesPerByte;
-	state->mTransferCyclesPerBit = mTransferCyclesPerBit;
-	state->mbTransmitSynchronous = mbTransmitSynchronous;
-
-	const uint64 t64 = mpScheduler->GetTick64();
-	state->mTransferStartTime = mpTransferEvent ? (sint32)(mTransferStartTime - (uint32)t64) : 0;
-	state->mQueueTime = (sint64)(mCommandQueueTime - t64);
-	state->mQueueCyclesPerByte = mCommandQueueCyclesPerByte;
-	state->mCommandFrameEndTime = (sint64)(mCommandFrameEndTime - t64);
-	state->mCommandDeassertTime = (sint64)(mCommandDeassertTime - t64);
-
-	if (mpTransferEvent)
-		state->mStepDelay = mpScheduler->GetTicksToEvent(mpTransferEvent);
-	else if (mpDelayEvent)
-		state->mStepDelay = mpScheduler->GetTicksToEvent(mpDelayEvent);
-
-	*ppState = state.release();
 }
 
 void ATSIOManager::SetFrameTime(uint32 cyclesPerFrame) {
@@ -1228,125 +1862,25 @@ void ATSIOManager::SetReadyState(bool ready) {
 }
 
 void ATSIOManager::PreLoadState() {
-	AbortActiveCommand();
+	CancelAllCommands();
 
 	mbLoadingState = true;
+	mCommandBufferIndex = 0;
+}
+
+void ATSIOManager::LoadState(IATObjectState *obj) {
+	if (obj) {
+		const ATSaveStateSioManager& state = atser_cast<const ATSaveStateSioManager&>(*obj);
+
+		mCommandBufferIndex = std::min<uint8>(5, state.mCommandBufferIndex);
+		mCommandCyclesPerBit = state.mCommandCyclesPerBit;
+
+		vdcopy_checked_r(mCommandBuffer, state.mCommandBuffer);
+	}
 }
 
 void ATSIOManager::PostLoadState() {
 	mbLoadingState = false;
-}
-
-void ATSIOManager::LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state0) {
-	if (!device || !state0)
-		return;
-
-	try {
-		const ATSaveStateSioActiveCommand& state = atser_cast<const ATSaveStateSioActiveCommand&>(*state0);
-
-		AbortActiveCommand();
-		ResetTransfer();
-
-		if (state.mTransferCyclesPerByte)
-			mTransferCyclesPerByte = state.mTransferCyclesPerByte;
-
-		if (state.mTransferCyclesPerBit)
-			mTransferCyclesPerBit = state.mTransferCyclesPerBit;
-
-		mActiveDeviceId = state.mDeviceId;
-		mbTransmitSynchronous = state.mbTransmitSynchronous;
-		mTransferStart = state.mTransferStart;
-		mTransferEnd = mTransferStart;
-		mbTransferError = state.mbTransferError;
-		mbTransferSend = false;
-
-		const uint64 t64 = mpScheduler->GetTick64();
-		mTransferStartTime = (uint64)state.mTransferStartTime + t64;
-		mCommandQueueTime = (uint64)state.mQueueTime + t64;
-		mCommandQueueCyclesPerByte = state.mQueueCyclesPerByte;
-		mCommandFrameEndTime = (uint64)state.mCommandFrameEndTime + t64;
-		mCommandDeassertTime = (uint64)state.mCommandDeassertTime + t64;
-
-		if (state.mpCurrentStep) {
-			mCurrentStep = state.mpCurrentStep->mStep;
-
-			switch(mCurrentStep.mType) {
-				case kStepType_Receive:
-				case kStepType_ReceiveAutoProtocol:
-					if (vdcountof(mTransferBuffer) - mTransferStart < mCurrentStep.mTransferLength)
-						throw ATInvalidSaveStateException();
-
-					mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-					mbTransferSend = false;
-
-					memcpy(mTransferBuffer + mTransferStart, state.mpCurrentStep->mTransferData.data(), mCurrentStep.mTransferLength);
-					break;
-
-				case kStepType_Send:
-				case kStepType_SendAutoProtocol:
-					mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-					mbTransferSend = true;
-
-					if (state.mStepDelay)
-						mpScheduler->SetEvent(state.mStepDelay, this, kEventId_Send, mpTransferEvent);
-					break;
-
-				case kStepType_Delay:
-					if (state.mStepDelay)
-						mpScheduler->SetEvent(state.mStepDelay, this, kEventId_Delay, mpDelayEvent);
-					break;
-
-				default:
-					break;
-			}
-		}
-
-		if (state.mTransferIndex > mTransferEnd - mTransferStart)
-			throw ATInvalidSaveStateException();
-
-		mTransferIndex = state.mTransferStart + state.mTransferIndex;
-		mTransferLevel = mTransferEnd;
-
-		for(const auto& step : state.mSteps) {
-			if (step)
-				mStepQueue.push_back(step->mStep);
-
-			switch(step->mStep.mType) {
-				case kStepType_Send:
-				case kStepType_SendAutoProtocol:
-				case kStepType_Receive:
-				case kStepType_ReceiveAutoProtocol:
-					if (vdcountof(mTransferBuffer) - mTransferLevel < step->mStep.mTransferLength)
-						throw ATInvalidSaveStateException();
-
-					if (step->mStep.mType == kStepType_Send || step->mStep.mType == kStepType_SendAutoProtocol)
-						memcpy(&mTransferBuffer[mTransferLevel], step->mTransferData.data(), step->mStep.mTransferLength);
-
-					mTransferLevel += step->mStep.mTransferLength;
-					break;
-			}
-		}
-
-
-		// sanity check transfer parameters
-		if (mTransferCyclesPerBit > 100000 || mTransferCyclesPerByte > 1000000)
-			throw ATInvalidSaveStateException();
-
-		if (mTransferCyclesPerByte < mTransferCyclesPerBit * 8)
-			throw ATInvalidSaveStateException();
-
-		// derived parameter cleanup
-		mpActiveDevice = device;
-
-		UpdateActiveDeviceDerivedValues();
-		UpdateTransferRateDerivedValues();
-
-	} catch(...) {
-		AbortActiveCommand();
-		ResetTransfer();
-		UpdateTransferRateDerivedValues();
-		throw;
-	}
 }
 
 void ATSIOManager::AddRawDevice(IATDeviceRawSIO *dev) {
@@ -1534,32 +2068,33 @@ void ATSIOManager::SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, 
 	}
 }
 
-void ATSIOManager::OnScheduledEvent(uint32 id) {
-	switch(id) {
-		case kEventId_Delay:
-			mpDelayEvent = nullptr;
-			mCurrentStep.mType = kStepType_None;
-			ExecuteNextStep();
-			break;
+void ATSIOManager::RemoveInterface(SIOInterface& iface) {
+	if (iface.IsCommandActive())
+		iface.CancelCommand();
 
-		case kEventId_Send:
-			mpTransferEvent = nullptr;
-			if (mTransferIndex < mTransferEnd) {
-				uint8 c = mTransferBuffer[mTransferIndex++];
+	mSIOInterfaces.Remove(&iface);
 
-				mpPokey->ReceiveSIOByte(c, mTransferCyclesPerBit, true, mbActiveDeviceDisk ? mbDiskBurstTransfersEnabled : mbBurstTransfersEnabled, false, false);
-				TraceReceive(c, mTransferCyclesPerBit, false);
+	EndReceive(iface);
+	EndSend(iface);
 
-				mpScheduler->SetEvent(mTransferCyclesPerByte + mTransferBurstOffset, this, kEventId_Send, mpTransferEvent);
-				mTransferLastBurstOffset = mTransferBurstOffset;
-				mTransferBurstOffset = 0;
-			} else {
-				mTransferStart = mTransferEnd;
-				mCurrentStep.mType = kStepType_None;
-				ExecuteNextStep();
-			}
-			break;
-	}
+	if (mpPendingInterface == &iface)
+		mpPendingInterface = nullptr;
+}
+
+void ATSIOManager::BeginReceive(SIOInterface& iface) {
+	mReceivingInterfaces.AddUnique(&iface);
+}
+
+void ATSIOManager::EndReceive(SIOInterface& iface) {
+	mReceivingInterfaces.Remove(&iface);
+}
+
+void ATSIOManager::BeginSend(SIOInterface& iface) {
+	mSendingInterfaces.AddUnique(&iface);
+}
+
+void ATSIOManager::EndSend(SIOInterface& iface) {
+	mSendingInterfaces.Remove(&iface);
 }
 
 uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
@@ -1588,211 +2123,21 @@ uint8 ATSIOManager::OnHookSIOV(uint16 pc) {
 	return TryAccelRequest(req, pc == 0) ? 0x60 : 0;
 }
 
-void ATSIOManager::AbortActiveCommand() {
-	if (mpActiveDevice) {
-		mpActiveDevice->OnSerialAbortCommand();
-		mpActiveDevice = nullptr;
-	}
-
-	if (mpScheduler) {
-		mpScheduler->UnsetEvent(mpTransferEvent);
-		mpScheduler->UnsetEvent(mpDelayEvent);
-	}
-
-	mStepQueue.clear();
-	mCurrentStep.mType = kStepType_None;
-}
-
-void ATSIOManager::ExecuteNextStep() {
-	while(!mCurrentStep.mType && !mStepQueue.empty()) {
-		mCurrentStep = mStepQueue.front();
-		mStepQueue.pop_front();
-
-		switch(mCurrentStep.mType) {
-			case kStepType_Send:
-			case kStepType_SendAutoProtocol:
-				if (!mpAccelRequest)
-					g_ATLCSIOSteps("Sending %u bytes (%02X)\n", mCurrentStep.mTransferLength, mTransferBuffer[mTransferIndex]);
-
-				mbTransferSend = true;
-				mTransferStart = mTransferIndex;
-				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-				mTransferBurstOffset = 0;
-				mTransferLastBurstOffset = 0;
-				VDASSERT(mTransferEnd <= vdcountof(mTransferBuffer));
-
-				if (mpAccelRequest) {
-					if (mpAccelRequest->mMode & 0x40) {
-						const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_SendAutoProtocol ? -1 : 0);
-						const uint32 reqLen = mpAccelRequest->mLength;
-						const uint32 minLen = std::min<uint32>(len, reqLen);
-						const uint8 *src = mTransferBuffer + mTransferIndex;
-
-						for(uint32 i=0; i<minLen; ++i)
-							mpMemory->WriteByte(mAccelBufferAddress + i, src[i]);
-
-						mAccelTimeSkew += (minLen + 1) * mTransferCyclesPerByte;
-
-						uint8 checksum = ATComputeSIOChecksum(src, minLen);
-
-						if (len < reqLen) {
-							// We sent less data than SIO was expecting. This will cause a timeout.
-							*mpAccelStatus = 0x8A;
-						} else if (len > reqLen) {
-							// We sent more data than SIO was expecting. This may cause a checksum
-							// error.
-							if (checksum != src[reqLen])
-								*mpAccelStatus = 0x8F;
-						}
-
-						mpMemory->WriteByte(ATKernelSymbols::CHKSUM, checksum);
-
-						const uint32 endAddr = mAccelBufferAddress + minLen;
-						mpMemory->WriteByte(ATKernelSymbols::BUFRLO, (uint8)endAddr);
-						mpMemory->WriteByte(ATKernelSymbols::BUFRHI, (uint8)(endAddr >> 8));
-					}
-
-					mTransferIndex = mTransferEnd;
-					mCurrentStep.mType = kStepType_None;
-				} else {
-					OnScheduledEvent(kEventId_Send);
-				}
-				break;
-
-			case kStepType_Receive:
-			case kStepType_ReceiveAutoProtocol:
-				if (!mpAccelRequest)
-					g_ATLCSIOSteps("Receiving %u bytes\n", mCurrentStep.mTransferLength);
-
-				mbTransferSend = false;
-				mbTransferError = false;
-				mTransferStart = mTransferIndex;
-				mTransferEnd = mTransferStart + mCurrentStep.mTransferLength;
-
-				UpdateTransferRateDerivedValues();
-
-				if (mpAccelRequest) {
-					const uint32 id = mCurrentStep.mTransferId;
-					const uint32 len = mCurrentStep.mTransferLength + (mCurrentStep.mType == kStepType_ReceiveAutoProtocol ? -1 : 0);
-					const uint32 reqLen = mpAccelRequest->mMode & 0x80 ? mpAccelRequest->mLength : 0;
-					const uint32 minLen = std::min<uint32>(len, reqLen);
-
-					for(uint32 i=0; i<minLen; ++i)
-						mTransferBuffer[mTransferStart + i] = mpMemory->ReadByte(mAccelBufferAddress + i);
-
-					mAccelTimeSkew += (minLen + 1) * (mTransferCyclesPerBit * 10);
-
-					if (reqLen < len) {
-						// SIO provided less data than we were expecting. Hmm. On an 810,
-						// this will hang the drive indefinitely until the expected bytes
-						// are provided. For now, we report a broken checksum to the device.
-						memset(mTransferBuffer + mTransferStart + minLen, 0, len - minLen);
-
-						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, false);
-					} else if (reqLen > len) {
-						// SIO provided more data than we were expecting. This may cause
-						// a checksum error.
-						const uint8 checksum = mpMemory->ReadByte(mAccelBufferAddress + minLen);
-
-						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, checksum == ATComputeSIOChecksum(mTransferBuffer + mTransferStart, minLen));
-					} else {
-						mpActiveDevice->OnSerialReceiveComplete(id, mTransferBuffer + mTransferStart, len, true);
-					}
-
-					mTransferIndex = mTransferEnd;
-					mCurrentStep.mType = kStepType_None;
-				} else {
-					mTransferStartTime = mpScheduler->GetTick();
-				}
-				break;
-
-			case kStepType_SetTransferRate:
-				mTransferCyclesPerBit = mCurrentStep.mTransferCyclesPerBit;
-				mTransferCyclesPerByte = mCurrentStep.mTransferCyclesPerByte;
-				mCurrentStep.mType = kStepType_None;
-				break;
-
-			case kStepType_SetSynchronousTransmit:
-				mbTransmitSynchronous = mCurrentStep.mbEnable;
-				mCurrentStep.mType = kStepType_None;
-				break;
-
-			case kStepType_Delay:
-				VDASSERT(mCurrentStep.mDelayTicks);
-
-				if (mpAccelRequest) {
-					mAccelTimeSkew += mCurrentStep.mDelayTicks;
-					mCurrentStep.mType = kStepType_None;
-				} else {
-					g_ATLCSIOSteps("Delaying for %u ticks\n", mCurrentStep.mDelayTicks);
-					mpScheduler->SetEvent(mCurrentStep.mDelayTicks, this, kEventId_Delay, mpDelayEvent);
-				}
-				break;
-
-			case kStepType_Fence:
-				mCurrentStep.mType = kStepType_None;
-				mpActiveDevice->OnSerialFence(mCurrentStep.mFenceId);
-				break;
-
-			case kStepType_EndCommand:
-				if (!mpAccelRequest)
-					g_ATLCSIOSteps <<= "Ending command\n";
-				mpActiveDevice = nullptr;
-				mCurrentStep.mType = kStepType_None;
-				mStepQueue.clear();
-				break;
-
-			case kStepType_AccelSendACK:
-			case kStepType_AccelSendComplete:
-				mAccelTimeSkew += mTransferCyclesPerByte;
-				mCurrentStep.mType = kStepType_None;
-				break;
-
-			case kStepType_AccelSendNAK:
-				*mpAccelStatus = 0x8B;		// NAK error
-				mCurrentStep.mType = kStepType_None;
-				mAccelTimeSkew += mTransferCyclesPerByte;
-				break;
-
-			case kStepType_AccelSendError:
-				*mpAccelStatus = 0x90;		// Device error
-				mCurrentStep.mType = kStepType_None;
-				mAccelTimeSkew += mTransferCyclesPerByte;
-				break;
-
-			default:
-				VDFAIL("Unknown step in step queue.");
-				break;
+void ATSIOManager::CancelAllCommands() {
+	mActiveCommandInterfaces.NotifyAllDirect(
+		[](SIOInterface *iface) {
+			iface->CancelCommand();
 		}
-	}
+	);
 }
 
-void ATSIOManager::ShiftTransmitBuffer() {
-	if (mTransferStart > 0) {
-		memmove(mTransferBuffer, mTransferBuffer + mTransferStart, mTransferLevel - mTransferStart);
-
-		mTransferEnd -= mTransferStart;
-		mTransferIndex -= mTransferStart;
-		mTransferLevel -= mTransferStart;
-		mTransferStart = 0;
-	}
+void ATSIOManager::SetPendingDeviceId(uint8 deviceId) {
+	mPendingDeviceId = deviceId;
+	mbPendingDeviceDisk = IsDiskDevice(deviceId);
 }
 
-void ATSIOManager::ResetTransfer() {
-	mTransferCyclesPerByte = 932;
-	mTransferCyclesPerBit = 93;
-	mbTransmitSynchronous = false;
-
-	mCommandQueueCyclesPerByte = mTransferCyclesPerByte;
-}
-
-void ATSIOManager::UpdateActiveDeviceDerivedValues() {
-	mbActiveDeviceDisk = (mActiveDeviceId >= 0x31 && mActiveDeviceId <= 0x3F);
-}
-
-void ATSIOManager::UpdateTransferRateDerivedValues() {
-	mTransferCyclesPerBitRecvMin = mTransferCyclesPerBit - (mTransferCyclesPerBit + 19)/20;
-	mTransferCyclesPerBitRecvMax = mTransferCyclesPerBit + (mTransferCyclesPerBit + 19)/20;
+bool ATSIOManager::IsDiskDevice(uint8 deviceId) {
+	return deviceId >= 0x31 && deviceId <= 0x3F;
 }
 
 void ATSIOManager::OnMotorStateChanged(bool asserted) {
@@ -1857,4 +2202,41 @@ void ATSIOManager::UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2) {
 		// the counter.
 		mPollCount = 0;
 	}
+}
+
+void ATSIOManager::ProcessCommandFrame() {
+	if (ATComputeSIOChecksum(mCommandBuffer, 4) != mCommandBuffer[4])
+		return;
+
+	ATDeviceSIOCommand cmd = {};
+	cmd.mDevice = mCommandBuffer[0];
+	cmd.mCommand = mCommandBuffer[1];
+	cmd.mAUX[0] = mCommandBuffer[2];
+	cmd.mAUX[1] = mCommandBuffer[3];
+	cmd.mCyclesPerBit = mCommandCyclesPerBit;
+	cmd.mbStandardRate = (mCommandCyclesPerBit >= 91 && mCommandCyclesPerBit <= 98);
+	cmd.mbEarlyCmdDeassert = mCommandDeassertTime < mCommandFrameEndTime;
+	cmd.mPollCount = mPollCount;
+
+	// Check if this is a type 3 poll command -- we provide assistance for these.
+	// Note that we've already recorded the poll count above.
+	UpdatePollState(cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1]);
+
+	if (g_ATLCSIOCmd.IsEnabled())
+		g_ATLCSIOCmd("Device %02X | Command %02X | %02X %02X (%s)%s\n", cmd.mDevice, cmd.mCommand, cmd.mAUX[0], cmd.mAUX[1], ATDecodeSIOCommand(cmd.mDevice, cmd.mCommand, cmd.mAUX), cmd.mbStandardRate ? "" : " (high-speed command frame)");
+
+	SetPendingDeviceId(cmd.mDevice);
+
+	mSIOInterfaces.NotifyWhileDirect(
+		[&](SIOInterface *iface) {
+			mpPendingInterface = iface;
+
+			if (iface->TryProcessCommand(cmd))
+				return false;
+
+			return true;
+		}
+	);
+
+	mpPendingInterface = nullptr;
 }

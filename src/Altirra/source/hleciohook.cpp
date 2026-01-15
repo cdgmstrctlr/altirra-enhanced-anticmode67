@@ -82,6 +82,7 @@ protected:
 	};
 
 	HookResult HandleGenericDevice(int function, uint8 deviceNameHint);
+	IATDeviceCIO *GetDeviceForNameAndUnit(uint8 name, uint8 unit) const;
 
 	uint8 OnHookContinuation(uint16 pc);
 	HookResult HandleContinuation();
@@ -158,8 +159,8 @@ protected:
 
 	vdfastvector<uint8> mLargeTransferBuffer;
 
-	vdfastvector<uint8> mNewRegisteredDevices;
-	vdfastvector<uint8> mRegisteredDevices;
+	vdfastvector<uint8> mNewRegisteredDeviceNames;
+	vdfastvector<uint8> mRegisteredDeviceNames;
 	vdfastvector<IATDeviceCIO *> mCIODevices;
 	
 	struct ExtendedIOCB {
@@ -170,8 +171,15 @@ protected:
 
 	ExtendedIOCB mExtIOCBs[8] {};
 
-	IATDeviceCIO *mCIODeviceMap[256] {};
-	IATDeviceCIO *mCIODeviceMapNew[256] {};
+	uint16 mCIODeviceNameToNodeMap[256] {};
+
+	struct DeviceIdNode {
+		uint16 mNext;
+		uint16 mDeviceIndex;
+		uint32 mDeviceUnitMask;
+	};
+
+	vdfastvector<DeviceIdNode> mDeviceNodes;
 
 	uint8	mTransferBuffer[1024] {};
 
@@ -183,9 +191,6 @@ protected:
 const char ATHLECIOHook::kStandardNames[]="ESKPC";
 
 ATHLECIOHook::ATHLECIOHook() {
-	for(auto& dev : mCIODeviceMap)
-		dev = nullptr;
-
 	for(auto& xiocb : mExtIOCBs)
 		xiocb.mpDevice = nullptr;
 }
@@ -258,7 +263,7 @@ void ATHLECIOHook::SetBurstTransfersEnabled(bool enabled) {
 }
 
 bool ATHLECIOHook::HasCIODevice(char c) const {
-	return mCIODeviceMap[(unsigned char)c] != nullptr;
+	return mCIODeviceNameToNodeMap[(unsigned char)c] != 0;
 }
 
 bool ATHLECIOHook::GetCIOPatchEnabled(char c) const {
@@ -292,7 +297,7 @@ bool ATHLECIOHook::IsHookPageNeeded() const {
 	if (vs)
 		return true;
 
-	if (!mRegisteredDevices.empty() && !mbPBIHookEnabled)
+	if (!mRegisteredDeviceNames.empty() && !mbPBIHookEnabled)
 		return true;
 
 	return false;
@@ -326,7 +331,7 @@ void ATHLECIOHook::ReinitHooks(uint8 hookPage) {
 	}
 
 	// printer
-	if (mCIODeviceMap[+'P'] && (mCIOPatchMask & (1 << ('P' - 'A')))) {
+	if (mCIODeviceNameToNodeMap[+'P'] && (mCIOPatchMask & (1 << ('P' - 'A')))) {
 		for(int i=0; i<6; ++i) {
 			if (!mPrinterHookAddresses[i])
 				continue;
@@ -476,8 +481,6 @@ void ATHLECIOHook::RemoveCIODevice(IATDeviceCIO *dev) {
 		auto it = std::find(mCIODevices.begin(), mCIODevices.end(), dev);
 
 		if (it != mCIODevices.end()) {
-			mCIODevices.erase(it);
-
 			for(int i=0; i<8; ++i) {
 				ExtendedIOCB& xiocb = mExtIOCBs[i];
 
@@ -487,6 +490,7 @@ void ATHLECIOHook::RemoveCIODevice(IATDeviceCIO *dev) {
 				}
 			}
 
+			mCIODevices.erase(it);
 			RebuildCIODeviceList();
 			ReinitHooks(mHookPage);
 		}
@@ -586,8 +590,14 @@ ATHLECIOHook::HookResult ATHLECIOHook::HandleGenericDevice(int function, uint8 d
 		// pull filename
 		const uint16 addr = kdb.ICBAZ;
 		const uint8 name = mem->ReadByte(addr);
+		uint8 unit = mem->ReadByte(addr);
 
-		IATDeviceCIO *dev = mCIODeviceMap[name];
+		if (unit >= 0x31 && unit <= 0x39)
+			unit -= 0x30;
+		else
+			unit = 0x01;
+
+		IATDeviceCIO *dev = GetDeviceForNameAndUnit(name, unit);
 		if (!dev) {
 			// we don't know this device (weird)
 			mpCPU->Ldy(kATCIOStat_UnkDevice);
@@ -652,7 +662,10 @@ ATHLECIOHook::HookResult ATHLECIOHook::HandleGenericDevice(int function, uint8 d
 					name = mem->ReadByte(ATKernelSymbols::HATABS + id);
 			}
 
-			IATDeviceCIO *softdev = mCIODeviceMap[name];
+			// pull unit -- we go directly to ICDNO,X instead of ICDNOZ when handling PUT BYTE
+			// as ICDNOZ may not be set due to a direct put through ICPTL,X
+			const uint8 unit = mem->ReadByte(function == 6 ? ATKernelSymbols::ICDNO + iocb : ATKernelSymbols::ICDNOZ);
+			IATDeviceCIO *softdev = GetDeviceForNameAndUnit(name, unit);
 			if (function == 8 || function == 10) {
 				// GET STATUS and SPECIAL can be called via soft open in CIO.
 				dev = softdev;
@@ -912,6 +925,22 @@ ATHLECIOHook::HookResult ATHLECIOHook::HandleGenericDevice(int function, uint8 d
 	return HookResult::Handled;
 }
 
+IATDeviceCIO *ATHLECIOHook::GetDeviceForNameAndUnit(uint8 name, uint8 unit) const {
+	const uint32 unitMask = (unit > 0 && unit < 10 ? 1U << unit : 0) | UINT32_C(0x80000000);
+
+	uint16 nodeId = mCIODeviceNameToNodeMap[name];
+	while(nodeId) {
+		const DeviceIdNode& node = mDeviceNodes[nodeId - 1];
+
+		if (node.mDeviceUnitMask & unitMask)
+			return mCIODevices[node.mDeviceIndex];
+
+		nodeId = node.mNext;
+	}
+
+	return nullptr;
+}
+
 uint8 ATHLECIOHook::OnHookContinuation(uint16) {
 	return TranslateHookResult(HandleContinuation());
 }
@@ -976,8 +1005,8 @@ uint8 ATHLECIOHook::OnHookCIOINV(uint16 pc) {
 	if (mem->ReadByte(ATKernelSymbols::HATABS)) {
 		mbCIOHandlersEstablished = true;
 
-		mNewRegisteredDevices.swap(mRegisteredDevices);
-		mRegisteredDevices.clear();
+		mNewRegisteredDeviceNames.swap(mRegisteredDeviceNames);
+		mRegisteredDeviceNames.clear();
 		RegisterCIODevices();
 	}
 
@@ -990,8 +1019,8 @@ uint8 ATHLECIOHook::OnHookCIOV(uint16 pc) {
 	if (!mbCIOHandlersEstablished) {
 		mbCIOHandlersEstablished = true;
 
-		mNewRegisteredDevices.swap(mRegisteredDevices);
-		mRegisteredDevices.clear();
+		mNewRegisteredDeviceNames.swap(mRegisteredDeviceNames);
+		mRegisteredDeviceNames.clear();
 		RegisterCIODevices();
 	}
 
@@ -1027,9 +1056,7 @@ uint8 ATHLECIOHook::OnHookCIOV(uint16 pc) {
 
 		// check if this is a standard device name -- we should not attempt to accelerate
 		// these as we need cooperation of the native device
-		IATDeviceCIO *softdev = mCIODeviceMap[devname];
-
-		if (softdev && strchr(kStandardNames, devname))
+		if (mCIODeviceNameToNodeMap[devname] && strchr(kStandardNames, devname))
 			return 0;
 	}
 
@@ -1310,34 +1337,56 @@ bool ATHLECIOHook::IsValidOSCIORoutine(const uint8 *lowerROM, const uint8 *upper
 }
 
 void ATHLECIOHook::RebuildCIODeviceList() {
-	mNewRegisteredDevices.clear();
-	std::fill(std::begin(mCIODeviceMapNew), std::end(mCIODeviceMapNew), nullptr);
+	mNewRegisteredDeviceNames.clear();
+	mDeviceNodes.clear();
+	std::fill(std::begin(mCIODeviceNameToNodeMap), std::end(mCIODeviceNameToNodeMap), 0);
 
-	for(IATDeviceCIO *dev : mCIODevices) {
-		char ldevs[16] = {0};
-
-		dev->GetCIODevices(ldevs, vdcountof(ldevs));
-
-		for(const char c : ldevs) {
-			if (!c)
-				break;
-
-			mNewRegisteredDevices.push_back((uint8)c);
-			mCIODeviceMapNew[(uint8)c] = dev;
+	class DeviceList final : public IATDeviceCIODeviceList {
+	public:
+		DeviceList(ATHLECIOHook& parent, uint16 deviceIndex)
+			: mParent(parent), mDeviceIndex(deviceIndex)
+		{
 		}
+
+		void AddDevice(uint8 id, uint32 unitMask) {
+			if (mParent.mDeviceNodes.size() >= 65535)
+				return;
+
+			mParent.mNewRegisteredDeviceNames.push_back(id);
+
+			DeviceIdNode& node = mParent.mDeviceNodes.emplace_back();
+			node.mDeviceIndex = mDeviceIndex;
+			node.mDeviceUnitMask = unitMask;
+			node.mNext = mParent.mCIODeviceNameToNodeMap[id];
+
+			mParent.mCIODeviceNameToNodeMap[id] = (uint16)mParent.mDeviceNodes.size();
+		}
+
+	private:
+		ATHLECIOHook& mParent;
+		const uint16 mDeviceIndex;
+	};
+
+	uint16 deviceIndex = 0;
+	for(IATDeviceCIO *dev : mCIODevices) {
+		DeviceList devList(*this, deviceIndex++);
+		dev->GetCIODevices(devList);
 	}
 
-	std::sort(mNewRegisteredDevices.begin(), mNewRegisteredDevices.end());
+	std::sort(mNewRegisteredDeviceNames.begin(), mNewRegisteredDeviceNames.end());
+	mNewRegisteredDeviceNames.erase(
+		std::unique(mNewRegisteredDeviceNames.begin(), mNewRegisteredDeviceNames.end()),
+		mNewRegisteredDeviceNames.end()
+	);
 
-	if (mNewRegisteredDevices != mRegisteredDevices) {
+	if (mNewRegisteredDeviceNames != mRegisteredDeviceNames) {
 		RegisterCIODevices();
 	}
 }
 
 void ATHLECIOHook::RegisterCIODevices() {
 	if (!mbCIOHandlersEstablished) {
-		mRegisteredDevices.swap(mNewRegisteredDevices);
-		memcpy(mCIODeviceMap, mCIODeviceMapNew, sizeof mCIODeviceMap);
+		mRegisteredDeviceNames.swap(mNewRegisteredDeviceNames);
 		return;
 	}
 
@@ -1363,13 +1412,13 @@ void ATHLECIOHook::RegisterCIODevices() {
 			continue;
 
 		// check if this device was registered
-		if (!std::binary_search(mRegisteredDevices.begin(), mRegisteredDevices.end(), name)) {
+		if (!std::binary_search(mRegisteredDeviceNames.begin(), mRegisteredDeviceNames.end(), name)) {
 			// nope -- ignore it
 			continue;
 		}
 
 		// check if this device is one we want
-		if (std::binary_search(mNewRegisteredDevices.begin(), mNewRegisteredDevices.end(), name)) {
+		if (std::binary_search(mNewRegisteredDeviceNames.begin(), mNewRegisteredDeviceNames.end(), name)) {
 			// yes -- either we already registered it, or it already
 			// existed, or it's been hooked. In any case, we don't want
 			// to change it.
@@ -1397,8 +1446,8 @@ void ATHLECIOHook::RegisterCIODevices() {
 	// add new devices
 	uint32 insertPos = 0;
 
-	for(const uint8 name : mNewRegisteredDevices) {
-		if (std::binary_search(mRegisteredDevices.begin(), mRegisteredDevices.end(), name))
+	for(const uint8 name : mNewRegisteredDeviceNames) {
+		if (std::binary_search(mRegisteredDeviceNames.begin(), mRegisteredDeviceNames.end(), name))
 			continue;
 
 		// skip standard names
@@ -1475,9 +1524,7 @@ void ATHLECIOHook::RegisterCIODevices() {
 		mem.WriteByte(ATKernelSymbols::HATABS + i, hatabs[i]);
 
 	// update registered devices
-	mRegisteredDevices.swap(mNewRegisteredDevices);
-
-	memcpy(mCIODeviceMap, mCIODeviceMapNew, sizeof mCIODeviceMap);
+	mRegisteredDeviceNames.swap(mNewRegisteredDeviceNames);
 }
 
 void ATHLECIOHook::UpdateHookPage() {

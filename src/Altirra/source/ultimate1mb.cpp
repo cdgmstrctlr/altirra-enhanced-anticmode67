@@ -156,11 +156,12 @@ void ATUltimate1MBEmulator::Init(
 	memman->SetLayerName(mpLayerPBIFirmware, "Ultimate1MB PBI firmware");
 
 	// must occur after we've set up the layers
-	mpMMU->SetROMMappingHook(
+	mROMChangeMappingFn = 
 		[this]() {
 			UpdateFlashShadows();
-		}
-	);
+		};
+
+	mpMMU->AddROMMappingHook(&mROMChangeMappingFn);
 
 	mStereoEnableOutput.SetValue(true);
 	mStereoEnableOutput.Connect(mpSystemController->GetStereoEnableSignal());
@@ -174,7 +175,7 @@ void ATUltimate1MBEmulator::Shutdown() {
 
 	if (mpMMU) {
 		// must happen before we clear the layers
-		mpMMU->SetROMMappingHook(nullptr);
+		mpMMU->RemoveROMMappingHook(&mROMChangeMappingFn);
 	}
 
 	if (mpMemMan) {

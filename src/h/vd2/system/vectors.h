@@ -386,6 +386,14 @@ struct VDSize {
 	bool operator==(const VDSize& s) const { return w==s.w && h==s.h; }
 	bool operator!=(const VDSize& s) const { return w!=s.w || h!=s.h; }
 
+	VDSize operator+(const VDSize& s) const {
+		return VDSize(w + s.w, h + s.h);
+	}
+
+	VDSize operator-(const VDSize& s) const {
+		return VDSize(w - s.w, h - s.h);
+	}
+
 	VDSize& operator+=(const VDSize& s) {
 		w += s.w;
 		h += s.h;

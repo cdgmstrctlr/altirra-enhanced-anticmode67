@@ -43,6 +43,7 @@ public:
 	sint32 GetFrameBufferIndexForFrame(sint32 frameIdx) override;
 	double GetTimeForFrame(uint32 frameIdx) override;
 	const VDPixmap& GetFrameBufferByIndex(uint32 fbIdx) override;
+	vdsize32 GetFrameSizeByIndex(uint32 fbIdx) const override;
 	
 	void AddRawFrameBuffer(const VDPixmap& px) override;
 	void AddFrame(double timestamp, uint32 frameBufferIndex) override;
@@ -154,6 +155,12 @@ const VDPixmap& ATTraceChannelVideo::GetFrameBufferByIndex(uint32 fbIdx) {
 	return mFrameBuffers[fbIdx].mBuffer;
 }
 
+vdsize32 ATTraceChannelVideo::GetFrameSizeByIndex(uint32 fbIdx) const {
+	const FrameBuffer& frame = mFrameBuffers[fbIdx];
+
+	return vdsize32(frame.mBuffer.w, frame.mBuffer.h);
+}
+
 void ATTraceChannelVideo::AddRawFrameBuffer(const VDPixmap& px) {
 	auto& fb = mFrameBuffers.emplace_back();
 
@@ -257,7 +264,7 @@ class ATVideoTracer final : public vdrefcounted<IATVideoTracer>, public IATGTIAV
 public:
 	IATGTIAVideoTap *AsVideoTap() override { return this; }
 
-	void Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor) override;
+	void Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor, uint32 frameHeight) override;
 	void Shutdown() override;
 
 	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) override;
@@ -268,6 +275,7 @@ private:
 	double mTimeScale = 0;
 	uint32 mDivideCounter = UINT32_MAX - 1;
 	uint32 mDivisor = 0;
+	uint32 mFrameHeight = 0;
 
 	VDPixmapBuffer mTempBuffer1;
 	VDPixmapBuffer mTempBuffer2;
@@ -278,11 +286,15 @@ private:
 	vdsize32 mResampleDstSize { 0, 0 };
 };
 
-void ATVideoTracer::Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor) {
+void ATVideoTracer::Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor, uint32 frameHeight) {
 	mpDst = vdpoly_cast<ATTraceChannelVideo *>(dst);
 	mTimeOffset = timeOffset;
 	mTimeScale = timeScale;
 	mDivisor = divisor;
+
+	// Video frames are stored as 4:2:0, so the frame dimensions must be even. Enforce some
+	// sanity checks as well.
+	mFrameHeight = std::clamp<uint32>(frameHeight, 16, 512) & ~1;
 }
 
 void ATVideoTracer::Shutdown() {
@@ -298,8 +310,8 @@ void ATVideoTracer::WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64
 
 	mDivideCounter = 0;
 
-	sint32 dsth = 128;
-	float dstwf = (float)px.w * 128.0f / (float)px.h * par;
+	sint32 dsth = mFrameHeight;
+	float dstwf = (float)px.w * (float)dsth / (float)px.h * par;
 	sint32 dstw = ((sint32)ceilf(dstwf) + 1) & ~1;
 	float dstx1f = ((float)dstw - dstwf) * 0.5f;
 	float dstx2f = (float)dstw - dstx1f;

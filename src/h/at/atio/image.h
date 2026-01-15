@@ -29,7 +29,7 @@ struct ATCassetteLoadContext;
 class IVDRandomAccessStream;
 class ATVFSFileView;
 
-enum ATImageType {
+enum ATImageType : uint8 {
 	kATImageType_None,
 	kATImageType_Cartridge,
 	kATImageType_Disk,
@@ -40,7 +40,8 @@ enum ATImageType {
 	kATImageType_Zip,
 	kATImageType_GZip,
 	kATImageType_SAP,
-	kATImageType_SaveState2
+	kATImageType_SaveState2,
+	kATImageType_VGM,
 };
 
 // Paired images are files that are associated by their filename alone.
@@ -57,11 +58,14 @@ struct ATStateLoadContext {
 };
 
 struct ATImageLoadContext {
+	static constexpr int kLoadIndexDefault = -1;
+	static constexpr int kLoadIndexNextFree = -2;
+
 	ATImageType mLoadType = kATImageType_None;
 	ATCartLoadContext *mpCartLoadContext = nullptr;
 	ATStateLoadContext *mpStateLoadContext = nullptr;
 	ATCassetteLoadContext *mpCassetteLoadContext = nullptr;
-	int mLoadIndex = -1;
+	int mLoadIndex = kLoadIndexDefault;
 };
 
 class IATImage : public IVDRefUnknown {

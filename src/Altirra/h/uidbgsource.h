@@ -53,15 +53,15 @@ public:
 	VDStringW ReadLine(int lineIndex) override;
 
 protected:
-	virtual bool OnPaneCommand(ATUIPaneCommandId id);
+	bool OnPaneCommand(ATUIPaneCommandId id) override;
 
 protected:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
 
 	void OnTextEditorUpdated() override;
@@ -70,10 +70,10 @@ protected:
 
 	void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization) override;
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId);
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override;
 	int GetLineForAddress(uint32 addr);
-	bool OnFileUpdated(const wchar_t *path);
+	bool OnFileUpdated(const wchar_t *path) override;
 
 	void	ToggleBreakpoint();
 

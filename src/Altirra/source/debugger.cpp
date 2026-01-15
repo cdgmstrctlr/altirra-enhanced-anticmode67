@@ -80,6 +80,7 @@
 #include "hlefpaccelerator.h"
 #include <at/atemulation/riot.h>
 #include <at/atemulation/ctc.h>
+#include <at/atemulation/via.h>
 
 extern ATSimulator g_sim;
 
@@ -238,11 +239,11 @@ public:
 
 	ATBreakpointManager *GetBreakpointManager() { return mpBkptManager; }
 
-	bool IsRunning() const;
-	bool AreCommandsQueued() const;
+	bool IsRunning() const override;
+	bool AreCommandsQueued() const override;
 	bool IsSourceModeEnabled() const { return mbSourceMode; }
 
-	const ATDebuggerExprParseOpts& GetExprOpts() const { return mExprOpts; }
+	const ATDebuggerExprParseOpts& GetExprOpts() const override { return mExprOpts; }
 	void SetExprOpts(const ATDebuggerExprParseOpts& opts) { mExprOpts = opts; }
 	void SetExprTemp(int index, sint32 val) { VDASSERT(index >= 0 && index < 10); mExprTemporaries[index] = val; }
 
@@ -264,47 +265,47 @@ public:
 
 	void ShowBannerOnce() override;
 
-	bool Tick();
+	bool Tick() override;
 
-	void SetSourceMode(ATDebugSrcMode sourceMode);
-	void Break();
-	void Stop();
-	void Run(ATDebugSrcMode sourceMode);
-	void RunTraced();
+	void SetSourceMode(ATDebugSrcMode sourceMode) override;
+	void Break() override;
+	void Stop() override;
+	void Run(ATDebugSrcMode sourceMode) override;
+	void RunTraced() override;
 	void RunToScanline(int scan);
 	void RunToVBI();
 	void RunToEndOfFrame(bool quiet = false);
 	void RunCycles(uint32 cycles);
-	void StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0);
-	void StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0);
-	void StepOut(ATDebugSrcMode sourceMode);
-	uint16 GetPC() const;
-	void SetPC(uint16 pc);
-	uint32 GetExtPC() const;
-	uint16 GetFramePC() const;
-	void SetFramePC(uint16 pc);
+	void StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) override;
+	void StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *stepRanges = NULL, uint32 stepRangeCount = 0) override;
+	void StepOut(ATDebugSrcMode sourceMode) override;
+	uint16 GetPC() const override;
+	void SetPC(uint16 pc) override;
+	uint32 GetExtPC() const override;
+	uint16 GetFramePC() const override;
+	void SetFramePC(uint16 pc) override;
 	uint32 GetFrameExtPC() const override;
 	void SetFrameExtPC(uint32 pc) override;
-	uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount);
-	void DumpCallStack();
+	uint32 GetCallStack(ATCallStackFrame *dst, uint32 maxCount) override;
+	void DumpCallStack() override;
 	void DumpState(bool verbose = false, const ATCPUExecState *state = nullptr);
 
 	// breakpoints
 	bool ArePCBreakpointsSupported() const;
 	bool AreAccessBreakpointsSupported() const;
-	bool IsDeferredBreakpointSet(const char *fn, uint32 line);
+	bool IsDeferredBreakpointSet(const char *fn, uint32 line) override;
 	bool ClearUserBreakpoint(uint32 useridx, bool notify) override;
 	void ClearOnResetBreakpoints();
-	void ClearAllBreakpoints();
-	bool IsBreakpointAtPC(uint32 pc) const;
-	void ToggleBreakpoint(uint32 addr);
-	void ToggleAccessBreakpoint(uint32 addr, bool write);
-	void ToggleSourceBreakpoint(const char *fn, uint32 line);
+	void ClearAllBreakpoints() override;
+	bool IsBreakpointAtPC(uint32 pc) const override;
+	void ToggleBreakpoint(uint32 addr) override;
+	void ToggleAccessBreakpoint(uint32 addr, bool write) override;
+	void ToggleSourceBreakpoint(const char *fn, uint32 line) override;
 	sint32 LookupUserBreakpoint(uint32 useridx) const;
 	sint32 LookupUserBreakpointByNum(uint32 number, const char *groupName) const;
 	sint32 LookupUserBreakpointByAddr(uint32 address) const;
 	uint32 SetBreakpoint(sint32 useridx, const ATDebuggerBreakpointInfo& bpInfo) override;
-	uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false);
+	uint32 SetSourceBreakpoint(const char *fn, uint32 line, ATDebugExpNode *condexp, const char *command, bool continueExecution = false) override;
 	uint32 SetConditionalBreakpoint(ATDebugExpNode *exp, const char *command = NULL, bool continueExecution = false);
 	void SetBreakpointClearOnReset(uint32 useridx, bool clearOnReset);
 	void SetBreakpointOneShot(uint32 useridx, bool oneShot);
@@ -320,8 +321,8 @@ public:
 	const char *GetBreakpointCommand(uint32 useridx) const;
 	bool GetBreakpointSourceLocation(uint32 useridx, VDStringA& file, uint32& line) const;
 
-	bool IsBreakOnEXERunAddrEnabled() const { return mbBreakOnEXERunAddr; }
-	void SetBreakOnEXERunAddrEnabled(bool en) { mbBreakOnEXERunAddr = en; }
+	bool IsBreakOnEXERunAddrEnabled() const override { return mbBreakOnEXERunAddr; }
+	void SetBreakOnEXERunAddrEnabled(bool en) override { mbBreakOnEXERunAddr = en; }
 
 	int AddWatch(uint32 address, int length) override;
 	int AddWatchExpr(ATDebugExpNode *expr, ATDebuggerWatchMode mode) override;
@@ -330,7 +331,7 @@ public:
 	int FindWatch(uint32 address) const override;
 	bool GetWatchInfo(int idx, ATDebuggerWatchInfo& info) override;
 
-	void ListModules();
+	void ListModules() override;
 	void ReloadModules();
 
 	void DumpCIOParameters();
@@ -350,54 +351,54 @@ public:
 	const char *GetModuleShortName(uint32 moduleId) const;
 	uint32 GetModuleTargetId(uint32 moduleId) const;
 
-	void AddClient(IATDebuggerClient *client, bool requestUpdate);
-	void RemoveClient(IATDebuggerClient *client);
-	void RequestClientUpdate(IATDebuggerClient *client);
+	void AddClient(IATDebuggerClient *client, bool requestUpdate) override;
+	void RemoveClient(IATDebuggerClient *client) override;
+	void RequestClientUpdate(IATDebuggerClient *client) override;
 
-	void SetAutoLoadSystemSymbols(bool enable);
-	bool IsAutoLoadSystemSymbolsEnabled() const ;
+	void SetAutoLoadSystemSymbols(bool enable) override;
+	bool IsAutoLoadSystemSymbolsEnabled() const override;
 
 	ATDebuggerSymbolLoadMode GetSymbolLoadMode(bool whenEnabled) const override;
 	void SetSymbolLoadMode(bool whenEnabled, ATDebuggerSymbolLoadMode mode) override;
 
 	bool IsSymbolLoadingEnabled() const override;
-	uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives, const uint32 *targetIdOverride = nullptr, bool loadImmediately = false);
-	void UnloadSymbols(uint32 moduleId);
-	void LoadDeferredSymbols(uint32 moduleId);
-	void LoadAllDeferredSymbols();
+	uint32 LoadSymbols(const wchar_t *fileName, bool processDirectives, const uint32 *targetIdOverride = nullptr, bool loadImmediately = false) override;
+	void UnloadSymbols(uint32 moduleId) override;
+	void LoadDeferredSymbols(uint32 moduleId) override;
+	void LoadAllDeferredSymbols() override;
 	void ClearSymbolDirectives(uint32 moduleId);
-	void ProcessSymbolDirectives(uint32 id);
+	void ProcessSymbolDirectives(uint32 id) override;
 
 	sint32 ResolveSourceLocation(const char *fn, uint32 line);
 	sint32 ResolveSymbol(const char *s, bool allowGlobal = false, bool allowShortBase = true, bool allowNakedHex = true) override;
 	uint32 ResolveSymbolThrow(const char *s, bool allowGlobal = false, bool allowShortBase = true) override;
 	void EnumModuleSymbols(uint32 moduleId, ATCallbackHandler1<void, const ATSymbolInfo&> callback) const;
-	void EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const;
+	void EnumSourceFiles(const vdfunction<void(const wchar_t *, uint32)>& fn) const override;
 
 	uint32 AddCustomModule(uint32 targetId, const char *name, const char *shortname);
 	uint32 GetCustomModuleIdByShortName(const char *name);
-	void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0);
-	void RemoveCustomSymbol(uint32 address);
-	void LoadCustomSymbols(const wchar_t *filename);
-	void SaveCustomSymbols(const wchar_t *filename);
+	void AddCustomSymbol(uint32 address, uint32 len, const char *name, uint32 rwxmode, uint32 moduleId = 0) override;
+	void RemoveCustomSymbol(uint32 address) override;
+	void LoadCustomSymbols(const wchar_t *filename) override;
+	void SaveCustomSymbols(const wchar_t *filename) override;
 
-	VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier, bool addSymbolInfo = false);
+	VDStringA GetAddressText(uint32 globalAddr, bool useHexSpecifier, bool addSymbolInfo = false) override;
 
-	sint32 EvaluateThrow(const char *s);
-	std::pair<bool, sint32> Evaluate(ATDebugExpNode *expr);
+	sint32 EvaluateThrow(const char *s) override;
+	std::pair<bool, sint32> Evaluate(ATDebugExpNode *expr) override;
 
-	ATDebugExpEvalContext GetEvalContext() const;
+	ATDebugExpEvalContext GetEvalContext() const override;
 	ATDebugExpEvalContext GetEvalContextForTarget(uint32 targetIndex) const;
 
-	void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const;
+	void GetDirtyStorage(vdfastvector<ATDebuggerStorageId>& ids) const override;
 
-	void QueueBatchFile(const wchar_t *s);
-	void QueueAutoLoadBatchFile(const wchar_t *s);
+	void QueueBatchFile(const wchar_t *s) override;
+	void QueueAutoLoadBatchFile(const wchar_t *s) override;
 
 	bool InvokeCommand(const char *name, ATDebuggerCmdParser& parser) const;
 	void AddCommand(const char *name, void (*pfn)(ATDebuggerCmdParser&));
 
-	void QueueCommand(const char *s, bool echo) {
+	void QueueCommand(const char *s, bool echo) override {
 		mCommandQueue.push_back(VDStringA());
 		VDStringA& t = mCommandQueue.back();
 		
@@ -405,7 +406,7 @@ public:
 		t += s;
 	}
 
-	void QueueCommandFront(const char *s, bool echo) {
+	void QueueCommandFront(const char *s, bool echo) override {
 		mCommandQueue.push_front(VDStringA());
 		VDStringA& t = mCommandQueue.front();
 		
@@ -432,7 +433,7 @@ public:
 		return mActiveCommands.empty() ? NULL : mActiveCommands.back();
 	}
 
-	void StartActiveCommand(IATDebuggerActiveCommand *cmd) {
+	void StartActiveCommand(IATDebuggerActiveCommand *cmd) override {
 		cmd->AddRef();
 		mActiveCommands.push_back(cmd);
 
@@ -467,18 +468,18 @@ public:
 
 	void DefineCommands(const ATDebuggerCmdDef *defs, size_t numDefs) override;
 
-	bool IsCommandAliasPresent(const char *alias) const;
+	bool IsCommandAliasPresent(const char *alias) const override;
 	bool MatchCommandAlias(const char *alias, const char *const *argv, int argc, vdfastvector<char>& tempstr, vdfastvector<const char *>& argptrs) const;
-	const char *GetCommandAlias(const char *alias, const char *args) const;
-	void SetCommandAlias(const char *alias, const char *args, const char *command);
-	void ListCommandAliases();
-	void ClearCommandAliases();
+	const char *GetCommandAlias(const char *alias, const char *args) const override;
+	void SetCommandAlias(const char *alias, const char *args, const char *command) override;
+	void ListCommandAliases() override;
+	void ClearCommandAliases() override;
 
 	void OnExeQueueCmd(bool onrun, const char *s);
 	void OnExeClear();
 	bool OnExeGetCmd(bool onrun, int index, VDStringA& s);
 
-	void WriteMemoryCPU(uint16 address, const void *data, uint32 len) {
+	void WriteMemoryCPU(uint16 address, const void *data, uint32 len) override {
 		if (!len)
 			return;
 
@@ -490,7 +491,7 @@ public:
 		SendMemoryUpdate();
 	}
 
-	void WriteGlobalMemory(uint32 address, const void *data, uint32 len) {
+	void WriteGlobalMemory(uint32 address, const void *data, uint32 len) override {
 		if (!len)
 			return;
 
@@ -503,9 +504,9 @@ public:
 		SendMemoryUpdate();
 	}
 
-	VDEvent<IATDebugger, const char *>& OnPromptChanged() { return mEventPromptChanged; }
+	VDEvent<IATDebugger, const char *>& OnPromptChanged() override { return mEventPromptChanged; }
 
-	const char *GetPrompt() const {
+	const char *GetPrompt() const override {
 		return mPrompt.c_str();
 	}
 
@@ -539,14 +540,14 @@ public:
 		}
 	}
 
-	bool SetTarget(uint32 index);
+	bool SetTarget(uint32 index) override;
 	bool IsValidTargetIndex(uint32 index) const;
-	uint32 GetTargetIndex() const { return mCurrentTargetIndex; }
-	IATDebugTarget *GetTarget() const { return mpCurrentTarget; }
-	void GetTargetList(vdfastvector<IATDebugTarget *>& targets);
+	uint32 GetTargetIndex() const override { return mCurrentTargetIndex; }
+	IATDebugTarget *GetTarget() const override { return mpCurrentTarget; }
+	void GetTargetList(vdfastvector<IATDebugTarget *>& targets) override;
 
-	VDEvent<IATDebugger, bool>& OnRunStateChanged() { return mEventRunStateChanged; }
-	VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() { return mEventOpen; }
+	VDEvent<IATDebugger, bool>& OnRunStateChanged() override { return mEventRunStateChanged; }
+	VDEvent<IATDebugger, ATDebuggerOpenEvent *>& OnDebuggerOpen() override { return mEventOpen; }
 
 	void SetOnRequestFile(vdfunction<void(ATDebuggerRequestFileEvent&)> fn) override {
 		mpRequestFile = std::move(fn);
@@ -573,12 +574,12 @@ public:
 	};
 
 public:
-	bool GetSourceFilePath(uint32 moduleId, uint16 fileId, ATDebuggerSourceFileInfo& sourceFileInfo);
-	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol);
-	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATDebuggerSymbol& symbol);
-	bool LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo);
-	bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId);
-	void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines);
+	bool GetSourceFilePath(uint32 moduleId, uint16 fileId, ATDebuggerSourceFileInfo& sourceFileInfo) override;
+	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATSymbol& symbol) override;
+	bool LookupSymbol(uint32 moduleOffset, uint32 flags, ATDebuggerSymbol& symbol) override;
+	bool LookupLine(uint32 addr, bool searchUp, uint32& moduleId, ATSourceLineInfo& lineInfo) override;
+	bool LookupFile(const wchar_t *fileName, uint32& moduleId, uint16& fileId) override;
+	void GetLinesForFile(uint32 moduleId, uint16 fileId, vdfastvector<ATSourceLineInfo>& lines) override;
 
 public:
 	void OnSimulatorEvent(ATSimulatorEvent ev) override;
@@ -592,11 +593,11 @@ public:
 	void OnScheduledEvent(uint32 id) override;
 
 public:
-	void OnDebugLinkIdentify();
-	void OnSDXSymbolStart();
-	void OnSDXSymbolAdd(uint32 addr, const char *name);
-	void OnSDXSymbolEnd();
-	void OnSDXProcessStart(const char *name);
+	void OnDebugLinkIdentify() override;
+	void OnSDXSymbolStart() override;
+	void OnSDXSymbolAdd(uint32 addr, const char *name) override;
+	void OnSDXSymbolEnd() override;
+	void OnSDXProcessStart(const char *name) override;
 
 protected:
 	struct Module {
@@ -632,6 +633,7 @@ protected:
 	void SetupRangeStep(bool stepInto, const ATDebuggerStepRange *stepRanges, uint32 stepRangeCount, bool includeEntryPoint);
 	static ATCPUStepResult CPUSourceStepCallback(ATCPUEmulator *cpu, uint32 pc, bool call, void *data);
 
+	void ClearRunConditions();
 	void InterruptRun(bool leaveRunning = false);
 
 	uint32 GetCallStack6502(ATCallStackFrame *dst, uint32 maxCount);
@@ -878,8 +880,7 @@ void ATDebugger::Shutdown() {
 
 	ClearAllBreakpoints(false);
 
-	if (mpEventRunToCycle)
-		g_sim.GetScheduler()->UnsetEvent(mpEventRunToCycle);
+	ClearRunConditions();
 
 	if (mpBkptManager) {
 		mpBkptManager->OnBreakpointHit() -= mDelBreakpointHit;
@@ -1053,8 +1054,8 @@ bool ATDebugger::Tick() {
 		const char *t = s.c_str();
 		VDASSERT(*t);
 		ATConsoleExecuteCommand(t + 1, t[0] == 'e');
-	} catch(const MyError& e) {
-		ATConsolePrintf("%s\n", e.gets());
+	} catch(const VDException& e) {
+		ATConsolePrintf("%s\n", e.c_str());
 	}
 
 	if (mCommandQueue.empty()) {
@@ -1125,15 +1126,10 @@ void ATDebugger::Run(ATDebugSrcMode sourceMode) {
 
 	SetSourceMode(sourceMode);
 
-	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.RemoveStepCondition(mDebugStepCondition);
-	cpu.SetTrace(false);
-	g_sim.Resume();
-	mbClientUpdatePending = true;
-	mRunState = kRunState_Run;
+	ClearRunConditions();
 
-	if (!mbClientLastRunState)
-		UpdateClientSystemState();
+	mRunState = kRunState_Run;
+	g_sim.Resume();
 }
 
 void ATDebugger::RunTraced() {
@@ -1143,15 +1139,13 @@ void ATDebugger::RunTraced() {
 	if (mCurrentTargetIndex != 0)
 		throw MyError("Step execution is not available on the current target.");
 
-	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.RemoveStepCondition(mDebugStepCondition);
-	cpu.SetTrace(true);
-	g_sim.Resume();
-	mbClientUpdatePending = true;
-	mRunState = kRunState_Run;
+	ClearRunConditions();
 
-	if (!mbClientLastRunState)
-		UpdateClientSystemState();
+	ATCPUEmulator& cpu = g_sim.GetCPU();
+	cpu.SetTrace(true);
+
+	mRunState = kRunState_Run;
+	g_sim.Resume();
 }
 
 void ATDebugger::RunToScanline(int scan) {
@@ -1159,22 +1153,15 @@ void ATDebugger::RunToScanline(int scan) {
 	mbClientUpdatePending = true;
 	g_sim.SetBreakOnScanline(scan);
 	g_sim.Resume();
-
-	if (!mbClientLastRunState)
-		UpdateClientSystemState();
 }
 
 void ATDebugger::RunToVBI() {
-	ATCPUEmulator& cpu = g_sim.GetCPU();
-	cpu.RemoveStepCondition(mDebugStepCondition);
-	cpu.SetTrace(false);
-	g_sim.SetBreakOnScanline(248);
-	g_sim.Resume();
-	mbClientUpdatePending = true;
-	mRunState = kRunState_RunToVBI1;
+	ClearRunConditions();
 
-	if (!mbClientLastRunState)
-		UpdateClientSystemState();
+	g_sim.SetBreakOnScanline(248);
+
+	mRunState = kRunState_RunToVBI1;
+	g_sim.Resume();
 }
 
 void ATDebugger::RunToEndOfFrame(bool quiet) {
@@ -1893,6 +1880,8 @@ void ATDebugger::StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 			throw MyError("Range step execution is not available on the current target.");
 	}
 
+	ClearRunConditions();
+
 	SetSourceMode(sourceMode);
 
 	if (ec) {
@@ -1910,8 +1899,6 @@ void ATDebugger::StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 	} else {
 		ATCPUEmulator& cpu = g_sim.GetCPU();
 
-		cpu.RemoveStepCondition(mDebugStepCondition);
-
 		if (mbSourceMode && stepRangeCount > 0)
 			SetupRangeStep(true, stepRanges, stepRangeCount, false);
 		else {
@@ -1919,12 +1906,8 @@ void ATDebugger::StepInto(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 			cpu.AddStepCondition(mDebugStepCondition);
 		}
 
-		g_sim.Resume();
-		mbClientUpdatePending = true;
 		mRunState = kRunState_StepInto;
-
-		if (!mbClientLastRunState)
-			UpdateClientSystemState();
+		g_sim.Resume();
 	}
 }
 
@@ -1942,6 +1925,8 @@ void ATDebugger::StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 		if (stepRangeCount > 0)
 			throw MyError("Range step execution is not available on the current target.");
 	}
+
+	ClearRunConditions();
 
 	SetSourceMode(sourceMode);
 
@@ -2003,9 +1988,6 @@ void ATDebugger::StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 
 		const OpInfo& VDRESTRICT opInfo = opTab.m[opcode];
 
-		cpu.SetTrace(false);
-		cpu.RemoveStepCondition(mDebugStepCondition);
-
 		if (opInfo.mbIsCall) {
 			mDebugStepCondition = ATCPUStepCondition::CreateAtStackLevel(cpu.GetS());
 			cpu.AddStepCondition(mDebugStepCondition);
@@ -2016,12 +1998,8 @@ void ATDebugger::StepOver(ATDebugSrcMode sourceMode, const ATDebuggerStepRange *
 			SetupRangeStep(false, stepRanges, stepRangeCount, false);
 		}
 
-		g_sim.Resume();
-		mbClientUpdatePending = true;
 		mRunState = kRunState_StepOver;
-
-		if (!mbClientLastRunState)
-			UpdateClientSystemState();
+		g_sim.Resume();
 	}
 }
 
@@ -2037,6 +2015,7 @@ void ATDebugger::StepOut(ATDebugSrcMode sourceMode) {
 			throw MyError("Step Out is not available on the current target.");
 	}
 
+	ClearRunConditions();
 	SetSourceMode(sourceMode);
 
 	if (ec) {
@@ -2068,8 +2047,6 @@ void ATDebugger::StepOut(ATDebugSrcMode sourceMode) {
 		if (framecount >= 2)
 			s = (uint8)frames[1].mSP;
 
-		cpu.RemoveStepCondition(mDebugStepCondition);
-
 		mDebugStepCondition = {};
 		mDebugStepCondition.mbStepOut = true;
 
@@ -2080,12 +2057,9 @@ void ATDebugger::StepOut(ATDebugSrcMode sourceMode) {
 		cpu.AddStepCondition(mDebugStepCondition);
 
 		cpu.SetTrace(false);
-		g_sim.Resume();
-		mbClientUpdatePending = true;
-		mRunState = kRunState_StepOut;
 
-		if (!mbClientLastRunState)
-			UpdateClientSystemState();
+		mRunState = kRunState_StepOut;
+		g_sim.Resume();
 	}
 }
 
@@ -2891,8 +2865,8 @@ void ATDebugger::ReloadModules() {
 
 			try {
 				ATLoadSymbols(mod.mPath.c_str(), ~symStore);
-			} catch(const MyError& e) {
-				ATConsolePrintf("Unable to reload symbols from %ls: %s.\n", mod.mPath.c_str(), e.gets());
+			} catch(const VDException& e) {
+				ATConsolePrintf("Unable to reload symbols from %ls: %ls.\n", mod.mPath.c_str(), e.wc_str());
 				continue;
 			}
 
@@ -2958,8 +2932,9 @@ void ATDebugger::DumpCIOParameters() {
 		case 0x03:
 			{
 				const uint8 aux1 = g_sim.DebugReadByte(iocb + ATKernelSymbols::ICAX1);
+				const uint8 aux2 = g_sim.DebugReadByte(iocb + ATKernelSymbols::ICAX2);
 
-				ATConsolePrintf("CIO: IOCB=%u, CMD=$03 (open), AUX1=$%02X, filename=\"%s\"\n", iocbIdx, aux1, fn);
+				ATConsolePrintf("CIO: IOCB=%u, CMD=$03 (open), AUX1=$%02X, AUX2=$%02X, filename=\"%s\"\n", iocbIdx, aux1, aux2, fn);
 			}
 			break;
 
@@ -4751,6 +4726,32 @@ void ATDebugger::OnSimulatorEvent(ATSimulatorEvent ev) {
 		return;
 	}
 
+	if (ev == kATSimEvent_SimResume) {
+		if (!mbClientLastRunState) {
+			mbClientUpdatePending = true;
+
+			if (mRunState == kRunState_Stopped)
+				mRunState = kRunState_Run;
+
+			UpdateClientSystemState();
+		}
+
+		return;
+	}
+	
+	if (ev == kATSimEvent_SimPause) {
+		if (mbClientLastRunState || mRunState != kRunState_Stopped) {
+			mbClientUpdatePending = true;
+
+			mRunState = kRunState_Stopped;
+			ClearRunConditions();
+
+			UpdateClientSystemState();
+		}
+
+		return;
+	}
+
 	if (ev == kATSimEvent_ScanlineBreakpoint && mRunState == kRunState_RunToVBI1) {
 		if (g_sim.GetAntic().IsVBIEnabled()) {
 			mRunState = kRunState_RunToVBI2;
@@ -5379,7 +5380,7 @@ void ATDebugger::SetupRangeStep(bool stepInto, const ATDebuggerStepRange *stepRa
 	StepRanges::iterator itNext = std::upper_bound(mStepRanges.begin(), mStepRanges.end(), pcRange, ATDebuggerStepRangeEndPred());
 
 	// set up stepping
-	cpu.RemoveStepCondition(mDebugStepCondition);
+	ClearRunConditions();
 
 	mDebugStepCondition = {};
 	mDebugStepCondition.mpCallback = CPUSourceStepCallback;
@@ -5440,7 +5441,7 @@ ATCPUStepResult ATDebugger::CPUSourceStepCallback(ATCPUEmulator *cpu, uint32 pc,
 	}
 }
 
-void ATDebugger::InterruptRun(bool leaveRunning) {
+void ATDebugger::ClearRunConditions() {
 	ATCPUEmulator& cpu = g_sim.GetCPU();
 
 	cpu.RemoveStepCondition(mDebugStepCondition);
@@ -5448,12 +5449,16 @@ void ATDebugger::InterruptRun(bool leaveRunning) {
 	g_sim.SetBreakOnScanline(-1);
 	g_sim.SetBreakOnFrameEnd(false);
 
+	g_sim.GetScheduler()->UnsetEvent(mpEventRunToCycle);
+}
+
+void ATDebugger::InterruptRun(bool leaveRunning) {
+	ClearRunConditions();
+
 	if (leaveRunning)
 		g_sim.Resume();
 	else
 		g_sim.Suspend();
-
-	g_sim.GetScheduler()->UnsetEvent(mpEventRunToCycle);
 
 	if (mRunState == kRunState_TargetStepInto) {
 		auto *ec = vdpoly_cast<IATDebugTargetExecutionControl *>(mpCurrentTarget);
@@ -6568,7 +6573,7 @@ void ATConsoleCmdBreakptClear(ATDebuggerCmdParser& parser) {
 				g_debugger.ClearUserBreakpoint(useridx, true);
 		}
 
-		ATConsolePrintf("%u breakpoint(s) cleared.\n", bps.size());
+		ATConsolePrintf("%u breakpoint(s) cleared.\n", (unsigned)bps.size());
 	} else {
 		char dummy;
 		unsigned number;
@@ -8673,9 +8678,9 @@ void ATConsoleCmdSearchINTERNAL(ATDebuggerCmdParser& parser) {
 
 class ATDebuggerCmdStaticTrace : public vdrefcounted<IATDebuggerActiveCommand> {
 public:
-	ATDebuggerCmdStaticTrace(std::initializer_list<uint32> initialpcs, uint32 rangelo, uint32 rangehi);
-	ATDebuggerCmdStaticTrace(vdvector_view<const uint32> initialpcs, uint32 rangelo, uint32 rangehi);
-	ATDebuggerCmdStaticTrace(uint32 initialpc, uint32 rangelo, uint32 rangehi);
+	ATDebuggerCmdStaticTrace(std::initializer_list<uint32> initialpcs, uint32 rangelo, uint32 rangehi, bool allowBrk);
+	ATDebuggerCmdStaticTrace(vdvector_view<const uint32> initialpcs, uint32 rangelo, uint32 rangehi, bool allowBrk);
+	ATDebuggerCmdStaticTrace(uint32 initialpc, uint32 rangelo, uint32 rangehi, bool allowBrk);
 	virtual bool IsBusy() const { return true; }
 	virtual const char *GetPrompt() { return NULL; }
 
@@ -8689,8 +8694,9 @@ protected:
 		kFlagLabeled = 0x02
 	};
 
-	uint32 mRangeLo;
-	uint32 mRangeHi;
+	const uint32 mRangeLo;
+	const uint32 mRangeHi;
+	const bool mbAllowBrk;
 
 	vdfastdeque<uint32> mPCQueue;
 	VDStringA mSymName;
@@ -8698,21 +8704,22 @@ protected:
 	uint8 mSeenFlags[65536] {};
 };
 
-ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(std::initializer_list<uint32> initialpcs, uint32 rangelo, uint32 rangehi)
-	: ATDebuggerCmdStaticTrace(vdvector_view(initialpcs.begin(), initialpcs.size()), rangelo, rangehi)
+ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(std::initializer_list<uint32> initialpcs, uint32 rangelo, uint32 rangehi, bool allowBrk)
+	: ATDebuggerCmdStaticTrace(vdvector_view(initialpcs.begin(), initialpcs.size()), rangelo, rangehi, allowBrk)
 {
 }
 
-ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(vdvector_view<const uint32> initialpcs, uint32 rangelo, uint32 rangehi)
+ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(vdvector_view<const uint32> initialpcs, uint32 rangelo, uint32 rangehi, bool allowBrk)
 	: mRangeLo(rangelo)
 	, mRangeHi(rangehi)
+	, mbAllowBrk(allowBrk)
 {
 	for(uint32 initialpc : initialpcs)
 		mPCQueue.push_back(initialpc);
 }
 
-ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(uint32 initialpc, uint32 rangelo, uint32 rangehi)
-	: ATDebuggerCmdStaticTrace({initialpc}, rangelo, rangehi)
+ATDebuggerCmdStaticTrace::ATDebuggerCmdStaticTrace(uint32 initialpc, uint32 rangelo, uint32 rangehi, bool allowBrk)
+	: ATDebuggerCmdStaticTrace({initialpc}, rangelo, rangehi, allowBrk)
 {
 }
 
@@ -8753,6 +8760,16 @@ bool ATDebuggerCmdStaticTrace::ProcessSubCommand(const char *) {
 
 		switch(opcode) {
 			case 0x00:		// BRK
+				if (mbAllowBrk) {
+					// fix up length to be 2
+					pc = (pc + 1) & 0xffff;
+					len = 2;
+					break;
+				}
+
+				stop_trace = true;
+				break;
+
 			case 0x40:		// RTI
 			case 0x60:		// RTS
 			case 0x6C:		// JMP (abs)
@@ -8802,11 +8819,12 @@ bool ATDebuggerCmdStaticTrace::ProcessSubCommand(const char *) {
 
 void ATConsoleCmdStaticTrace(ATDebuggerCmdParser& parser) {
 	ATDebuggerCmdSwitch markArg("m", false);
+	ATDebuggerCmdSwitch allowBrkArg("b", false);
 	ATDebuggerCmdExprAddr baseAddrArg(false, true);
 	ATDebuggerCmdExprAddr restrictBase(false, false);
 	ATDebuggerCmdLength restrictLength(false, true, &restrictBase);
 
-	parser >> markArg >> baseAddrArg;
+	parser >> markArg >> allowBrkArg >> baseAddrArg;
 
 	parser >> restrictBase;
 	if (restrictBase.IsValid())
@@ -8833,7 +8851,7 @@ void ATConsoleCmdStaticTrace(ATDebuggerCmdParser& parser) {
 		}
 	}
 
-	vdrefptr<IATDebuggerActiveCommand> acmd(new ATDebuggerCmdStaticTrace(baseAddr, rangeLo, rangeHi));
+	vdrefptr<IATDebuggerActiveCommand> acmd(new ATDebuggerCmdStaticTrace(baseAddr, rangeLo, rangeHi, allowBrkArg));
 
 	g_debugger.StartActiveCommand(acmd);
 }
@@ -8862,7 +8880,8 @@ void ATConsoleCmdStaticTracePBI(ATDebuggerCmdParser& parser) {
 				(uint32)(VDReadUnalignedLEU16(&ciotab[10]) + 1)
 			},
 			rangeLo,
-			rangeHi
+			rangeHi,
+			false
 		)
 	);
 
@@ -9491,7 +9510,7 @@ void ATConsoleCmdUnloadSymbols(ATDebuggerCmdParser& parser) {
 		id = strtoul(s, &t, 0);
 
 		if (*t || !id)
-			throw MyError("Invalid index: %s\n", s);
+			throw MyError("Invalid module ID / name: %s\n", s);
 
 		g_debugger.UnloadSymbols(id);
 	}
@@ -9767,6 +9786,7 @@ void ATConsoleCmdPathDump(ATDebuggerCmdParser& parser) {
 			if (addr < 0)
 				break;
 
+			buf.clear();
 			ATDisassembleInsn(buf, addr, true);
 			txout.PutLine(buf.data(), (int)buf.size());
 		}
@@ -12942,7 +12962,7 @@ void ATConsoleCmdTapeData(ATDebuggerCmdParser& parser) {
 
 				if (first || nextBit != prevBit) {
 
-					ATConsolePrintf("%u (%.6fs) | %+4u (+%.6fs) [%+4u]: %c\n"
+					ATConsolePrintf("%u (%.6fs) | +%4u (+%.6fs) [+%4u]: %c\n"
 						, pos2
 						, (float)pos2 / kATCassetteDataSampleRate
 						, pos2 - pos
@@ -13110,7 +13130,7 @@ void ATConsoleCmdNetPCap(ATDebuggerCmdParser& parser) {
 
 	vdpoly_cast<ATDragonCartEmulator *>(dc)->OpenPacketTrace(pathArg->c_str());
 
-	ATConsolePrintf("Packet trace opened: %s\n", pathArg->c_str());
+	ATConsolePrintf("Packet trace opened: %ls\n", pathArg->c_str());
 }
 
 void ATConsoleCmdNetPCapClose(ATDebuggerCmdParser& parser) {
@@ -13745,6 +13765,10 @@ void ATConsoleCmdDumpInterface(ATDebuggerCmdParser& parser) {
 	);
 }
 
+void ATConsoleCmdVIA(ATDebuggerCmdParser& parser) {
+	ATConsoleCmdDumpInterface<ATVIA6522Emulator>(parser);
+}
+
 void ATConsoleCmdRIOT(ATDebuggerCmdParser& parser) {
 	ATConsoleCmdDumpInterface<ATRIOT6532Emulator>(parser);
 }
@@ -13792,6 +13816,43 @@ void ATConsoleCmdFPAccel(ATDebuggerCmdParser& parser) {
 
 void ATConsoleCmdCTC(ATDebuggerCmdParser& parser) {
 	ATConsoleCmdDumpInterface<ATCTCEmulator>(parser);
+}
+
+void ATConsoleCmdDevices(ATDebuggerCmdParser& parser) {
+	auto& dm = *g_sim.GetDeviceManager();
+
+	ATDeviceInfo devInfo;
+	for(auto *dev : dm.GetDevices(false, true, false)) {
+		dev->GetDeviceInfo(devInfo);
+
+		VDStringW blurb;
+		dev->GetSettingsBlurb(blurb);
+
+		if (!blurb.empty()) {
+			blurb.insert(0, L" (");
+			blurb += L')';
+		}
+
+		ATConsolePrintf("%-10s  %ls%ls\n", devInfo.mpDef->mpTag, devInfo.mpDef->mpName, blurb.c_str());
+	}
+}
+
+void ATConsoleCmdDeviceInfo(ATDebuggerCmdParser& parser) {
+	ATDebuggerCmdName name(true);
+	parser >> name >> 0;
+
+	auto& dm = *g_sim.GetDeviceManager();
+	IATDevice *dev = dm.GetDeviceByTag(name->c_str());
+
+	if (!dev)
+		throw VDException("No device with tag: %s", name->c_str());
+
+	IATDeviceDiagnostics *diag = vdpoly_cast<IATDeviceDiagnostics *>(dev);
+	if (!diag)
+		throw VDException("No additional info available for device: %s", name->c_str());
+
+	ATDebuggerConsoleOutput conout;
+	diag->DumpStatus(conout);
 }
 
 void ATConsoleCmdLogClose(ATDebuggerCmdParser& parser) {
@@ -13967,6 +14028,8 @@ void ATDebuggerInitCommands() {
 		{ ".covox",				ATConsoleCmdCovox },
 		{ ".crc",				ATConsoleCmdCRC },
 		{ ".ctc",				ATConsoleCmdCTC },
+		{ ".devices",			ATConsoleCmdDevices },
+		{ ".device_info",		ATConsoleCmdDeviceInfo },
 		{ ".diskdumpsec",		ATConsoleCmdDiskDumpSec },
 		{ ".diskorder",			ATConsoleCmdDiskOrder },
 		{ ".diskreadsec",		ATConsoleCmdDiskReadSec },
@@ -14039,6 +14102,7 @@ void ATDebuggerInitCommands() {
 		{ ".sum",				ATConsoleCmdSum },
 		{ ".ultimate",			ATConsoleCmdUltimate },
 		{ ".unloadsym",			ATConsoleCmdUnloadSymbols },
+		{ ".via",				ATConsoleCmdVIA },
 		{ ".vbxe",				ATConsoleCmdDumpVBXEState },
 		{ ".vbxe_xdl",			ATConsoleCmdDumpVBXEXDL },
 		{ ".vbxe_xdlhistory",	ATConsoleCmdDumpVBXEXDLHistory },

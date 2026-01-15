@@ -27,8 +27,10 @@
 #include <at/atcore/audiosource.h>
 #include <at/atcore/configvar.h>
 #include <at/ataudio/audiofilters.h>
+#include <at/ataudio/audiosampleplayer.h>
 #include <at/ataudio/audioout.h>
 #include <at/ataudio/audiooutput.h>
+#include <at/ataudio/audiosamplepool.h>
 
 ATConfigVarBool g_ATCVAudioResampleInterpFilter("audio.resample.interp_filter", true);
 
@@ -220,7 +222,7 @@ public:
 	ATAudioOutput();
 	virtual ~ATAudioOutput() override;
 
-	void Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) override;
+	void Init(ATScheduler& scheduler) override;
 	void InitNativeAudio() override;
 
 	ATAudioApi GetApi() override;
@@ -238,10 +240,14 @@ public:
 		return mAudioStatus;
 	}
 
-	IATAudioMixer& AsMixer() { return *this; }
+	IATAudioMixer& AsMixer() override { return *this; }
+	ATAudioSamplePool& GetPool() override { return *mpSamplePool; }
 
 	void AddSyncAudioSource(IATSyncAudioSource *src) override;
 	void RemoveSyncAudioSource(IATSyncAudioSource *src) override;
+
+	void AddAsyncAudioSource(IATAudioAsyncSource& src) override;
+	void RemoveAsyncAudioSource(IATAudioAsyncSource& src) override;
 
 	void SetCyclesPerSecond(double cps, double repeatfactor) override;
 
@@ -277,6 +283,7 @@ public:
 	IATSyncAudioSamplePlayer& GetSamplePlayer() override { return *mpSamplePlayer; }
 	IATSyncAudioSamplePlayer& GetEdgeSamplePlayer() override { return *mpEdgeSamplePlayer; }
 	IATSyncAudioEdgePlayer& GetEdgePlayer() override { return *mpEdgePlayer; }
+	IATSyncAudioSamplePlayer& GetAsyncSamplePlayer() override { return *mpAsyncSamplePlayer; }
 
 protected:
 	void InternalWriteAudio(const float *left, const float *right, uint32 count, bool pushAudio, bool pushStereoAsMono, uint64 timestamp);
@@ -311,6 +318,7 @@ protected:
 	uint32	mFilteredSampleCount = 0;
 	uint64	mResampleAccum = 0;
 	sint64	mResampleRate = 0;
+	double	mTickRate = 1;
 	float	mMixingRate = 0;
 	uint32	mSamplingRate = 48000;
 	ATAudioApi	mSelectedApi = kATAudioApi_WaveOut;
@@ -324,6 +332,7 @@ protected:
 	bool	mbNativeAudioEnabled = false;
 	uint32	mBlockInternalAudioCount = 0;
 
+	bool	mbAsyncMixBufferZeroed = false;
 	bool	mbFilterStereo = false;
 	uint32	mFilterMonoSamples = 0;
 
@@ -346,8 +355,10 @@ protected:
 	vdautoptr<IVDAudioOutput>	mpAudioOut;
 	vdautoptr<vdfastvector<IATInternalAudioTap *>> mpInternalAudioTaps = nullptr;
 	IATAudioTap *mpAudioTap = nullptr;
-	IATSyncAudioSamplePlayer *mpSamplePlayer = nullptr;
-	IATSyncAudioSamplePlayer *mpEdgeSamplePlayer = nullptr;
+	vdautoptr<ATAudioSamplePool> mpSamplePool;		// must be before players
+	vdautoptr<ATAudioSamplePlayer> mpSamplePlayer;
+	vdautoptr<ATAudioSamplePlayer> mpEdgeSamplePlayer;
+	vdautoptr<ATAudioSamplePlayer> mpAsyncSamplePlayer;
 	vdautoptr<ATSyncAudioEdgePlayer> mpEdgePlayer;
 	float mPrevDCLevels[2] {};
 
@@ -358,17 +369,22 @@ protected:
 	typedef vdfastvector<IATSyncAudioSource *> SyncAudioSources;
 	SyncAudioSources mSyncAudioSources;
 	SyncAudioSources mSyncAudioSourcesStereo;
+
+	typedef vdfastvector<IATAudioAsyncSource *> AsyncAudioSources;
+	AsyncAudioSources mAsyncAudioSources;
 	
 	float mMixLevels[kATAudioMixCount];
 
 	alignas(16) float	mSourceBuffer[2][kSourceBufferSize] {};
 	alignas(16) float	mMonoMixBuffer[kBufferSize] {};
 
+	vdblock<float> mAsyncMixBuffer;
 	vdblock<sint16> mOutputBuffer16;
 };
 
 ATAudioOutput::ATAudioOutput() {
 	mpEdgePlayer = new ATSyncAudioEdgePlayer;
+	mpSamplePool = new ATAudioSamplePool;
 
 	mMixLevels[kATAudioMix_Drive] = 0.8f;
 
@@ -382,15 +398,15 @@ ATAudioOutput::ATAudioOutput() {
 ATAudioOutput::~ATAudioOutput() {
 }
 
-void ATAudioOutput::Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) {
-	memset(mSourceBuffer, 0, sizeof mSourceBuffer);
+void ATAudioOutput::Init(ATScheduler& scheduler) {
+	mpSamplePlayer = new ATAudioSamplePlayer(*mpSamplePool, scheduler);
+	mpEdgeSamplePlayer = new ATAudioSamplePlayer(*mpSamplePool, scheduler);
 
-	mpSamplePlayer = samplePlayer;
-	mpEdgeSamplePlayer = edgeSamplePlayer;
-
-	if (mpSamplePlayer)
-		AddSyncAudioSource(&mpSamplePlayer->AsSource());
+	AddSyncAudioSource(&mpSamplePlayer->AsSource());
 	// edge sample player is special cased
+
+	mpAsyncSamplePlayer = new ATAudioSamplePlayer(*mpSamplePool, scheduler);
+	AddAsyncAudioSource(*mpAsyncSamplePlayer);
 
 	mbFilterStereo = false;
 	mFilterMonoSamples = 0;
@@ -471,6 +487,8 @@ void ATAudioOutput::UnblockInternalAudio() {
 
 void ATAudioOutput::SetAudioTap(IATAudioTap *tap) {
 	mpAudioTap = tap;
+
+	RecomputeResamplingRate();
 }
 
 void ATAudioOutput::AddSyncAudioSource(IATSyncAudioSource *src) {
@@ -484,7 +502,20 @@ void ATAudioOutput::RemoveSyncAudioSource(IATSyncAudioSource *src) {
 		mSyncAudioSources.erase(it);
 }
 
+void ATAudioOutput::AddAsyncAudioSource(IATAudioAsyncSource& src) {
+	mAsyncAudioSources.push_back(&src);
+}
+
+void ATAudioOutput::RemoveAsyncAudioSource(IATAudioAsyncSource& src) {
+	auto it = std::find(mAsyncAudioSources.begin(), mAsyncAudioSources.end(), &src);
+
+	if (it != mAsyncAudioSources.end())
+		mAsyncAudioSources.erase(it);
+	
+}
+
 void ATAudioOutput::SetCyclesPerSecond(double cps, double repeatfactor) {
+	mTickRate = cps;
 	mMixingRate = cps / 28.0;
 	mAudioStatus.mExpectedRate = cps / 28.0;
 	RecomputeResamplingRate();
@@ -624,6 +655,16 @@ void ATAudioOutput::InternalWriteAudio(
 			needStereo = true;
 		} else {
 			needMono = true;
+		}
+	}
+
+	if (mpAudioTap) {
+		for(IATAudioAsyncSource *src : mAsyncAudioSources) {
+			if (src->RequiresStereoMixingNow()) {
+				needStereo = true;
+			} else {
+				needMono = true;
+			}
 		}
 	}
 
@@ -771,6 +812,19 @@ void ATAudioOutput::InternalWriteAudio(
 
 	// Send filtered samples to the audio tap.
 	if (mpAudioTap) {
+		ATAudioAsyncMixInfo asyncMixInfo {};
+		asyncMixInfo.mStartTime = timestamp;
+		asyncMixInfo.mCount = count;
+		asyncMixInfo.mNumCycles = count * kATCyclesPerSyncSample;
+		asyncMixInfo.mMixingRate = mMixingRate;
+		asyncMixInfo.mpLeft = mSourceBuffer[0] + mBufferLevel + kFilterOffset;
+		asyncMixInfo.mpRight = mbFilterStereo ? mSourceBuffer[1] + mBufferLevel + kFilterOffset : nullptr;
+		asyncMixInfo.mpMixLevels = mMixLevels;
+
+		for(IATAudioAsyncSource *asyncSource : mAsyncAudioSources) {
+			asyncSource->WriteAsyncAudio(asyncMixInfo);
+		}
+
 		if (mbFilterStereo)
 			mpAudioTap->WriteRawAudio(mSourceBuffer[0] + mBufferLevel + kFilterOffset, mSourceBuffer[1] + mBufferLevel + kFilterOffset, count, timestamp);
 		else
@@ -800,15 +854,52 @@ void ATAudioOutput::InternalWriteAudio(
 
 		if (resampleCount) {
 			if (mOutputBuffer16.size() < resampleCount * 2)
-				mOutputBuffer16.resize((resampleCount * 2 + 2047) & ~2047);
+				mOutputBuffer16.resize((resampleCount * 2 + 2047) & ~(size_t)2047);
+
+			size_t asyncChannelLen = (resampleCount + 7) & ~7;
+			if (mAsyncMixBuffer.size() < asyncChannelLen * 2) {
+				mAsyncMixBuffer.resize((asyncChannelLen * 2 + 1023) & ~(size_t)1023);
+				mbAsyncMixBufferZeroed = false;
+			}
+
+			if (!mbAsyncMixBufferZeroed) {
+				mbAsyncMixBufferZeroed = true;
+				std::fill(mAsyncMixBuffer.begin(), mAsyncMixBuffer.end(), 0.0f);
+			}
+
+			float *asyncLeft = mAsyncMixBuffer.data();
+			float *asyncRight = mAsyncMixBuffer.data() + asyncChannelLen;
+
+			if (!mpAudioTap) {
+				ATAudioAsyncMixInfo asyncMixInfo {};
+				asyncMixInfo.mStartTime = timestamp;
+				asyncMixInfo.mCount = resampleCount;
+				asyncMixInfo.mNumCycles = count * kATCyclesPerSyncSample;
+				asyncMixInfo.mMixingRate = mMixingRate;
+				asyncMixInfo.mpLeft = asyncLeft;
+				asyncMixInfo.mpRight = asyncRight;
+				asyncMixInfo.mpMixLevels = mMixLevels;
+
+				for(IATAudioAsyncSource *asyncSource : mAsyncAudioSources) {
+					if (asyncSource->WriteAsyncAudio(asyncMixInfo))
+						mbAsyncMixBufferZeroed = false;
+				}
+			}
 
 			if (mbMute) {
 				mResampleAccum += mResampleRate * resampleCount;
 				memset(mOutputBuffer16.data(), 0, sizeof(mOutputBuffer16[0]) * resampleCount * 2);
-			} else if (mbFilterStereo)
-				mResampleAccum = ATFilterResampleStereo16(mOutputBuffer16.data(), mSourceBuffer[0], mSourceBuffer[1], resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
-			else
-				mResampleAccum = ATFilterResampleMonoToStereo16(mOutputBuffer16.data(), mSourceBuffer[0], resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
+			} else if (mbFilterStereo) {
+				if (mbAsyncMixBufferZeroed)
+					mResampleAccum = ATFilterResampleStereo16(mOutputBuffer16.data(), mSourceBuffer[0], mSourceBuffer[1], resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
+				else
+					mResampleAccum = ATFilterResampleStereoAdd16(mOutputBuffer16.data(), mSourceBuffer[0], mSourceBuffer[1], asyncLeft, asyncRight, resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
+			} else {
+				if (mbAsyncMixBufferZeroed)
+					mResampleAccum = ATFilterResampleMonoToStereo16(mOutputBuffer16.data(), mSourceBuffer[0], resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
+				else
+					mResampleAccum = ATFilterResampleMonoToStereoAdd16(mOutputBuffer16.data(), mSourceBuffer[0], asyncLeft, asyncRight, resampleCount, mResampleAccum, mResampleRate, g_ATCVAudioResampleInterpFilter);
+			}
 
 			// determine if we can now shift down the source buffer
 			uint32 shift = (uint32)(mResampleAccum >> 32);
@@ -945,6 +1036,23 @@ void ATAudioOutput::RecomputeBuffering() {
 
 void ATAudioOutput::RecomputeResamplingRate() {
 	mResampleRate = (sint64)(0.5 + 4294967296.0 * mAudioStatus.mExpectedRate / (double)mSamplingRate);
+
+	float pokeyMixingRate = mMixingRate;
+
+	if (mpSamplePlayer)
+		mpSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f / (float)kATCyclesPerSyncSample);
+
+	if (mpEdgeSamplePlayer)
+		mpEdgeSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f  / (float)kATCyclesPerSyncSample);
+
+	// If an audio tap is present, the async sample player needs to mix at 64KHz.
+	// Otherwise, it mixes at output rate.
+	if (mpAsyncSamplePlayer) {
+		if (mpAudioTap)
+			mpAsyncSamplePlayer->SetRates(pokeyMixingRate, 1.0f, 1.0f / (float)kATCyclesPerSyncSample);
+		else
+			mpAsyncSamplePlayer->SetRates((float)mSamplingRate, pokeyMixingRate / (float)mSamplingRate, (double)mSamplingRate / mTickRate);
+	}
 }
 
 void ATAudioOutput::ReinitAudio() {

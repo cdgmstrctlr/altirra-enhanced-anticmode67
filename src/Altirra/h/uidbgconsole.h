@@ -31,11 +31,11 @@ public:
 			SetForegroundWindow(mhwnd);
 	}
 
-	void Write(const char *s);
-	void ShowEnd();
+	void Write(const char *s) override;
+	void ShowEnd() override;
 
 protected:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 	LRESULT LogWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 

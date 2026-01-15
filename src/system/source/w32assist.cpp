@@ -614,30 +614,5 @@ HMODULE VDLoadSystemLibraryWithAllowedOverrideW32(const char *name) {
 }
 
 HMODULE VDLoadSystemLibraryW32(const char *name) {
-	vdfastvector<wchar_t> pathW(MAX_PATH, 0);
-
-	size_t len = GetSystemDirectoryW(pathW.data(), MAX_PATH);
-
-	if (!len)
-		return NULL;
-
-	if (len > MAX_PATH) {
-		pathW.resize(len + 1, 0);
-
-		len = GetSystemDirectoryW(pathW.data(), len);
-		if (!len || len >= pathW.size())
-			return NULL;
-	}
-
-	pathW.resize(len);
-
-	if (pathW.back() != '\\')
-		pathW.push_back('\\');
-
-	while(const char c = *name++)
-		pathW.push_back(c);
-
-	pathW.push_back(0);
-
-	return LoadLibraryW(pathW.data());
+	return LoadLibraryExA(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
 }

@@ -226,7 +226,7 @@ constexpr double VDCxSinPiD(double x) {
 }
 
 constexpr float VDCxSinPi(float x) {
-	if (std::is_constant_evaluated()) {
+	if consteval {
 		return VDCxNarrowToFloat(VDCxSinPiD(x));
 	} else {
 		return VDCxNarrowToFloat(sin((double)x * 3.1415926535897932384626433832795));
@@ -277,7 +277,7 @@ constexpr double VDCxCosPiD(double x) {
 }
 
 constexpr float VDCxCosPi(float x) {
-	if (std::is_constant_evaluated()) {
+	if consteval {
 		return VDCxNarrowToFloat(VDCxCosPiD(x));
 	} else {
 		return VDCxNarrowToFloat(cos((double)x * 3.1415926535897932384626433832795));
@@ -285,17 +285,19 @@ constexpr float VDCxCosPi(float x) {
 }
 
 constexpr float VDCxSin(float v) {
-	if (std::is_constant_evaluated())
+	if consteval {
 		return VDCxNarrowToFloat(VDCxSinPiD(v * 0.31830988618379067153776752674503));
-	else
+	} else {
 		return sinf(v);
+	}
 }
 
 constexpr float VDCxCos(float v) {
-	if (std::is_constant_evaluated())
+	if consteval {
 		return VDCxNarrowToFloat(VDCxSinPiD(v * 0.31830988618379067153776752674503));
-	else
+	} else {
 		return cosf(v);
+	}
 }
 
 // Computes sinc(pi*x) = sin(pi*x)/(pi*x) with limit handling for x=0.
@@ -303,9 +305,9 @@ constexpr float VDCxSincPi(float v) {
 	if (v >= -1e-8f && v <= 1e-8f)
 		return 1.0f;
 
-	if (std::is_constant_evaluated())
+	if consteval {
 		return VDCxNarrowToFloat(VDCxSinPiD(v) / (3.1415926535897932384626433832795 * v));
-	else {
+	} else {
 		const double d = (double)v * 3.1415926535897932384626433832795;
 		return VDCxNarrowToFloat(sin(d) / d);
 	}

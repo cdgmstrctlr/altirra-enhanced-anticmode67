@@ -3,6 +3,7 @@
   <Import Project="../Build/ProjectConfigurations.props" />
   <ItemGroup>
     <ClCompile Include="source\atfs.cpp" />
+    <ClCompile Include="source\audioreader.cpp" />
     <ClCompile Include="source\audioreaderflac.cpp" />
     <ClCompile Include="source\audioreaderflac_arm64.cpp" />
     <ClCompile Include="source\audioreaderflac_x86.cpp" />
@@ -41,6 +42,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\h\at\atio\atfs.h" />
+    <ClInclude Include="..\h\at\atio\audioreader.h" />
     <ClInclude Include="..\h\at\atio\cartridgeimage.h" />
     <ClInclude Include="..\h\at\atio\cartridgetypes.h" />
     <ClInclude Include="..\h\at\atio\cassetteblock.h" />
@@ -58,7 +60,6 @@
     <ClInclude Include="..\h\at\atio\programimage.h" />
     <ClInclude Include="..\h\at\atio\savestate.h" />
     <ClInclude Include="..\h\at\atio\wav.h" />
-    <ClInclude Include="h\at\atio\audioreader.h" />
     <ClInclude Include="h\at\atio\audioreaderflac.h" />
     <ClInclude Include="h\at\atio\audioutils.h" />
     <ClInclude Include="h\at\atio\cassetteaudiofilters.h" />

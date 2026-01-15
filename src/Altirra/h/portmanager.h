@@ -26,12 +26,18 @@ class ATLightPenPort;
 
 class ATPortManager final : public IATDevicePortManager {
 public:
+	static constexpr uint32 kPotUnconnected = UINT32_C(0x7FFFFFFE);
+	static constexpr uint32 kPotGrounded = UINT32_C(0x7FFFFFFF);
+
 	void Init(ATPIAEmulator& pia, ATGTIAEmulator& gtia, ATPokeyEmulator& pokey, ATAnticEmulator& antic, ATLightPenPort& lightPen);
 	void Shutdown();
 
+	bool GetPotNoiseEnabled() const { return mbPotNoiseEnabled; }
+	void SetPotNoiseEnabled(bool enabled) { mbPotNoiseEnabled = enabled; }
+
 	void SetPorts34Enabled(bool enable);
 	void SetTriggerOverride(unsigned index, bool down);
-	void SetPotOverride(unsigned index, bool pulledUp);
+	void SetPotOverride(unsigned index, uint32 pos);
 	void ReapplyTriggers();
 
 	void AllocControllerPort(int controllerIndex, IATDeviceControllerPort **port) override;
@@ -60,6 +66,7 @@ private:
 	ATAnticEmulator *mpANTIC = nullptr;
 	ATLightPenPort *mpLightPen = nullptr;
 	bool mbPorts34Enabled = false;
+	bool mbPotNoiseEnabled = false;
 
 	vdfastvector<ControllerPort *> mControllerPorts;
 	uint32 mTriggerDownCounts[4] {};
@@ -67,8 +74,6 @@ private:
 	bool mbTriggerOverride[4] {};
 
 	static constexpr uint32 kPotHiPosMinUngrounded = 1;
-	static constexpr uint32 kPotHiPosMax = 228 << 16;
-	static constexpr uint32 kPotGrounded = UINT32_C(0x7FFFFFFF);
 
 	vdfastvector<uint32> mPotHiPosFreeIndices[8];
 	vdfastvector<uint32> mPotHiPosArrays[8];

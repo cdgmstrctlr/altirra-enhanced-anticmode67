@@ -27,7 +27,23 @@
   <h3>Atari 400/800 OS-B</h3>
   <p>
     The most common operating system for 400/800 computers, and the best for compatibility in that mode. This entry will
-    show up if you have added the OS-B firmware to the firmware list. ATARIOSB.ROM will show up as a patched version of this ROM.
+    show up if you have added the OS-B firmware to the firmware list.
+  </p>
+
+  <h3>Atari 400/800 OS-B (Xformer)</h3>
+  <p>
+    A very common version of OS-B that was included with the Xformer emulator, and usually named <tt>ATARIOSB.ROM</tt>.
+    This version is not exactly the same as the original OS-B, and has a few modifications:
+  </p>
+  <ul>
+    <li>The bell sound from the Screen Editor is disabled.</li>
+    <li>PIA initialization is altered.</li>
+    <li>The check for a diagnostic cartridge was reduced.</li>
+    <li>The memory test routine has a hard stop at $D000.</li>
+  </ul>
+  <p>
+    It is almost completely compatible with the original OS-B, but there are a couple of programs that do not work with it,
+    such as the original Zaxxon. The changes in Xformer OS-B are not necessary with Altirra and the original OS-B is preferable.
   </p>
 
   <h3>Atari XL/XE OS ver. 2</h3>

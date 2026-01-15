@@ -163,6 +163,12 @@ namespace ATCommands {
 		},
 
 		{ "Input.RecalibrateLightPen", ATUIRecalibrateLightPen },
+		{
+			"Input.TogglePotNoise",
+			[] { g_sim.SetPotNoiseEnabled(!g_sim.GetPotNoiseEnabled ()); },
+			nullptr,
+			[] { return ToChecked(g_sim.GetPotNoiseEnabled()); }
+		},
 	};
 }
 

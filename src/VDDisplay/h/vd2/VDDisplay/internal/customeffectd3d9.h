@@ -16,37 +16,24 @@
 //	along with this program; if not, write to the Free Software
 //	Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
-#ifndef f_VD2_VDDISPLAY_INTERNAL_CUSTOMSHADERD3D9_H
-#define f_VD2_VDDISPLAY_INTERNAL_CUSTOMSHADERD3D9_H
+#ifndef f_VD2_VDDISPLAY_INTERNAL_CUSTOMEFFECTD3D9_H
+#define f_VD2_VDDISPLAY_INTERNAL_CUSTOMEFFECTD3D9_H
 
+#include <vd2/system/refcount.h>
 #include <vd2/system/vectors.h>
+#include <vd2/VDDisplay/internal/customeffect.h>
 
 class VDD3D9Manager;
 struct IDirect3DTexture9;
 
-struct VDDisplayCustomShaderPassInfo {
-	float mTiming;
-	uint32 mOutputWidth;
-	uint32 mOutputHeight;
-	bool mbOutputFloat;			// output surface is float type (float or half)
-	bool mbOutputHalfFloat;		// output surface is half-float
-};
-
-class IVDDisplayCustomShaderPipelineD3D9 {
+class IVDDisplayCustomEffectD3D9 : public virtual IVDDisplayCustomShaderPipeline {
 public:
-	virtual ~IVDDisplayCustomShaderPipelineD3D9() = default;
-
-	virtual bool ContainsFinalBlit() const = 0;
-	virtual uint32 GetMaxPrevFrames() const = 0;
-	virtual bool HasTimingInfo() const = 0;
-	virtual const VDDisplayCustomShaderPassInfo *GetPassTimings(uint32& numPasses) = 0;
-
-	virtual void Run(IDirect3DTexture9 *const *srcTextures, const vdsize32& texSize, const vdsize32& imageSize, const vdsize32& viewportSize) = 0;
-	virtual void RunFinal(const vdrect32f& dstRect, const vdsize32& viewportSize) = 0;
+	virtual void Run(IDirect3DTexture9 *const *srcTextures, const vdint2& texSize, const vdint2& imageSize, const vdint2& viewportSize) = 0;
+	virtual void RunFinal(const vdrect32f& dstRect, const vdint2& viewportSize) = 0;
 
 	virtual IDirect3DTexture9 *GetFinalOutput(uint32& imageWidth, uint32& imageHeight) = 0;
 };
 
-IVDDisplayCustomShaderPipelineD3D9 *VDDisplayParseCustomShaderPipeline(VDD3D9Manager *d3d9mgr, const wchar_t *path);
+vdrefptr<IVDDisplayCustomEffectD3D9> VDDisplayParseCustomShaderPipeline(VDD3D9Manager *d3d9mgr, const wchar_t *path);
 
 #endif

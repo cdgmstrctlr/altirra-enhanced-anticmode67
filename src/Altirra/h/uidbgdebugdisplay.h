@@ -43,14 +43,18 @@ protected:
 
 	void OnDeferredUpdate() override;
 
+	void OnDLAddrChanged(int idx);
+	void OnPFAddrChanged(int idx);
+
 	LRESULT DLAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 	LRESULT PFAddrEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 	HWND	mhwndDisplay;
-	HWND	mhwndDLAddrCombo;
-	HWND	mhwndPFAddrCombo;
 	HMENU	mhmenu;
 	int		mComboResizeInProgress;
+
+	VDUIProxyComboBoxControl mDLAddrCombo;
+	VDUIProxyComboBoxControl mPFAddrCombo;
 
 	VDFunctionThunkInfo *mpThunkDLEditCombo;
 	VDFunctionThunkInfo *mpThunkPFEditCombo;

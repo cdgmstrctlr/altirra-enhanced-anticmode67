@@ -17,15 +17,20 @@
 #include "stdafx.h"
 #include <windows.h>
 #include <windowsx.h>
+#include <commctrl.h>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
 #include <vd2/system/color.h>
 #include <vd2/system/cpuaccel.h>
 #include <vd2/system/file.h>
+#include <vd2/system/strutil.h>
 #include <vd2/system/vdstl_vectorview.h>
 #include <vd2/system/zip.h>
+#include <vd2/system/w32assist.h>
 #include <vd2/Dita/services.h>
 #include <at/atcore/atascii.h>
+#include <at/atnativeui/theme.h>
+#include <at/atnativeui/theme_win32.h>
 #include <at/atnativeui/canvas_win32.h>
 #include <at/atnativeui/uinativewindow.h>
 #include "oshelper.h"
@@ -87,13 +92,15 @@ private:
 	};
 
 	bool Render(const ViewTransform& viewTransform, sint32 x, sint32 y, uint32 w, uint32 h, bool force);
-	void RenderTrapezoid(const sint32 subSpans[2][8], uint32 penIndex, bool rgb);
-	void RenderTrapezoidRGB_Scalar(const sint32 subSpans[2][8], uint32 penIndex);
+	void RenderTrapezoid(const sint32 subSpans[2][8], uint32 linearColor, bool rgb);
+	void RenderTrapezoidRGB_Scalar(const sint32 subSpans[2][8], uint32 linearColor);
 
 #if defined(VD_CPU_X64) || defined(VD_CPU_X86)
-	void RenderTrapezoidRGB_SSE2(const sint32 subSpans[2][8], uint32 penIndex);
+	template<bool T_RGB>
+	void RenderTrapezoid_SSE2(const sint32 subSpans[2][8], uint32 linearColor);
 #elif defined(VD_CPU_ARM64)
-	void RenderTrapezoidRGB_NEON(const sint32 subSpans[2][8], uint32 penIndex);
+	template<bool T_RGB>
+	void RenderTrapezoid_NEON(const sint32 subSpans[2][8], uint32 linearColor);
 #endif
 
 	void Downsample8x8(uint32 *dst, const uint8 *src, size_t w, bool rgb);
@@ -136,7 +143,7 @@ private:
 
 	bool mbInGesture = false;
 	bool mbFirstGestureEvent = false;
-	vdpoint32 mGestureOrigin;
+	vdpoint32 mGestureOrigin {0,0};
 	float mGestureZoomOrigin = 0;
 
 	static constexpr float kZoomMin = -10.0f;
@@ -146,7 +153,7 @@ private:
 	bool mbInvalidationPending = false;
 
 	using RenderDot = ATPrinterGraphicalOutput::RenderDot;
-	vdfastvector<RenderDot> mDotCullBuffer[4];
+	vdfastvector<RenderDot> mDotCullBuffer;
 
 	using RenderVector = ATPrinterGraphicalOutput::RenderVector;
 	vdfastvector<RenderVector> mVectorCullBuffer;
@@ -160,16 +167,10 @@ private:
 
 	uint8 mPopCnt8[256];
 	uint32 mGammaTable[65];
-	uint8 mPenDithers[4][3][8] {};
+	alignas(8) uint8 mLevelDithers[65][3][8] {};
 
 	static constexpr float kBlackLevel = 0.00f;
 	static constexpr float kWhiteLevel = 1.00f;
-	static constexpr uint8 kPenColors[4][3] {
-		{ 0x00, 0x00, 0x00 },	// black
-		{ 0x18, 0x1F, 0xF0 },	// blue
-		{ 0x0B, 0x9C, 0x2F },	// green
-		{ 0xC9, 0x1B, 0x12 },	// red
-	};
 };
 
 ATUIPrinterGraphicalOutputWindow::ATUIPrinterGraphicalOutputWindow() {
@@ -190,6 +191,7 @@ ATUIPrinterGraphicalOutputWindow::ATUIPrinterGraphicalOutputWindow() {
 		mGammaTable[i] = v;
 	}
 
+	// Threshold table for 8x8 dither.
 	static constexpr uint8 kDitherPattern[] {
 		64,  1, 57, 37, 43, 44, 22, 11,
 		60, 30, 15, 62, 31, 54, 27, 52,
@@ -203,20 +205,50 @@ ATUIPrinterGraphicalOutputWindow::ATUIPrinterGraphicalOutputWindow() {
 
 	static_assert(vdcountof(kDitherPattern) == 64);
 
-	memset(mPenDithers, 0, sizeof mPenDithers);
+	// Convert the threshold table to an order table, and also transpose the
+	// dither matrix if we're using NEON.
+	//
+	// Scalar and SSE2 use book order, where each byte corresponds to a subrow.
+	// NEON is more complex and instead uses the order:
+	//
+	//  63               48 47               32 31               16 15                0
+	// |  7 : 3  |  7 : 3  |  6 : 2  |  6 : 2  |  5 : 1  |  5 : 1  |  4 : 0  |  4 : 0  |   x-position
+	// |7531 7531|6420 6420|7531 7531|6420 6420|7531 7531|6420 6420|7531 7531|6420 6420|   y-subrow
 
-	int offset = 0;
-	for(int penIndex = 0; penIndex < 4; ++penIndex) {
-		for(int ch=0; ch<3; ++ch) {
-			uint8 gammaValue = kPenColors[penIndex][ch];
-			uint8 linearValue = gammaValue*gammaValue / 1001;
+	static constexpr auto kDitherOrder = [] {
+		VDCxArray<uint8, 64> r;
 
-			for(int i=0; i<64; ++i) {
-				if (kDitherPattern[(i + offset) & 63] > linearValue)
-					mPenDithers[penIndex][ch][i >> 3] |= (1 << (i & 7));
-			}
+		for(unsigned i=0; i<64; ++i) {
+			unsigned j = kDitherPattern[i];
 
-			offset += 7;
+#ifdef VD_CPU_ARM64
+			// ARM64 uses a transposed order compared to x64.
+			unsigned x = i & 7;
+			unsigned y = i >> 3;
+			unsigned bitPos = (y >> 1) + (y & 1 ? 8 : 0) + (x & 3)*16 + (x & 4);
+
+			if (bitPos >= 64)
+				throw;
+
+			r[j - 1] = bitPos;
+#else
+			r[j - 1] = i;
+#endif
+		}
+
+		return r;
+	}();
+
+	memset(mLevelDithers, 0xFF, sizeof mLevelDithers);
+
+	for(int ch=0; ch<3; ++ch) {
+		uint32 offset = 7 * ch;
+		uint64 dither = 0;
+
+		for(int level = 0; level < 64; ++level) {
+			dither |= UINT64_C(1) << kDitherOrder[(level + offset) & 63];
+
+			VDWriteUnalignedLEU64(mLevelDithers[level + 1][ch], ~dither);
 		}
 	}
 }
@@ -484,8 +516,7 @@ void ATUIPrinterGraphicalOutputWindow::SaveAsPDF() {
 		uint32 adler32;
 
 		{
-			VDDeflateStream defs(bufs, VDDeflateChecksumMode::Adler32);
-			defs.SetCompressionLevel(VDDeflateCompressionLevel::Quick);
+			VDDeflateStream defs(bufs, VDDeflateChecksumMode::Adler32, VDDeflateCompressionLevel::Quick);
 			defs.Write(fontData.data(), fontData.size());
 			defs.Finalize();
 			adler32 = defs.Adler32();
@@ -652,21 +683,22 @@ void ATUIPrinterGraphicalOutputWindow::SaveAsPDF() {
 
 			if (!rvectors.empty()) {
 				const float dotRadiusPts = mDotRadiusMM * mmToPoints;
-				uint32 lastColorIndex = ~UINT32_C(0);
+				uint32 lastLinearColor = ~UINT32_C(0);
 
 				// push graphics state, set round end cap
 				s.append_sprintf(" q 1 J %.2f w", dotRadiusPts * 2.0f);
 
 				for(const auto& rv : rvectors) {
-					if (lastColorIndex != rv.mColorIndex) {
-						lastColorIndex = rv.mColorIndex;
+					if (lastLinearColor != rv.mLinearColor) {
+						lastLinearColor = rv.mLinearColor;
 
-						const uint8 (&rgb)[3] = kPenColors[rv.mColorIndex];
+						const uint32 rgb = VDColorRGB(vdfloat32x4::unpacku8(rv.mLinearColor) * (1.0f / 65.0f)).LinearToSRGB().ToBGR8();
+
 						s.append_sprintf(
 							" %.2f %.2f %.2f RG"
-							, (float)rgb[0] / 255.0f
-							, (float)rgb[1] / 255.0f
-							, (float)rgb[2] / 255.0f
+							, (float)((rgb >> 16) & 0xFF) / 255.0f
+							, (float)((rgb >>  8) & 0xFF) / 255.0f
+							, (float)((rgb >>  0) & 0xFF) / 255.0f
 						);
 					}
 
@@ -691,8 +723,7 @@ void ATUIPrinterGraphicalOutputWindow::SaveAsPDF() {
 		uint32 adler32;
 
 		{
-			VDDeflateStream defs(bufs, VDDeflateChecksumMode::Adler32);
-			defs.SetCompressionLevel(VDDeflateCompressionLevel::Quick);
+			VDDeflateStream defs(bufs, VDDeflateChecksumMode::Adler32, VDDeflateCompressionLevel::Quick);
 			defs.Write(s.data(), s.size());
 			defs.Finalize();
 			adler32 = defs.Adler32();
@@ -1344,6 +1375,7 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 	const float viewSubPixelsPerMM = viewTransform.mPixelsPerMM * 8.0f;
 	const float rowCenterToFirstSubRowOffset = viewTransform.mMMPerPixel * (-3.5f / 8.0f);
 	const float subRowStep = viewTransform.mMMPerPixel / 8.0f;
+	const float pixelsPerSubRow = subRowStep * viewSubPixelsPerMM;
 	const float dotRadius = mDotRadiusMM;
 	const float dotRadiusSq = dotRadius * dotRadius;
 	const sint32 subw = w * 8;
@@ -1371,14 +1403,12 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 		const float docRowY2 = docRowYC + docRowYD;
 
 		// pre-cull dots to scan line
-		for(auto& dcb : mDotCullBuffer)
-			dcb.clear();
-
+		mDotCullBuffer.clear();
 		mVectorCullBuffer.clear();
 
 		if (mpOutput) {
 			const vdrect32f cullRect { viewDocX1 - viewTransform.mMMPerPixel * 0.5f, docRowY1, viewDocX2 + viewTransform.mMMPerPixel * 0.5f, docRowY2 };
-			mpOutput->ExtractNextLineDots(mDotCullBuffer[0], cullInfo, cullRect);
+			mpOutput->ExtractNextLineDots(mDotCullBuffer, cullInfo, cullRect);
 
 			if (hasVectors) {
 				vdrect32f dotCullRect {
@@ -1391,12 +1421,11 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 				mpOutput->ExtractVectors(mVectorCullBuffer, cullRect);
 
 				for (const RenderVector& v : mVectorCullBuffer) {
-					auto& dcb = mDotCullBuffer[v.mColorIndex];
 					if (dotCullRect.contains(vdpoint32f { v.mX1, v.mY1 }))
-						dcb.emplace_back(v.mX1, v.mY1);
+						mDotCullBuffer.emplace_back(v.mX1, v.mY1, v.mLinearColor);
 
 					if (dotCullRect.contains(vdpoint32f { v.mX2, v.mY2 }))
-						dcb.emplace_back(v.mX2, v.mY2);
+						mDotCullBuffer.emplace_back(v.mX2, v.mY2, v.mLinearColor);
 				}
 			}
 		}
@@ -1411,56 +1440,54 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 
 		const float docRowYDPlusDotR = docRowYD + dotRadius;
 		const float subwf = (float)subw;
-		for(int i=0; i<4; ++i) {
-			for(const RenderDot& VDRESTRICT dot : mDotCullBuffer[i]) {
-				float dy = dot.mY - docRowYC;
+		for(const RenderDot& VDRESTRICT dot : mDotCullBuffer) {
+			float dy = dot.mY - docRowYC;
 
-				// vertical cull to row
-				if (fabsf(dy) >= docRowYDPlusDotR)
-					continue;
+			// vertical cull to row
+			if (fabsf(dy) >= docRowYDPlusDotR)
+				continue;
 
-				// process one subrow at a time
-				sint32 subSpans[2][8];
+			// process one subrow at a time
+			sint32 subSpans[2][8];
 
-				vdfloat32x4 z = vdfloat32x4::zero();
-				vdfloat32x4 vsubwf = vdfloat32x4::set1(subwf);
-				vdfloat32x4 dy2_a = dy - subRowYOffsets_a;
-				vdfloat32x4 dy2_b = dy - subRowYOffsets_b;
-				vdfloat32x4 dx_a = sqrt(max(dotRadiusSq - dy2_a*dy2_a, z)) * viewSubPixelsPerMM;
-				vdfloat32x4 dx_b = sqrt(max(dotRadiusSq - dy2_b*dy2_b, z)) * viewSubPixelsPerMM;
+			vdfloat32x4 z = vdfloat32x4::zero();
+			vdfloat32x4 vsubwf = vdfloat32x4::set1(subwf);
+			vdfloat32x4 dy2_a = dy - subRowYOffsets_a;
+			vdfloat32x4 dy2_b = dy - subRowYOffsets_b;
+			vdfloat32x4 dx_a = sqrt(max(dotRadiusSq - dy2_a*dy2_a, z)) * viewSubPixelsPerMM;
+			vdfloat32x4 dx_b = sqrt(max(dotRadiusSq - dy2_b*dy2_b, z)) * viewSubPixelsPerMM;
 
-				// compute x range in document space
-				const float xc = (dot.mX - viewDocX1) * viewSubPixelsPerMM;
-				const vdfloat32x4 xc_a = xc + ditherx_a;
-				const vdfloat32x4 xc_b = xc + ditherx_b;
-				const vdfloat32x4 x1_a = min(max(xc_a - dx_a, z), vsubwf);
-				const vdfloat32x4 x1_b = min(max(xc_b - dx_b, z), vsubwf);
-				const vdfloat32x4 x2_a = min(max(xc_a + dx_a, z), vsubwf);
-				const vdfloat32x4 x2_b = min(max(xc_b + dx_b, z), vsubwf);
+			// compute x range in document space
+			const float xc = (dot.mX - viewDocX1) * viewSubPixelsPerMM;
+			const vdfloat32x4 xc_a = xc + ditherx_a;
+			const vdfloat32x4 xc_b = xc + ditherx_b;
+			const vdfloat32x4 x1_a = min(max(xc_a - dx_a, z), vsubwf);
+			const vdfloat32x4 x1_b = min(max(xc_b - dx_b, z), vsubwf);
+			const vdfloat32x4 x2_a = min(max(xc_a + dx_a, z), vsubwf);
+			const vdfloat32x4 x2_b = min(max(xc_b + dx_b, z), vsubwf);
 
-				// convert x range to subpixels
-				const vdint32x4 ix1_a = ceilint(x1_a);
-				const vdint32x4 ix1_b = ceilint(x1_b);
-				const vdint32x4 ix2_a = ceilint(x2_a);
-				const vdint32x4 ix2_b = ceilint(x2_b);
+			// convert x range to subpixels
+			const vdint32x4 ix1_a = ceilint(x1_a);
+			const vdint32x4 ix1_b = ceilint(x1_b);
+			const vdint32x4 ix2_a = ceilint(x2_a);
+			const vdint32x4 ix2_b = ceilint(x2_b);
 
-				// horizontally clip
-				storeu(&subSpans[0][0], ix1_a);
-				storeu(&subSpans[0][4], ix1_b);
-				storeu(&subSpans[1][0], ix2_a);
-				storeu(&subSpans[1][4], ix2_b);
+			// horizontally clip
+			storeu(&subSpans[0][0], ix1_a);
+			storeu(&subSpans[0][4], ix1_b);
+			storeu(&subSpans[1][0], ix2_a);
+			storeu(&subSpans[1][4], ix2_b);
 
-				RenderTrapezoid(subSpans, i, hasVectors);
-			}
+			RenderTrapezoid(subSpans, dot.mLinearColor, hasVectors);
 		}
 
 		// render all vectors
 		for(const RenderVector& v : mVectorCullBuffer) {
-			// sort points so the first point is on top
-			const float x1 = v.mY1 < v.mY2 ? v.mX1 : v.mX2;
-			const float y1 = v.mY1 < v.mY2 ? v.mY1 : v.mY2;
-			const float x2 = v.mY1 < v.mY2 ? v.mX2 : v.mX1;
-			const float y2 = v.mY1 < v.mY2 ? v.mY2 : v.mY1;
+			// load vector -- note that this is always pre-sorted top-down so y1 <= y2
+			const float x1 = v.mX1;
+			const float y1 = v.mY1;
+			const float x2 = v.mX2;
+			const float y2 = v.mY2;
 
 			// compute perpendicular vector (points left)
 			const float dx = x2 - x1;
@@ -1519,7 +1546,7 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 					}
 				} else {
 					const float edgeSlope = edge.dx / edge.dy;
-					const float subxinc = edgeSlope * subRowStep * viewSubPixelsPerMM;
+					const float subxinc = edgeSlope * pixelsPerSubRow;
 					const float subx0 = ((edge.x - viewDocX1) + (suby_a.x() - edge.y) * edgeSlope) * viewSubPixelsPerMM - 0.5f;
 
 					if (edge.dy > 0) {
@@ -1538,7 +1565,7 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 			storeu(&subSpans[1][0], ceilint(min(max(subSpansF[1][0] + ditherx_a, vdfloat32x4::zero()), vsubwf)));
 			storeu(&subSpans[1][4], ceilint(min(max(subSpansF[1][1] + ditherx_b, vdfloat32x4::zero()), vsubwf)));
 
-			RenderTrapezoid(subSpans, v.mColorIndex, true);
+			RenderTrapezoid(subSpans, v.mLinearColor, true);
 		}
 
 		// render antialiasing buffer row to framebuffer
@@ -1548,20 +1575,27 @@ bool ATUIPrinterGraphicalOutputWindow::Render(const ViewTransform& viewTransform
 	return true;
 }
 
-void ATUIPrinterGraphicalOutputWindow::RenderTrapezoid(const sint32 subSpans[2][8], uint32 penIndex, bool rgb) {
+void ATUIPrinterGraphicalOutputWindow::RenderTrapezoid(const sint32 subSpans[2][8], uint32 linearColor, bool rgb) {
 	uint8 *VDRESTRICT abuf = mABuffer.data();
 
 	if (rgb) {
 #if defined(VD_CPU_X64) || defined(VD_CPU_X86)
 		if (SSE2_enabled)
-			return RenderTrapezoidRGB_SSE2(subSpans, penIndex);
+			return RenderTrapezoid_SSE2<true>(subSpans, linearColor);
 
-		return RenderTrapezoidRGB_Scalar(subSpans, penIndex);
+		return RenderTrapezoidRGB_Scalar(subSpans, linearColor);
 #elif defined(VD_CPU_ARM64)
-		return RenderTrapezoidRGB_NEON(subSpans, penIndex);
+		return RenderTrapezoid_NEON<true>(subSpans, linearColor);
 #endif
 
 	} else {
+#if defined(VD_CPU_X64) || defined(VD_CPU_X86)
+		if (SSE2_enabled)
+			return RenderTrapezoid_SSE2<false>(subSpans, linearColor);
+#elif defined(VD_CPU_ARM64)
+		return RenderTrapezoid_NEON<false>(subSpans, linearColor);
+#endif
+
 		for(uint32 subRow = 0; subRow < 8; ++subRow) {
 			const sint32 csubx1 = subSpans[0][subRow];
 			const sint32 csubx2 = subSpans[1][subRow];
@@ -1595,9 +1629,11 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoid(const sint32 subSpans[2][
 	}
 }
 
-void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_Scalar(const sint32 subSpans[2][8], uint32 penIndex) {
+void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_Scalar(const sint32 subSpans[2][8], uint32 linearColor) {
 	uint8 *VDRESTRICT abuf = mABuffer.data();
-	const auto *VDRESTRICT penDithers = mPenDithers[penIndex];
+	const uint8 (&VDRESTRICT redDither)[8] = mLevelDithers[(linearColor >> 16)&0xFF][0];
+	const uint8 (&VDRESTRICT grnDither)[8] = mLevelDithers[(linearColor >>  8)&0xFF][1];
+	const uint8 (&VDRESTRICT bluDither)[8] = mLevelDithers[(linearColor >>  0)&0xFF][2];
 
 	for(uint32 subRow = 0; subRow < 8; ++subRow) {
 		const sint32 csubx1 = subSpans[0][subRow];
@@ -1606,9 +1642,9 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_Scalar(const sint32 su
 		if (csubx1 >= csubx2)
 			continue;
 
-		const uint8 rdither = penDithers[0][subRow];
-		const uint8 gdither = penDithers[1][subRow];
-		const uint8 bdither = penDithers[2][subRow];
+		const uint8 rdither = redDither[subRow];
+		const uint8 gdither = grnDither[subRow];
+		const uint8 bdither = bluDither[subRow];
 
 		// draw bits
 		const uint32 ucsubx1 = (uint32)csubx1;
@@ -1646,18 +1682,34 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_Scalar(const sint32 su
 }
 
 #if defined(VD_CPU_X64) || defined(VD_CPU_X86)
-void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_SSE2(const sint32 subSpans[2][8], uint32 penIndex) {
+template<bool T_RGB>
+void ATUIPrinterGraphicalOutputWindow::RenderTrapezoid_SSE2(const sint32 subSpans[2][8], uint32 linearColor) {
 #if defined(VD_CPU_X64)
-	const uint64 rdither = VDReadUnalignedU64(mPenDithers[penIndex][0]);
-	const uint64 gdither = VDReadUnalignedU64(mPenDithers[penIndex][1]);
-	const uint64 bdither = VDReadUnalignedU64(mPenDithers[penIndex][2]);
+	[[maybe_unused]] uint64 rdither;
+	[[maybe_unused]] uint64 gdither;
+	[[maybe_unused]] uint64 bdither;
+
+	if constexpr (T_RGB) {
+		rdither = VDReadUnalignedU64(mLevelDithers[(linearColor >> 16)&0xFF][0]);
+		gdither = VDReadUnalignedU64(mLevelDithers[(linearColor >>  8)&0xFF][1]);
+		bdither = VDReadUnalignedU64(mLevelDithers[(linearColor >>  0)&0xFF][2]);
+	}
 #else
-	const uint64 rdither1 = VDReadUnalignedU32(&mPenDithers[penIndex][0][0]);
-	const uint64 rdither2 = VDReadUnalignedU32(&mPenDithers[penIndex][0][4]);
-	const uint64 gdither1 = VDReadUnalignedU32(&mPenDithers[penIndex][1][0]);
-	const uint64 gdither2 = VDReadUnalignedU32(&mPenDithers[penIndex][1][4]);
-	const uint64 bdither1 = VDReadUnalignedU32(&mPenDithers[penIndex][2][0]);
-	const uint64 bdither2 = VDReadUnalignedU32(&mPenDithers[penIndex][2][4]);
+	[[maybe_unused]] uint32 rdither1;
+	[[maybe_unused]] uint32 rdither2;
+	[[maybe_unused]] uint32 gdither1;
+	[[maybe_unused]] uint32 gdither2;
+	[[maybe_unused]] uint32 bdither1;
+	[[maybe_unused]] uint32 bdither2;
+
+	if constexpr (T_RGB) {
+		rdither1 = VDReadUnalignedU32(&mLevelDithers[(linearColor >> 16)&0xFF][0][0]);
+		rdither2 = VDReadUnalignedU32(&mLevelDithers[(linearColor >> 16)&0xFF][0][4]);
+		gdither1 = VDReadUnalignedU32(&mLevelDithers[(linearColor >>  8)&0xFF][1][0]);
+		gdither2 = VDReadUnalignedU32(&mLevelDithers[(linearColor >>  8)&0xFF][1][4]);
+		bdither1 = VDReadUnalignedU32(&mLevelDithers[(linearColor >>  0)&0xFF][2][0]);
+		bdither2 = VDReadUnalignedU32(&mLevelDithers[(linearColor >>  0)&0xFF][2][4]);
+	}
 #endif
 
 	// compute min/max of non-empty scans
@@ -1691,11 +1743,17 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_SSE2(const sint32 subS
 	__m128i subX2B = _mm_loadu_si128((const __m128i *)&subSpans[1][4]);
 
 	// rasterize blocks
-	uint8 *__restrict dst = mABuffer.data() + (ptrdiff_t)minSubX1*3;
+	uint8 *__restrict dst = mABuffer.data();
+	
+	if constexpr (T_RGB) {
+		dst += (ptrdiff_t)minSubX1*3;
+	} else {
+		dst += (ptrdiff_t)minSubX1;
+	}
 
-	for(sint32 blockStart = minSubX1; blockStart < maxSubX2; blockStart += 128) {
-		// compute block-relative bounds with -128 bias
-		__m128i blockPos = _mm_set1_epi32(blockStart + 128);
+	for(sint32 blockStart = minSubX1; blockStart < maxSubX2; blockStart += 192) {
+		// compute block-relative bounds
+		__m128i blockPos = _mm_set1_epi32(blockStart);
 		__m128i blockSubX1A = _mm_sub_epi32(subX1A, blockPos);
 		__m128i blockSubX1B = _mm_sub_epi32(subX1B, blockPos);
 		__m128i blockSubX2A = _mm_sub_epi32(subX2A, blockPos);
@@ -1704,72 +1762,96 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_SSE2(const sint32 subS
 		// compress to signed bytes with saturation
 		__m128i blockSubX1 = _mm_packs_epi32(blockSubX1A, blockSubX1B);
 		__m128i blockSubX2 = _mm_packs_epi32(blockSubX2A, blockSubX2B);
-		__m128i blockSubX12b = _mm_packs_epi16(blockSubX1, blockSubX2);
+		__m128i blockSubX1X2b = _mm_packus_epi16(blockSubX1, blockSubX2);
 
-		// double up bytes
-		__m128i blockSubX1bb = _mm_unpacklo_epi8(blockSubX12b, blockSubX12b);
-		__m128i blockSubX2bb = _mm_unpackhi_epi8(blockSubX12b, blockSubX12b);
+		// convert to base and width
+		__m128i blockSubX1DXb = _mm_subs_epu8(blockSubX1X2b, _mm_slli_si128(blockSubX1X2b, 8));
+
+		// double up bytes and rebias for signed math
+		__m128i blockSubX1bb = _mm_unpacklo_epi8(blockSubX1DXb, blockSubX1DXb);
+		__m128i blockSubDXbb = _mm_xor_si128(_mm_unpackhi_epi8(blockSubX1DXb, blockSubX1DXb), _mm_set1_epi8(-0x80));
 
 		// set up 64 ranges
 		__m128i blockSubX1bbl = _mm_unpacklo_epi16(blockSubX1bb, blockSubX1bb);
 		__m128i blockSubX1bbh = _mm_unpackhi_epi16(blockSubX1bb, blockSubX1bb);
-		__m128i blockSubX2bbl = _mm_unpacklo_epi16(blockSubX2bb, blockSubX2bb);
-		__m128i blockSubX2bbh = _mm_unpackhi_epi16(blockSubX2bb, blockSubX2bb);
+		__m128i blockSubDXbbl = _mm_unpacklo_epi16(blockSubDXbb, blockSubDXbb);
+		__m128i blockSubDXbbh = _mm_unpackhi_epi16(blockSubDXbb, blockSubDXbb);
 
 		__m128i row01_x1 = _mm_shuffle_epi32(blockSubX1bbl, 0b0'01010000);
-		__m128i row01_x2 = _mm_shuffle_epi32(blockSubX2bbl, 0b0'01010000);
+		__m128i row01_dx = _mm_shuffle_epi32(blockSubDXbbl, 0b0'01010000);
 		__m128i row23_x1 = _mm_shuffle_epi32(blockSubX1bbl, 0b0'11111010);
-		__m128i row23_x2 = _mm_shuffle_epi32(blockSubX2bbl, 0b0'11111010);
+		__m128i row23_dx = _mm_shuffle_epi32(blockSubDXbbl, 0b0'11111010);
 		__m128i row45_x1 = _mm_shuffle_epi32(blockSubX1bbh, 0b0'01010000);
-		__m128i row45_x2 = _mm_shuffle_epi32(blockSubX2bbh, 0b0'01010000);
+		__m128i row45_dx = _mm_shuffle_epi32(blockSubDXbbh, 0b0'01010000);
 		__m128i row67_x1 = _mm_shuffle_epi32(blockSubX1bbh, 0b0'11111010);
-		__m128i row67_x2 = _mm_shuffle_epi32(blockSubX2bbh, 0b0'11111010);
+		__m128i row67_dx = _mm_shuffle_epi32(blockSubDXbbh, 0b0'11111010);
 
 		// set up bit position counter
-		__m128i pos = _mm_set_epi8(-127, -126, -125, -124, -123, -122, -121, -120, -127, -126, -125, -124, -123, -122, -121, -120);
+		__m128i pos = _mm_set_epi8(-128, -127, -126, -125, -124, -123, -122, -121, -128, -127, -126, -125, -124, -123, -122, -121);
 		__m128i posinc = _mm_set1_epi8(8);
 
-		size_t byteCnt = std::min<size_t>(maxSubX2 - blockStart, 128) >> 3;
+ 		size_t byteCnt = std::min<size_t>(maxSubX2 - blockStart, 192) >> 3;
 		while(byteCnt--) {
-			// compute (pos >= x1 && pos < x2) as (!((pos+1) > x2) && (pos+1) > x1) to bit mask
+			// compute (pos >= x1 && pos < x1+dx) as (dx-128 > (pos - x1)-128) to bit mask
 #if defined(VD_CPU_X64)
 			const uint64 mask
-				=  (uint64)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row01_x2), _mm_cmpgt_epi8(pos, row01_x1)))
-				+ ((uint64)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row23_x2), _mm_cmpgt_epi8(pos, row23_x1))) << 16)
-				+ ((uint64)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row45_x2), _mm_cmpgt_epi8(pos, row45_x1))) << 32)
-				+ ((uint64)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row67_x2), _mm_cmpgt_epi8(pos, row67_x1))) << 48);
+				=  (uint64)_mm_movemask_epi8(_mm_cmpgt_epi8(row01_dx, _mm_sub_epi8(pos, row01_x1)))
+				+ ((uint64)_mm_movemask_epi8(_mm_cmpgt_epi8(row23_dx, _mm_sub_epi8(pos, row23_x1))) << 16)
+				+ ((uint64)_mm_movemask_epi8(_mm_cmpgt_epi8(row45_dx, _mm_sub_epi8(pos, row45_x1))) << 32)
+				+ ((uint64)_mm_movemask_epi8(_mm_cmpgt_epi8(row67_dx, _mm_sub_epi8(pos, row67_x1))) << 48);
 
-			VDWriteUnalignedU64(dst +  0, VDReadUnalignedU64(dst +  0) | (mask & rdither));
-			VDWriteUnalignedU64(dst +  8, VDReadUnalignedU64(dst +  8) | (mask & gdither));
-			VDWriteUnalignedU64(dst + 16, VDReadUnalignedU64(dst + 16) | (mask & bdither));
+			if constexpr (T_RGB) {
+				VDWriteUnalignedU64(dst +  0, VDReadUnalignedU64(dst +  0) | (mask & rdither));
+				VDWriteUnalignedU64(dst +  8, VDReadUnalignedU64(dst +  8) | (mask & gdither));
+				VDWriteUnalignedU64(dst + 16, VDReadUnalignedU64(dst + 16) | (mask & bdither));
+			} else {
+				VDWriteUnalignedU64(dst +  0, VDReadUnalignedU64(dst +  0) | mask);
+			}
 #else
 			const uint32 mask1
-				=  (uint32)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row01_x2), _mm_cmpgt_epi8(pos, row01_x1)))
-				+ ((uint32)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row23_x2), _mm_cmpgt_epi8(pos, row23_x1))) << 16);
+				=  (uint32)_mm_movemask_epi8(_mm_cmpgt_epi8(row01_dx, _mm_sub_epi8(pos, row01_x1)))
+				+ ((uint32)_mm_movemask_epi8(_mm_cmpgt_epi8(row23_dx, _mm_sub_epi8(pos, row23_x1))) << 16);
 			const uint32 mask2
-				=  (uint32)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row45_x2), _mm_cmpgt_epi8(pos, row45_x1)))
-				+ ((uint32)_mm_movemask_epi8(_mm_andnot_si128(_mm_cmpgt_epi8(pos, row67_x2), _mm_cmpgt_epi8(pos, row67_x1))) << 16);
+				=  (uint32)_mm_movemask_epi8(_mm_cmpgt_epi8(row45_dx, _mm_sub_epi8(pos, row45_x1)))
+				+ ((uint32)_mm_movemask_epi8(_mm_cmpgt_epi8(row67_dx, _mm_sub_epi8(pos, row67_x1))) << 16);
 
-			VDWriteUnalignedU32(dst +  0, VDReadUnalignedU32(dst +  0) | (mask1 & rdither1));
-			VDWriteUnalignedU32(dst +  4, VDReadUnalignedU32(dst +  4) | (mask2 & rdither2));
-			VDWriteUnalignedU32(dst +  8, VDReadUnalignedU32(dst +  8) | (mask1 & gdither1));
-			VDWriteUnalignedU32(dst + 12, VDReadUnalignedU32(dst + 12) | (mask2 & gdither2));
-			VDWriteUnalignedU32(dst + 16, VDReadUnalignedU32(dst + 16) | (mask1 & bdither1));
-			VDWriteUnalignedU32(dst + 20, VDReadUnalignedU32(dst + 20) | (mask2 & bdither2));
+			if constexpr (T_RGB) {
+				VDWriteUnalignedU32(dst +  0, VDReadUnalignedU32(dst +  0) | (mask1 & rdither1));
+				VDWriteUnalignedU32(dst +  4, VDReadUnalignedU32(dst +  4) | (mask2 & rdither2));
+				VDWriteUnalignedU32(dst +  8, VDReadUnalignedU32(dst +  8) | (mask1 & gdither1));
+				VDWriteUnalignedU32(dst + 12, VDReadUnalignedU32(dst + 12) | (mask2 & gdither2));
+				VDWriteUnalignedU32(dst + 16, VDReadUnalignedU32(dst + 16) | (mask1 & bdither1));
+				VDWriteUnalignedU32(dst + 20, VDReadUnalignedU32(dst + 20) | (mask2 & bdither2));
+			} else {
+				VDWriteUnalignedU32(dst +  0, VDReadUnalignedU32(dst +  0) | mask1);
+				VDWriteUnalignedU32(dst +  4, VDReadUnalignedU32(dst +  4) | mask2);
+			}
 #endif
 
 			pos = _mm_adds_epi8(pos, posinc);
-			dst += 24;
+
+			if constexpr (T_RGB) {
+				dst += 24;
+			} else {
+				dst += 8;
+			}
 		}
 	}
 }
 #endif
 
 #if defined(VD_CPU_ARM64)
-void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_NEON(const sint32 subSpans[2][8], uint32 penIndex) {
-	const uint8x8_t rdither = vld1_u8(mPenDithers[penIndex][0]);
-	const uint8x8_t gdither = vld1_u8(mPenDithers[penIndex][1]);
-	const uint8x8_t bdither = vld1_u8(mPenDithers[penIndex][2]);
+template<bool T_RGB>
+void ATUIPrinterGraphicalOutputWindow::RenderTrapezoid_NEON(const sint32 subSpans[2][8], uint32 linearColor) {
+	[[maybe_unused]] uint8x8_t rdither;
+	[[maybe_unused]] uint8x8_t gdither;
+	[[maybe_unused]] uint8x8_t bdither;
+
+	if constexpr (T_RGB) {
+		rdither = vld1_u8(mLevelDithers[(linearColor >> 16)&0xFF][0]);
+		gdither = vld1_u8(mLevelDithers[(linearColor >>  8)&0xFF][1]);
+		bdither = vld1_u8(mLevelDithers[(linearColor >>  0)&0xFF][2]);
+	}
 
 	// load subscan ranges
 	const uint32x4_t subX1A = vreinterpretq_u32_s32(vld1q_s32(&subSpans[0][0]));
@@ -1792,69 +1874,65 @@ void ATUIPrinterGraphicalOutputWindow::RenderTrapezoidRGB_NEON(const sint32 subS
 	minSubX1 &= ~(uint32)7;
 	maxSubX2 = (maxSubX2 + 7) & ~(uint32)7;
 
-	// load bit packing mask
-	alignas(8) static constexpr uint8 kBitMask[] { 1, 2, 4, 8, 16, 32, 64, 128 };
-	const uint8x8_t bitMask = vld1_u8(kBitMask);
-
 	// rasterize blocks
-	uint8 *VDRESTRICT dst = mABuffer.data() + (ptrdiff_t)minSubX1*3;
+	uint8 *VDRESTRICT dst = mABuffer.data();
+	
+	if constexpr (T_RGB) {
+		dst += (ptrdiff_t)minSubX1*3;
+	} else {
+		dst += (ptrdiff_t)minSubX1;
+	}
 
-	for(uint32 blockStart = minSubX1; blockStart < maxSubX2; blockStart += 128) {
-		// compute block-relative bounds with -128 bias
-		uint32x4_t blockPos = vmovq_n_u32(blockStart);
-		uint32x4_t blockSubX1A = vqsubq_u32(subX1A, blockPos);
-		uint32x4_t blockSubX1B = vqsubq_u32(subX1B, blockPos);
-		uint32x4_t blockSubX2A = vqsubq_u32(subX2A, blockPos);
-		uint32x4_t blockSubX2B = vqsubq_u32(subX2B, blockPos);
+	for(uint32 blockStart = minSubX1; blockStart < maxSubX2; blockStart += 192) {
+		// compute block-relative bounds
+		const uint32x4_t blockPos = vmovq_n_u32(blockStart);
+		const uint32x4_t blockSubX1A = vqsubq_u32(subX1A, blockPos);
+		const uint32x4_t blockSubX1B = vqsubq_u32(subX1B, blockPos);
+		const uint32x4_t blockSubX2A = vqsubq_u32(subX2A, blockPos);
+		const uint32x4_t blockSubX2B = vqsubq_u32(subX2B, blockPos);
 
 		// compress to unsigned bytes with saturation
-		uint16x4_t zu16 = vmov_n_u16(0);
-		uint8x8_t blockSubX1 = vqmovn_u16(vcombine_u16(vqmovn_u32(blockSubX1A), vqmovn_u32(blockSubX1B)));
-		uint8x8_t blockSubX2 = vqmovn_u16(vcombine_u16(vqmovn_u32(blockSubX2A), vqmovn_u32(blockSubX2B)));
+		const uint16x4_t zu16 = vmov_n_u16(0);
+		const uint8x8_t blockSubX1 = vqmovn_u16(vcombine_u16(vqmovn_u32(blockSubX1A), vqmovn_u32(blockSubX1B)));
+		const uint8x8_t blockSubX2 = vqmovn_u16(vcombine_u16(vqmovn_u32(blockSubX2A), vqmovn_u32(blockSubX2B)));
+		const uint8x8_t blockSubDX = vqsub_u8(blockSubX2, blockSubX1);
 
 		// broadcast 8x
-		uint8x8_t row0_x1 = vdup_lane_u8(blockSubX1, 0);
-		uint8x8_t row1_x1 = vdup_lane_u8(blockSubX1, 1);
-		uint8x8_t row2_x1 = vdup_lane_u8(blockSubX1, 2);
-		uint8x8_t row3_x1 = vdup_lane_u8(blockSubX1, 3);
-		uint8x8_t row4_x1 = vdup_lane_u8(blockSubX1, 4);
-		uint8x8_t row5_x1 = vdup_lane_u8(blockSubX1, 5);
-		uint8x8_t row6_x1 = vdup_lane_u8(blockSubX1, 6);
-		uint8x8_t row7_x1 = vdup_lane_u8(blockSubX1, 7);
-		uint8x8_t row0_x2 = vdup_lane_u8(blockSubX2, 0);
-		uint8x8_t row1_x2 = vdup_lane_u8(blockSubX2, 1);
-		uint8x8_t row2_x2 = vdup_lane_u8(blockSubX2, 2);
-		uint8x8_t row3_x2 = vdup_lane_u8(blockSubX2, 3);
-		uint8x8_t row4_x2 = vdup_lane_u8(blockSubX2, 4);
-		uint8x8_t row5_x2 = vdup_lane_u8(blockSubX2, 5);
-		uint8x8_t row6_x2 = vdup_lane_u8(blockSubX2, 6);
-		uint8x8_t row7_x2 = vdup_lane_u8(blockSubX2, 7);
+		const uint8x16_t row01_x1 = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubX1), 0));
+		const uint8x16_t row23_x1 = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubX1), 1));
+		const uint8x16_t row45_x1 = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubX1), 2));
+		const uint8x16_t row67_x1 = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubX1), 3));
+		const uint8x16_t row01_dx = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubDX), 0));
+		const uint8x16_t row23_dx = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubDX), 1));
+		const uint8x16_t row45_dx = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubDX), 2));
+		const uint8x16_t row67_dx = vreinterpretq_u8_u16(vdupq_lane_u16(vreinterpret_u16_u8(blockSubDX), 3));
 
 		// set up bit position counter
-		static constexpr uint8_t kInitialBitPos[] { 0, 1, 2, 3, 4, 5, 6, 7 };
-		uint8x8_t pos = vld1_u8(kInitialBitPos);
-		uint8x8_t posinc = vmov_n_u8(8);
+		static constexpr uint8_t kInitialBitPos[] { 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 };
+		uint8x16_t pos = vld1q_u8(kInitialBitPos);
+		uint8x16_t posinc = vmovq_n_u8(8);
 
-		size_t byteCnt = std::min<size_t>(maxSubX2 - blockStart, 128) >> 3;
+		size_t byteCnt = std::min<size_t>(maxSubX2 - blockStart, 192) >> 3;
 		while(byteCnt--) {
-			// compute (pos >= x1 && pos < x2)
-			uint8x8_t mask;
+			// compute (pos - x1) < dx
+			uint8x16_t mask16 =         vcltq_u8(vsubq_u8(pos, row01_x1), row01_dx);
+			mask16 = vsliq_n_u8(mask16, vcltq_u8(vsubq_u8(pos, row23_x1), row23_dx), 1);
+			mask16 = vsliq_n_u8(mask16, vcltq_u8(vsubq_u8(pos, row45_x1), row45_dx), 2);
+			mask16 = vsliq_n_u8(mask16, vcltq_u8(vsubq_u8(pos, row67_x1), row67_dx), 3);
 
-			mask = vmov_n_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row0_x1), vclt_u8(pos, row0_x2)), bitMask)));
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row1_x1), vclt_u8(pos, row1_x2)), bitMask)), mask, 1);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row2_x1), vclt_u8(pos, row2_x2)), bitMask)), mask, 2);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row3_x1), vclt_u8(pos, row3_x2)), bitMask)), mask, 3);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row4_x1), vclt_u8(pos, row4_x2)), bitMask)), mask, 4);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row5_x1), vclt_u8(pos, row5_x2)), bitMask)), mask, 5);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row6_x1), vclt_u8(pos, row6_x2)), bitMask)), mask, 6);
-			mask = vset_lane_u8(vaddv_u8(vand_u8(vand_u8(vcge_u8(pos, row7_x1), vclt_u8(pos, row7_x2)), bitMask)), mask, 7);
+			uint8x8_t mask = vsli_n_u8(vget_low_u8(mask16), vget_high_u8(mask16), 4);
 
-			vst1_u8(dst +  0, vorr_u8(vld1_u8(dst +  0), vand_u8(mask, rdither)));
-			vst1_u8(dst +  8, vorr_u8(vld1_u8(dst +  8), vand_u8(mask, gdither)));
-			vst1_u8(dst + 16, vorr_u8(vld1_u8(dst + 16), vand_u8(mask, bdither)));
+			if constexpr (T_RGB) {
+				vst1_u8(dst +  0, vorr_u8(vld1_u8(dst +  0), vand_u8(mask, rdither)));
+				vst1_u8(dst +  8, vorr_u8(vld1_u8(dst +  8), vand_u8(mask, gdither)));
+				vst1_u8(dst + 16, vorr_u8(vld1_u8(dst + 16), vand_u8(mask, bdither)));
+				dst += 24;
+			} else {
+				vst1_u8(dst, vorr_u8(vld1_u8(dst), mask));
+				dst += 8;
+			}
 
-			pos = vqadd_u8(pos, posinc);
-			dst += 24;
+			pos = vqaddq_u8(pos, posinc);
 		}
 	}
 }
@@ -1956,6 +2034,7 @@ void ATUIPrinterGraphicalOutputWindow::Downsample8x8_POPCNT32(uint32 *dst, const
 void ATUIPrinterGraphicalOutputWindow::Downsample8x8_NEON(uint32 *dst, const uint8 *src, size_t w) {
 	uint32 *__restrict fbdst = dst;
 	const uint8 *__restrict asrc = src;
+	const auto *__restrict gtab = mGammaTable;
 
 	for(size_t x = 0; x < w; ++x) {
 		// compute coverage by counting bits within 8x8 window
@@ -1963,7 +2042,7 @@ void ATUIPrinterGraphicalOutputWindow::Downsample8x8_NEON(uint32 *dst, const uin
 		asrc += 8;
 
 		// convert coverage to sRGB color
-		*fbdst++ = mGammaTable[level];
+		*fbdst++ = gtab[level];
 	}
 }
 #endif
@@ -2087,6 +2166,14 @@ void ATUIPrinterGraphicalOutputWindow::DownsampleRGB8x8_NEON(uint32 *dst, const 
 
 ///////////////////////////////////////////////////////////////////////////////
 
+struct ATPrinterOutputWindow::PrinterOutputSort {
+	bool operator()(ATPrinterOutputBase *p, ATPrinterOutputBase *q) const {
+		return vdwcsicmp(p->GetName(), q->GetName()) < 0;
+	}
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
 ATPrinterOutputWindow::ATPrinterOutputWindow()
 	: ATUIPaneWindow(kATUIPaneId_PrinterOutput, L"Printer Output")
 	, mhwndTextEditor(NULL)
@@ -2098,12 +2185,17 @@ ATPrinterOutputWindow::ATPrinterOutputWindow()
 	mRemovingOutputFn = [this](ATPrinterOutput& output) { OnRemovingOutput(output); };
 	mAddedGraphicalOutputFn = [this](ATPrinterGraphicalOutput& output) { OnAddedGraphicalOutput(output); };
 	mRemovingGraphicalOutputFn = [this](ATPrinterGraphicalOutput& output) { OnRemovingGraphicalOutput(output); };
+
+	mToolbar.SetOnClicked([this](uint32 id) { OnToolbarItemClicked(id); });
 }
 
 ATPrinterOutputWindow::~ATPrinterOutputWindow() {
 }
 
 LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
+	if (VDZLRESULT r {}; mDispatcher.TryDispatch(msg, wParam, lParam, r))
+		return r;
+
 	switch(msg) {
 		case WM_SIZE:
 			OnSize();
@@ -2139,17 +2231,7 @@ LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 					switch(cmd) {
 						case ID_CONTEXT_CLEAR:
-							if (mpGraphicWindow)
-								mpGraphicWindow->Clear();
-							else if (mpTextEditor) {
-								mpTextEditor->Clear();
-								mLastTextOffset = 0;
-
-								if (mpTextOutput) {
-									mpTextOutput->Clear();
-									mpTextOutput->Revalidate();
-								}
-							}
+							Clear();
 							break;
 
 						case ID_CONTEXT_RESETVIEW:
@@ -2174,7 +2256,8 @@ LRESULT ATPrinterOutputWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 					}
 				}
 			} catch(const VDException& ex) {
-				VDDialogFrameW32::ShowError((VDGUIHandle)mhwnd, ex.wc_str(), nullptr);
+				if (ex.visible())
+					VDDialogFrameW32::ShowError((VDGUIHandle)mhwnd, ex.wc_str(), nullptr);
 			}
 			break;
 	}
@@ -2189,7 +2272,20 @@ bool ATPrinterOutputWindow::OnCreate() {
 	if (!VDCreateTextEditor(~mpTextEditor))
 		return false;
 
-	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, 100);
+	mhwndToolbar = CreateWindow(TOOLBARCLASSNAME, _T(""), WS_CHILD | WS_VISIBLE | TBSTYLE_LIST | TBSTYLE_FLAT | TBSTYLE_CUSTOMERASE, 0, 0, 0, 0, mhwnd, (HMENU)kControlId_Toolbar, VDGetLocalModuleHandleW32(), NULL);
+	if (!mhwndToolbar)
+		return false;
+
+	mToolbar.Attach(mhwndToolbar);
+	mDispatcher.AddControl(&mToolbar);
+
+	mToolbar.SetDarkModeEnabled(true);
+	mToolbar.AddDropdownButton(kControlId_Output, -1, L"");
+	mToolbar.AddSeparator();
+	mToolbar.AddButton(kControlId_Clear, -1, L"Clear");
+	mToolbar.AddButton(kControlId_ResetView, -1, L"Reset View");
+
+	mhwndTextEditor = (HWND)mpTextEditor->Create(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd, kControlId_TextEditor);
 
 	OnFontsUpdated();
 
@@ -2203,6 +2299,18 @@ bool ATPrinterOutputWindow::OnCreate() {
 	mpOutputMgr->OnAddedGraphicalOutput.Add(&mAddedGraphicalOutputFn);
 	mpOutputMgr->OnRemovingGraphicalOutput.Add(&mRemovingGraphicalOutputFn);
 
+	// enumerate pre-existing outputs
+	for(uint32 i = 0, n = mpOutputMgr->GetOutputCount(); i < n; ++i) {
+		mPrinterOutputs.emplace_back(&mpOutputMgr->GetOutput(i));
+	}
+
+	for(uint32 i = 0, n = mpOutputMgr->GetGraphicalOutputCount(); i < n; ++i) {
+		mPrinterOutputs.emplace_back(&mpOutputMgr->GetGraphicalOutput(i));
+	}
+
+	std::sort(mPrinterOutputs.begin(), mPrinterOutputs.end(), PrinterOutputSort());
+
+	UpdateToolbarForOutput();
 	AttachToAnyOutput();
 
 	return true;
@@ -2220,16 +2328,45 @@ void ATPrinterOutputWindow::OnDestroy() {
 		mpOutputMgr = nullptr;
 	}
 
+	if (mhwndTextEditor) {
+		DestroyWindow(mhwndTextEditor);
+		mhwndTextEditor = nullptr;
+	}
+
+	if (mhwndToolbar) {
+		mDispatcher.RemoveControl(mhwndToolbar);
+		mToolbar.Detach();
+
+		DestroyWindow(mhwndToolbar);
+		mhwndToolbar = nullptr;
+	}
+
 	ATUIPaneWindow::OnDestroy();
 }
 
 void ATPrinterOutputWindow::OnSize() {
+	mToolbar.AutoSize();
+
+	vdrect32 rToolbar = mToolbar.GetWindowArea();
+	vdrect32 r = GetClientArea();
+
+	rToolbar.left = 0;
+	rToolbar.right = r.right;
+	rToolbar.bottom -= rToolbar.top;
+	rToolbar.top = 0;
+
+	mToolbar.SetArea(rToolbar);
+
+	vdrect32 r2(r);
+	r2.top = rToolbar.bottom;
+	r2.bottom = std::max<sint32>(r2.top, r.bottom);
+
 	if (mpGraphicWindow) {
-		mpGraphicWindow->SetArea(GetClientArea());
+		mpGraphicWindow->SetArea(r2);
 	} else if (mhwndTextEditor) {
 		ATUINativeWindowProxy proxy(mhwndTextEditor);
 
-		proxy.SetArea(GetClientArea());
+		proxy.SetArea(r2);
 	}
 }
 
@@ -2245,30 +2382,116 @@ void ATPrinterOutputWindow::OnSetFocus() {
 		::SetFocus(mhwndTextEditor);
 }
 
+void ATPrinterOutputWindow::OnToolbarItemClicked(uint32 id) {
+	if (id == kControlId_Output) {
+		size_t n = mPrinterOutputs.size();
+
+		vdfastvector<const wchar_t *> items(n + 1, nullptr);
+		for(size_t i = 0; i < n; ++i)
+			items[i] = mPrinterOutputs[i]->GetName();
+
+		sint32 selectedIdx = mToolbar.ShowDropDownMenu(id, items.data());
+		if (selectedIdx >= 0 && (size_t)selectedIdx < n) {
+			ATPrinterOutputBase *selectedOutput = mPrinterOutputs[selectedIdx];
+
+			if (IATPrinterOutput *textOutput = vdpoly_cast<IATPrinterOutput *>(selectedOutput)) {
+				AttachToTextOutput(*static_cast<ATPrinterOutput *>(textOutput));
+			} else {
+				IATPrinterGraphicalOutput *graphicalOutput = vdpoly_cast<IATPrinterGraphicalOutput *>(selectedOutput);
+
+				if (graphicalOutput)
+					AttachToGraphicsOutput(*static_cast<ATPrinterGraphicalOutput *>(graphicalOutput));
+			}
+		}
+	} else if (id == kControlId_Clear) {
+		Clear();
+	} else if (id == kControlId_ResetView) {
+		ResetView();
+	}
+}
+
+void ATPrinterOutputWindow::Clear() {
+	if (mpGraphicWindow)
+		mpGraphicWindow->Clear();
+	else if (mpTextEditor) {
+		mpTextEditor->Clear();
+		mLastTextOffset = 0;
+
+		if (mpTextOutput) {
+			mpTextOutput->Clear();
+			mpTextOutput->Revalidate();
+		}
+	}
+}
+
+void ATPrinterOutputWindow::ResetView() {
+	if (mpGraphicWindow)
+		mpGraphicWindow->ResetView();
+}
+
 void ATPrinterOutputWindow::OnAddedOutput(ATPrinterOutput& output) {
+	AddOutput(output);
+
 	if (!mpTextOutput && !mpGraphicsOutput)
 		AttachToAnyOutput();
 }
 
 void ATPrinterOutputWindow::OnRemovingOutput(ATPrinterOutput& output) {
+	RemoveOutput(output);
+
 	if (&output == mpTextOutput) {
 		DetachFromTextOutput();
 
 		AttachToAnyOutput();
 	}
+
+	if (mPrinterOutputs.empty())
+		UpdateToolbarForOutput();
 }
 
 void ATPrinterOutputWindow::OnAddedGraphicalOutput(ATPrinterGraphicalOutput& output) {
+	AddOutput(output);
+
 	if (!mpGraphicsOutput)
 		AttachToAnyOutput();
 }
 
 void ATPrinterOutputWindow::OnRemovingGraphicalOutput(ATPrinterGraphicalOutput& output) {
+	RemoveOutput(output);
+
 	if (&output == mpGraphicsOutput) {
 		DetachFromGraphicsOutput();
 
 		AttachToAnyOutput();
 	}
+
+	if (mPrinterOutputs.empty())
+		UpdateToolbarForOutput();
+}
+
+void ATPrinterOutputWindow::AddOutput(ATPrinterOutputBase& output) {
+	auto it = std::lower_bound(mPrinterOutputs.begin(), mPrinterOutputs.end(), &output, PrinterOutputSort());
+
+	mPrinterOutputs.insert(it, vdrefptr<ATPrinterOutputBase>(&output));
+}
+
+void ATPrinterOutputWindow::RemoveOutput(ATPrinterOutputBase& output) {
+	auto it = std::find(mPrinterOutputs.begin(), mPrinterOutputs.end(), &output);
+
+	if (it != mPrinterOutputs.end())
+		mPrinterOutputs.erase(it);
+}
+
+void ATPrinterOutputWindow::UpdateToolbarForOutput() {
+	ATPrinterOutputBase *output = mpTextOutput ? static_cast<ATPrinterOutputBase *>(mpTextOutput) : mpGraphicsOutput;
+
+	if (!output)
+		mToolbar.SetItemText(kControlId_Output, L"(No printer outputs)");
+	else
+		mToolbar.SetItemText(kControlId_Output, output->GetName());
+
+	mToolbar.SetItemVisible(kControlId_Clear, mpTextOutput != nullptr || mpGraphicsOutput != nullptr);
+	mToolbar.SetItemVisible(kControlId_ResetView, mpGraphicsOutput != nullptr);
 }
 
 void ATPrinterOutputWindow::AttachToAnyOutput() {
@@ -2295,6 +2518,7 @@ void ATPrinterOutputWindow::AttachToTextOutput(ATPrinterOutput& output) {
 	);
 
 	UpdateTextOutput();
+	UpdateToolbarForOutput();
 }
 
 void ATPrinterOutputWindow::DetachFromTextOutput() {
@@ -2339,6 +2563,7 @@ void ATPrinterOutputWindow::AttachToGraphicsOutput(ATPrinterGraphicalOutput& out
 	OnSize();
 
 	mpGraphicWindow->AttachToOutput(output);
+	UpdateToolbarForOutput();
 }
 
 void ATPrinterOutputWindow::DetachFromGraphicsOutput() {

@@ -17,27 +17,42 @@
 #include <stdafx.h>
 #include <array>
 #include <vd2/system/filesys.h>
+#include <vd2/Dita/services.h>
 #include <at/atui/uicommandmanager.h>
+#include <at/atui/uimanager.h>
 #include <at/atnativeui/theme.h>
 #include "uiaccessors.h"
 #include "uicaptionupdater.h"
 #include "uidevices.h"
+#include "uifilefilters.h"
 #include "uifirmwaremenu.h"
+#include "uifullscreenmode.h"
 #include "uipageddialog.h"
 #include "uikeyboard.h"
-#include "resource.h"
+#include "compatengine.h"
 #include "constants.h"
 #include "cartridge.h"
 #include "devicemanager.h"
 #include "diskinterface.h"
-#include "simulator.h"
 #include "options.h"
+#include "oshelper.h"
+#include "resource.h"
+#include "settings.h"
+#include "simulator.h"
 
+extern ATUIManager g_ATUIManager;
 extern ATSimulator g_sim;
 extern ATUIKeyboardOptions g_kbdOpts;
 
 extern void ATUISwitchKernel(uint64 id);
 extern void ATUISwitchBasic(uint64 id);
+
+class ATUIDialogSysConfigHost : public ATUIPagedDialog {
+public:
+	using ATUIPagedDialog::ATUIPagedDialog;
+
+	virtual void RequestReopen() = 0;
+};
 
 class ATUIDialogSysConfigPage : public ATUIDialogPage {
 public:
@@ -111,9 +126,13 @@ protected:
 	public:
 		CmdTriggerBinding(const char *cmd) : mpCommand(cmd) {}
 
+		VDUIProxyButtonControl& GetView() { return *mpControl; }
+
 		void Bind(VDUIProxyButtonControl *ctl);
 		void Read();
 		void Write();
+
+		void ShowElevationNeeded();
 
 	private:
 		VDUIProxyButtonControl *mpControl {};
@@ -121,6 +140,7 @@ protected:
 	};
 
 	CmdBoolBinding *BindCheckbox(uint32 id, const char *cmd);
+	CmdTriggerBinding *BindCommandButton(uint32 id, const char *cmd);
 
 	template<typename T, typename... Args>
 	T *AllocateObject(Args&&... args);
@@ -131,6 +151,8 @@ protected:
 	void ClearBindings();
 	void AddAutoReadBinding(CmdBinding *binding);
 	void AutoReadBindings();
+
+	void RequestReopen();
 
 	struct AllocatedObject {
 		void *mpObject;
@@ -174,6 +196,17 @@ ATUIDialogSysConfigPage::CmdBoolBinding *ATUIDialogSysConfigPage::BindCheckbox(u
 	return binding;
 }
 
+ATUIDialogSysConfigPage::CmdTriggerBinding *ATUIDialogSysConfigPage::BindCommandButton(uint32 id, const char *cmd) {
+	auto *view = AllocateObject<VDUIProxyButtonControl>();
+	auto *binding = AllocateObject<CmdTriggerBinding>(cmd);
+
+	AddProxy(view, id);
+	binding->Bind(view);
+	view->SetOnClicked([binding] { binding->Write(); });
+
+	return binding;
+}
+
 template<typename T, typename... Args>
 T *ATUIDialogSysConfigPage::AllocateObject(Args&&... args) {
 	T *p = new T(std::forward<Args>(args)...);
@@ -211,6 +244,10 @@ void ATUIDialogSysConfigPage::AddAutoReadBinding(CmdBinding *binding) {
 void ATUIDialogSysConfigPage::AutoReadBindings() {
 	for(CmdBinding *p : mAutoReadBindings)
 		p->Read();
+}
+
+void ATUIDialogSysConfigPage::RequestReopen() {
+	static_cast<ATUIDialogSysConfigHost *>(mpParentPagedDialog)->RequestReopen();
 }
 
 ATUIDialogSysConfigPage::CmdComboBinding::CmdComboBinding(vdvector_view<const CmdMapEntry> table) {
@@ -396,6 +433,11 @@ void ATUIDialogSysConfigPage::CmdTriggerBinding::Write() {
 
 	cm.ExecuteCommandNT(*cmd);
 	Read();
+}
+
+void ATUIDialogSysConfigPage::CmdTriggerBinding::ShowElevationNeeded() {
+	if (mpControl)
+		mpControl->ShowElevationNeeded();
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1059,7 +1101,7 @@ bool ATUIDialogSysConfigSystem::OnLoaded() {
 	AddProxy(&mVideoStdToggleView, IDC_TOGGLE_NTSC_PAL);
 
 	BindCheckbox(IDC_CTIA, "Video.ToggleCTIA");
-	BindCheckbox(IDC_ENHC67, "Video.ToggleEnhancedMode67");
+	BindCheckbox(IDC_ENHC67, "Video.ToggleEnhancedMode67");	// CMC
 
 	mHardwareTypeMapTable.Bind(&mHardwareTypeView);
 	mVideoStandardMapTable.Bind(&mVideoStandardView);
@@ -1085,6 +1127,7 @@ chips, e.g. PAL ANTIC with NTSC GTIA.");
 the GTIA except for the absence of the GTIA video modes. A few very early programs require a CTIA to display \
 properly as they show corrupted displays with a GTIA.");
 
+	// CMC
 	AddHelpEntry(IDC_ENHC67, L"Enhanced ANTIC Mode 6/7",
 		L"Enable ANTIC to read double the amount of data for modes 6 and 7 (GR 1 and 2). The first byte is \
 the character code and matches the GR 0 format. The second byte is the color control byte and each nibble allows \
@@ -1684,6 +1727,56 @@ void ATUIDialogSysConfigEnhancedText::UpdateVirtualScreenSize() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigMediaDefaults final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigMediaDefaults();
+
+protected:
+	bool OnLoaded() override;
+
+	VDUIProxyComboBoxControl mMediaDefaultModeView;
+
+	static inline constexpr CmdMapEntry kMediaDefaultModeOptions[] = {
+		{ "Options.MediaDefaultModeRO",			L"Read only" },
+		{ "Options.MediaDefaultModeVRWSafe",	L"Virtual read/write (prohibit format)" },
+		{ "Options.MediaDefaultModeVRW",		L"Virtual read/write" },
+		{ "Options.MediaDefaultModeRW",			L"Read/write" },
+	};
+
+	CmdComboBinding mMediaDefaultModeMapBinding { kMediaDefaultModeOptions };
+};
+
+ATUIDialogSysConfigMediaDefaults::ATUIDialogSysConfigMediaDefaults()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_MEDIADEFAULTS)
+{
+	mMediaDefaultModeView.SetOnSelectionChanged(
+		[this](int idx) {
+			mMediaDefaultModeMapBinding.Write();
+			OnDataExchange(false);
+		}
+	);
+}
+
+bool ATUIDialogSysConfigMediaDefaults::OnLoaded() {
+	AddProxy(&mMediaDefaultModeView, IDC_WRITEMODE);
+
+	mMediaDefaultModeMapBinding.Bind(&mMediaDefaultModeView);
+
+	AddAutoReadBinding(&mMediaDefaultModeMapBinding);
+
+	AddHelpEntry(
+		IDC_WRITEMODE,
+		L"Default write mode",
+		L"Selects the default write mode when media is mounted. Read only mode "
+		L"blocks writes; virtual read/write mode buffers writes but changes are "
+		L"only written back to the original file if manually saved."
+	);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogSysConfigDisk final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigDisk();
@@ -1973,6 +2066,147 @@ that causes ~0.3% of C: block reads to fail. This adds a small amount of jitter 
 	OnDataExchange(false);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigFlash : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigFlash();
+
+protected:
+	bool OnLoaded();
+	void OnDataExchange(bool write);
+};
+
+ATUIDialogSysConfigFlash::ATUIDialogSysConfigFlash()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_FLASH)
+{
+}
+
+bool ATUIDialogSysConfigFlash::OnLoaded() {
+	AddHelpEntry(IDC_SIC_FLASH, L"SIC! cartridge flash", L"Sets the flash chip used for SIC! cartridges.");
+	AddHelpEntry(IDC_MAXFLASH1MB_FLASH, L"Maxflash 1Mbit cartridge flash",
+		L"Sets the flash chip used for MaxFlash 1Mbit cartridges. The SSF39SF010 is not currently supported by the 20201117 flasher.");
+	AddHelpEntry(IDC_MAXFLASH8MB_FLASH, L"Maxflash 8Mbit cartridge flash",
+		L"Sets the flash chip used for MaxFlash 8Mbit cartridges. The HY29F040A and SST39SF040 are only recognized by the 2012+ flasher.");
+	AddHelpEntry(IDC_U1MB_FLASH, L"U1MB flash", L"Sets the flash chip used for Ultimate1MB.");
+
+	CBAddString(IDC_SIC_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_SIC_FLASH, L"SSF39SF040 (4K sectors)");
+	CBAddString(IDC_SIC_FLASH, L"MX29F040 (64K sectors)");
+
+	CBAddString(IDC_MAXFLASH1MB_FLASH, L"Am29F010 (16K sectors)");
+	CBAddString(IDC_MAXFLASH1MB_FLASH, L"M29F010B (16K sectors)");
+	CBAddString(IDC_MAXFLASH1MB_FLASH, L"SST39SF010 (4K sectors)");
+
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"BM29F040 (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"HY29F040A (64K sectors)");
+	CBAddString(IDC_MAXFLASH8MB_FLASH, L"SST39SF040 (4K sectors)");
+
+	CBAddString(IDC_U1MB_FLASH, L"A29040 (64K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"SSF39SF040 (4K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"Am29F040B (64K sectors)");
+	CBAddString(IDC_U1MB_FLASH, L"BM29F040 (64K sectors)");
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigFlash::OnDataExchange(bool write) {
+	static constexpr const char *kSICFlashChips[]={
+		"Am29F040B",
+		"SST39SF040",
+		"MX29F040"
+	};
+
+	static constexpr const char *kMaxflash1MbFlashChips[]={
+		"Am29F010",
+		"M29F010B",
+		"SST39SF010",
+	};
+
+	static constexpr const char *kMaxflash8MbFlashChips[]={
+		"Am29F040B",
+		"BM29F040",
+		"HY29F040A",
+		"SST39SF040"
+	};
+
+	static constexpr const char *kU1MBFlashChips[]={
+		"A29040",
+		"SST39SF040",
+		"Am29F040B",
+		"BM29F040",
+	};
+
+	if (write) {
+		int idx = CBGetSelectedIndex(IDC_SIC_FLASH);
+
+		ATOptions prevOpts(g_ATOptions);
+
+		if ((unsigned)idx < vdcountof(kSICFlashChips))
+			g_ATOptions.mSICFlashChip = kSICFlashChips[idx];
+
+		idx = CBGetSelectedIndex(IDC_MAXFLASH1MB_FLASH);
+		if ((unsigned)idx < vdcountof(kMaxflash1MbFlashChips))
+			g_ATOptions.mMaxflash1MbFlashChip = kMaxflash1MbFlashChips[idx];
+
+		idx = CBGetSelectedIndex(IDC_MAXFLASH8MB_FLASH);
+		if ((unsigned)idx < vdcountof(kMaxflash8MbFlashChips))
+			g_ATOptions.mMaxflash8MbFlashChip = kMaxflash8MbFlashChips[idx];
+
+		idx = CBGetSelectedIndex(IDC_U1MB_FLASH);
+		if ((unsigned)idx < vdcountof(kU1MBFlashChips))
+			g_ATOptions.mU1MBFlashChip = kU1MBFlashChips[idx];
+
+		if (g_ATOptions != prevOpts) {
+			g_ATOptions.mbDirty = true;
+
+			ATOptionsRunUpdateCallbacks(&prevOpts);
+			ATOptionsSave();
+		}
+	} else {
+		int idx = 0;
+		for(int i=0; i<(int)vdcountof(kSICFlashChips); ++i) {
+			if (g_ATOptions.mSICFlashChip == kSICFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_SIC_FLASH, idx);
+
+		idx = 0;
+		for(int i=0; i<(int)vdcountof(kMaxflash1MbFlashChips); ++i) {
+			if (g_ATOptions.mMaxflash1MbFlashChip == kMaxflash1MbFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_MAXFLASH1MB_FLASH, idx);
+
+		idx = 0;
+		for(int i=0; i<(int)vdcountof(kMaxflash8MbFlashChips); ++i) {
+			if (g_ATOptions.mMaxflash8MbFlashChip == kMaxflash8MbFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_MAXFLASH8MB_FLASH, idx);
+
+		idx = 0;
+		for(int i=0; i<(int)vdcountof(kU1MBFlashChips); ++i) {
+			if (g_ATOptions.mU1MBFlashChip == kU1MBFlashChips[i]) {
+				idx = i;
+				break;
+			}
+		}
+
+		CBSetSelectedIndex(IDC_U1MB_FLASH, idx);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2673,7 +2907,6 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 		marginBinding->Read();
 	});
 
-	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
 	BindCheckbox(IDC_AUTOHIDEPOINTER, "View.ToggleAutoHidePointer");
 	BindCheckbox(IDC_HIDETARGETPOINTER, "View.ToggleTargetPointer");
 	BindCheckbox(IDC_SHOWPADBOUNDS, "View.TogglePadBounds");
@@ -2685,12 +2918,6 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 
 	AddHelpEntry(IDC_PAD_INDICATORS, L"Pad bottom margin to reserve space for indicators",
 		L"Move the display up and reserve space at the bottom of the display for indicators.");
-
-	AddHelpEntry(IDC_HWACCEL_SCREENFX,
-		L"Use hardware acceleration for screen effects",
-		L"Accelerate screen effects like scanlines and color correction with shaders. This requires "
-			L"a shader-capable graphics card and Direct3D 9 or 11 to be enabled in Options."
-	);
 
 	AddHelpEntry(IDC_AUTOHIDEPOINTER,
 		L"Auto-hide mouse pointer after short delay",
@@ -2717,12 +2944,207 @@ bool ATUIDialogSysConfigDisplay::OnLoaded() {
 
 ///////////////////////////////////////////////////////////////////////////
 
+class ATUIDialogSysConfigDisplay2 final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigDisplay2();
+	
+	const char *GetPageTag() const override { return "display2"; }
+
+protected:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+	void OnSelectVideoMode();
+	void OnBrowseEffect();
+	void RefreshEffectPath();
+
+	VDUIProxyButtonControl mSelectVideoModeView;
+	VDUIProxyButtonControl mBrowseEffectView;
+	VDUIProxySysLinkControl mSysLinkDispEffectsView;
+};
+
+ATUIDialogSysConfigDisplay2::ATUIDialogSysConfigDisplay2()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_DISPLAY2)
+{
+	mSelectVideoModeView.SetOnClicked(
+		[this] { OnSelectVideoMode(); }
+	);
+
+	mBrowseEffectView.SetOnClicked(
+		[this] { OnBrowseEffect(); }
+	);
+
+	mSysLinkDispEffectsView.SetOnClicked(
+		[this] { ATShowHelp(GetHandleW32(), L"customeffect.html"); }
+	);
+}
+
+bool ATUIDialogSysConfigDisplay2::OnLoaded() {
+	AddProxy(&mSelectVideoModeView, IDC_FSMODE_BROWSE);
+	AddProxy(&mBrowseEffectView, IDC_BROWSE);
+	AddProxy(&mSysLinkDispEffectsView, IDC_SYSLINK_DISPEFFECTS);
+
+	BindCheckbox(IDC_HWACCEL_SCREENFX, "View.ToggleAccelScreenFX");
+	auto *d3d9Binding = BindCheckbox(IDC_GRAPHICS_D3D9, "Options.ToggleDisplayD3D9");
+	auto *d3d11Binding = BindCheckbox(IDC_GRAPHICS_3D, "Options.ToggleDisplayD3D11");
+	auto *b16Binding = BindCheckbox(IDC_16BIT, "Options.ToggleDisplay16Bit");
+	auto *refreshBinding = BindCheckbox(IDC_SEAMLESSCUSTOMREFRESH, "Options.ToggleDisplayCustomRefresh");
+	
+	d3d9Binding->GetView().SetOnClicked(
+		[=] {
+			d3d9Binding->Write();
+			b16Binding->Read();
+		}
+	);
+
+	d3d11Binding->GetView().SetOnClicked(
+		[=] {
+			d3d11Binding->Write();
+			refreshBinding->Read();
+		}
+	);
+
+	BindCommandButton(IDC_RELOAD, "View.EffectReload");
+	auto *clearBinding = BindCommandButton(IDC_CLEAR, "View.EffectClear");
+	clearBinding->GetView().SetOnClicked(
+		[=,this] {
+			clearBinding->Write();
+			RefreshEffectPath();
+		}
+	);
+
+	AddHelpEntry(IDC_HWACCEL_SCREENFX,
+		L"Use hardware acceleration for screen effects",
+		L"Accelerate screen effects like scanlines and color correction with shaders. This requires "
+			L"a shader-capable graphics card and Direct3D 9 or 11 to be enabled in Options."
+	);
+
+	AddHelpEntry(IDC_GRAPHICS_D3D9, L"Direct3D 9", L"Enable Direct3D 9 support. This is the best option for Windows 7.");
+	AddHelpEntry(IDC_GRAPHICS_3D, L"Direct3D 11", L"Enable Direct3D 11 support. This is the best option for Windows 8 and above.");
+	AddHelpEntry(IDC_16BIT, L"Use 16-bit surfaces", L"Use 16-bit surfaces for faster speed on low-end graphics cards. May reduce visual quality.");
+	AddHelpEntry(IDC_SEAMLESSCUSTOMREFRESH, L"Use seamless custom refresh", L"Attempt to switch to custom refresh rate for fullscreen (requires D3D11, Windows 8.1+ and integrated screen).");
+
+	AddHelpEntry(IDC_FSMODE_BORDERLESS, L"Full screen mode: Borderless mode", L"Use a full-screen borderless window without switching to exclusive full screen mode.");
+	AddHelpEntry(IDC_FSMODE_DESKTOP, L"Full screen mode: Match desktop", L"Uses the desktop resolution for full screen mode. This avoids a mode switch.");
+	AddHelpEntry(IDC_FSMODE_CUSTOM, L"Full screen mode: Custom", L"Use a specific video mode for full screen mode. Zero for refresh rate allows any rate.");
+
+	LinkHelpEntry(IDC_FSMODE_WIDTH, IDC_FSMODE_CUSTOM);
+	LinkHelpEntry(IDC_FSMODE_HEIGHT, IDC_FSMODE_CUSTOM);
+	LinkHelpEntry(IDC_FSMODE_REFRESH, IDC_FSMODE_CUSTOM);
+	LinkHelpEntry(IDC_FSMODE_BROWSE, IDC_FSMODE_CUSTOM);
+
+	AddHelpEntry(IDC_PATH, L"Custom effects path", L"Path to effect file to set up custom display effect. This is only supported by the Direct3D 9 display driver.");
+	LinkHelpEntry(IDC_BROWSE, IDC_PATH);
+
+	AddHelpEntry(IDC_RELOAD, L"Reload custom effect", L"Reload the custom effect from the custom effect file.");
+
+	ATUIEnableEditControlAutoComplete(GetControl(IDC_PATH));
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigDisplay2::OnDataExchange(bool write) {
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+
+	if (write) {
+		ATOptions prevOpts(g_ATOptions);
+
+		g_ATOptions.mFullScreenWidth = 0;
+		g_ATOptions.mFullScreenHeight = 0;
+		g_ATOptions.mFullScreenRefreshRate = 0;
+
+		if (IsButtonChecked(IDC_FSMODE_BORDERLESS)) {
+			g_ATOptions.mbFullScreenBorderless = true;
+		} else {
+			g_ATOptions.mbFullScreenBorderless = false;
+			 
+			if (IsButtonChecked(IDC_FSMODE_CUSTOM)) {
+				VDStringW s;
+				VDStringW t;
+
+				if (GetControlText(IDC_FSMODE_WIDTH, s) && GetControlText(IDC_FSMODE_HEIGHT, t)) {
+					g_ATOptions.mFullScreenWidth = wcstoul(s.c_str(), NULL, 10);
+					g_ATOptions.mFullScreenHeight = wcstoul(t.c_str(), NULL, 10);
+
+					if (GetControlText(IDC_FSMODE_REFRESH, s))
+						g_ATOptions.mFullScreenRefreshRate = wcstoul(s.c_str(), NULL, 10);
+				}
+			}
+		}
+
+		if (g_ATOptions != prevOpts) {
+			g_ATOptions.mbDirty = true;
+			ATOptionsRunUpdateCallbacks(&prevOpts);
+			ATOptionsSave();
+		}
+
+		VDStringW path;
+		if (GetControlText(IDC_PATH, path))
+			g_ATUIManager.SetCustomEffectPath(path.c_str(), false);
+	} else {
+		if (g_ATOptions.mFullScreenWidth && g_ATOptions.mFullScreenHeight) {
+			CheckButton(IDC_FSMODE_DESKTOP, false);
+			CheckButton(IDC_FSMODE_CUSTOM, true);
+			CheckButton(IDC_FSMODE_BORDERLESS, false);
+			SetControlTextF(IDC_FSMODE_WIDTH, L"%u", g_ATOptions.mFullScreenWidth);
+			SetControlTextF(IDC_FSMODE_HEIGHT, L"%u", g_ATOptions.mFullScreenHeight);
+			SetControlTextF(IDC_FSMODE_REFRESH, L"%u", g_ATOptions.mFullScreenRefreshRate);
+		} else {
+			CheckButton(IDC_FSMODE_DESKTOP, !g_ATOptions.mbFullScreenBorderless);
+			CheckButton(IDC_FSMODE_BORDERLESS, g_ATOptions.mbFullScreenBorderless);
+			CheckButton(IDC_FSMODE_CUSTOM, false);
+
+			SetControlText(IDC_FSMODE_WIDTH, L"");
+			SetControlText(IDC_FSMODE_HEIGHT, L"");
+			SetControlText(IDC_FSMODE_REFRESH, L"");
+		}
+
+		RefreshEffectPath();
+	}
+}
+
+void ATUIDialogSysConfigDisplay2::OnSelectVideoMode() {
+	OnDataExchange(true);
+
+	const ATUIDialogFullScreenMode::ModeInfo modeInfo = {
+		g_ATOptions.mFullScreenWidth,
+		g_ATOptions.mFullScreenHeight,
+		g_ATOptions.mFullScreenRefreshRate
+	};
+
+	ATUIDialogFullScreenMode dlg;
+	dlg.SetSelectedItem(modeInfo);
+	if (dlg.ShowDialog((VDGUIHandle)mhdlg)){
+		const ATUIDialogFullScreenMode::ModeInfo& newModeInfo = dlg.GetSelectedItem();
+
+		CheckButton(IDC_FSMODE_CUSTOM, true);
+		CheckButton(IDC_FSMODE_BORDERLESS, false);
+		CheckButton(IDC_FSMODE_DESKTOP, false);
+		SetControlTextF(IDC_FSMODE_WIDTH, L"%u", newModeInfo.mWidth);
+		SetControlTextF(IDC_FSMODE_HEIGHT, L"%u", newModeInfo.mHeight);
+		SetControlTextF(IDC_FSMODE_REFRESH, L"%u", newModeInfo.mRefresh);
+	}
+}
+
+void ATUIDialogSysConfigDisplay2::OnBrowseEffect() {
+	const VDStringW& s = VDGetLoadFileName('ceff', (VDGUIHandle)mhdlg, L"Load custom effect", L"CG program (*.cgp)\0*.cgp\0", nullptr);
+
+	if (!s.empty())
+		SetControlText(IDC_PATH, s.c_str());
+}
+
+void ATUIDialogSysConfigDisplay2::RefreshEffectPath() {
+	SetControlText(IDC_PATH, g_ATUIManager.GetCustomEffectPath());
+}
+
+///////////////////////////////////////////////////////////////////////////
+
 class ATUIDialogSysConfigUI final : public ATUIDialogSysConfigPage {
 public:
 	ATUIDialogSysConfigUI();
 
 protected:
 	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
 
 	static inline constexpr CmdMapEntry sEfficiencyModeOptions[] = {
 		{ "Options.EfficiencyModeDefault",		L"Default - OS managed" },
@@ -2750,11 +3172,43 @@ bool ATUIDialogSysConfigUI::OnLoaded() {
 	mEfficiencyModeBinding.Bind(&mEfficiencyModeView);
 	AddAutoReadBinding(&mEfficiencyModeBinding);
 
+	BindCheckbox(IDC_SINGLE_INSTANCE, "Options.ToggleSingleInstance");
 	BindCheckbox(IDC_AUTOHIDEMENU, "View.ToggleAutoHideMenu");
+	BindCheckbox(IDC_PAUSE_ON_MENU, "Options.PauseDuringMenu");
+
+	auto *darkBinding = BindCheckbox(IDC_USE_DARK_THEME, "Options.UseDarkTheme");
+	darkBinding->GetView().SetOnClicked(
+		[darkBinding, this] {
+			bool darkMode = ATUIIsDarkThemeActive();
+
+			darkBinding->Write();
+
+			if (ATUIIsDarkThemeActive() != darkMode) {
+				RequestReopen();
+			}
+		}
+	);
+
+	BindCommandButton(IDC_UNDISABLE, "Options.ResetAllDialogs");
 
 	AddHelpEntry(IDC_AUTOHIDEMENU,
 		L"Auto-hide menu",
 		L"Automatically hide menu in windowed mode except when mouse is in menu area."
+	);
+
+	AddHelpEntry(IDC_PAUSE_ON_MENU,
+		L"Pause when menus are open",
+		L"Pause emulation whenever a menu is opened."
+	);
+
+	AddHelpEntry(IDC_USE_DARK_THEME,
+		L"Use dark theme",
+		L"Display the program UI in a darker theme."
+	);
+	
+	AddHelpEntry(IDC_UNDISABLE,
+		L"Show all dialogs again",
+		L"Re-enable confirmation dialogs that were previously dismissed with \"don't show this again\"."
 	);
 
 	AddHelpEntry(IDC_EFFICIENCYMODE,
@@ -2762,9 +3216,41 @@ bool ATUIDialogSysConfigUI::OnLoaded() {
 		L"Selects the program's CPU core preference on CPUs with hybrid/heterogeneous core types (Intel 12th/13th gen, ARM)."
 	);
 
+	AddHelpEntry(IDC_SCALE,
+		L"Default scale",
+		L"Sets the scale factor for on-screen display UI elements. This does not affect native UI elements, which use system scale."
+	);
+	
+	AddHelpEntry(IDC_SINGLE_INSTANCE,
+		L"Reuse program instance",
+		L"When enabled, launching the program will attempt to reuse an existing running instance instead of starting a new one (running under the same user)."
+	);
+
 	OnDataExchange(false);
 
 	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigUI::OnDataExchange(bool write) {
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+
+	if (write) {
+		auto scale = g_ATOptions.mThemeScale;
+
+		ExchangeControlValueSint32(write, IDC_SCALE, scale, 10, 1000);
+
+		if (g_ATOptions.mThemeScale != scale) {
+			auto prevOpts = g_ATOptions;
+
+			g_ATOptions.mThemeScale = scale;
+			g_ATOptions.mbDirty = true;
+			ATOptionsRunUpdateCallbacks(&prevOpts);
+			ATOptionsSave();
+		}
+
+	} else {
+		ExchangeControlValueSint32(write, IDC_SCALE, g_ATOptions.mThemeScale, 10, 1000);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -2775,7 +3261,7 @@ public:
 
 protected:
 	bool OnLoaded() override;
-	void OnDataExchange(bool write);
+	void OnDataExchange(bool write) override;
 	void UpdateCurrentSeedLabel();
 	void UpdateNextSeedLabel();
 
@@ -3283,6 +3769,7 @@ bool ATUIDialogSysConfigInput::OnLoaded() {
 	BindCheckbox(IDC_USERAWINPUT, "Input.ToggleRawInputEnabled");
 	BindCheckbox(IDC_IMMEDIATEPOTS, "Input.ToggleImmediatePotUpdate");
 	BindCheckbox(IDC_IMMEDIATELIGHTPEN, "Input.ToggleImmediateLightPenUpdate");
+	BindCheckbox(IDC_POTNOISE, "Input.TogglePotNoise");
 
 	AddHelpEntry(IDC_USERAWINPUT, L"Use Raw Input API for relative mouse input",
 L"Use the Raw Input API in Windows to track relative mouse movements instead of WM_MOUSEMOVE. Can bypass acceleration for better control, but may have compatibility issues with some setups.");
@@ -3293,26 +3780,350 @@ L"Allow paddle position registers to update immediately instead of waiting for t
 	AddHelpEntry(IDC_IMMEDIATELIGHTPEN, L"Use immediate light pen update",
 L"Allow light pen position registers to update immediately instead of waiting for the next pot/display scan. This slightly reduces accuracy but can reduce light pen latency.");
 
-	OnDataExchange(false);
+	AddHelpEntry(IDC_POTNOISE, L"Enable paddle potentiometer noise",
+L"Jitter paddle inputs to simulate a dirty paddle.");
 
 	return ATUIDialogSysConfigPage::OnLoaded();
 }
 
 ///////////////////////////////////////////////////////////////////////////
 
-class ATUIDialogConfigureSystem final : public ATUIPagedDialog {
+class ATUIDialogSysConfigFileTypes final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigFileTypes();
+
+	const char *GetPageTag() const override { return "filetypes"; }
+
+private:
+	bool OnLoaded() override;
+};
+
+ATUIDialogSysConfigFileTypes::ATUIDialogSysConfigFileTypes()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_FILETYPES)
+{
+}
+
+bool ATUIDialogSysConfigFileTypes::OnLoaded() {
+	BindCommandButton(IDC_SETFILEASSOC, "Options.SetFileAssocForAll")->ShowElevationNeeded();
+	BindCommandButton(IDC_REMOVEFILEASSOC, "Options.UnsetFileAssocForAll")->ShowElevationNeeded();
+	BindCommandButton(IDC_SETUSERFILEASSOC, "Options.SetFileAssocForUser");
+	BindCommandButton(IDC_REMOVEUSERFILEASSOC, "Options.UnsetFileAssocForUser");
+	BindCheckbox(IDC_AUTO_PROFILE, "Options.ToggleLaunchAutoProfile");
+
+	AddHelpEntry(IDC_SETFILEASSOC, L"Set/Remove File Assocations (System)",
+		L"Register file types in the OS to launch the emulator, for all users on the system.");
+
+	LinkHelpEntry(IDC_SETFILEASSOC, IDC_REMOVEFILEASSOC);
+
+	AddHelpEntry(IDC_SETUSERFILEASSOC, L"Set/Remove File Assocations (User)",
+		L"Register file types in the OS to launch the emulator, for only the current user.");
+
+	LinkHelpEntry(IDC_SETUSERFILEASSOC, IDC_REMOVEUSERFILEASSOC);
+
+	AddHelpEntry(IDC_AUTO_PROFILE, L"Launch images with auto-profile",
+		L"Automatically switch to default profile for image type when launched as the default program. (If you have set up file associations with a previous version, re-add file associations to enable this feature.)");
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigErrorHandling final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigErrorHandling();
+
+	const char *GetPageTag() const override { return "errors"; }
+
+private:
+	bool OnLoaded() override;
+
+	VDUIProxyComboBoxControl mErrorModeView;
+
+	static inline constexpr CmdMapEntry kErrorModeOptions[] = {
+		{ "Options.ErrorModeDialog",	L"Show error dialog (default)" },
+		{ "Options.ErrorModeDebug",		L"Break into the debugger" },
+		{ "Options.ErrorModePause",		L"Pause the emulation" },
+		{ "Options.ErrorModeReset",		L"Cold reset the emulation" },
+	};
+
+	CmdComboBinding mErrorModeMapBinding { kErrorModeOptions };
+};
+
+ATUIDialogSysConfigErrorHandling::ATUIDialogSysConfigErrorHandling()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_ERRORS)
+{
+	mErrorModeView.SetOnSelectionChanged(
+		[this](int idx) {
+			mErrorModeMapBinding.Write();
+			OnDataExchange(false);
+		}
+	);
+}
+
+bool ATUIDialogSysConfigErrorHandling::OnLoaded() {
+	AddProxy(&mErrorModeView, IDC_ERRORMODE);
+
+	mErrorModeMapBinding.Bind(&mErrorModeView);
+
+	AddAutoReadBinding(&mErrorModeMapBinding);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigSettings final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigSettings();
+
+	const char *GetPageTag() const override { return "settings"; }
+
+private:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+
+	void OnResetAll();
+	void OnSwitchToPortable();
+	void OnSwitchToRegistry();
+
+	VDUIProxyButtonControl mResetAllView;
+	VDUIProxyButtonControl mSwitchToPortableView;
+	VDUIProxyButtonControl mSwitchToRegistryView;
+	VDUIProxyControl mStaticMigratingView;
+	VDUIProxyControl mStaticUsingPortableView;
+	VDUIProxyControl mStaticUsingRegistryView;
+};
+
+ATUIDialogSysConfigSettings::ATUIDialogSysConfigSettings()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_SETTINGS)
+{
+	mResetAllView.SetOnClicked([this] { OnResetAll(); });
+	mSwitchToPortableView.SetOnClicked([this] { OnSwitchToPortable(); });
+	mSwitchToRegistryView.SetOnClicked([this] { OnSwitchToRegistry(); });
+}
+
+bool ATUIDialogSysConfigSettings::OnLoaded() {
+	AddProxy(&mResetAllView, IDC_RESETALL);
+	AddProxy(&mSwitchToPortableView, IDC_SWITCH_TO_PORTABLE);
+	AddProxy(&mSwitchToRegistryView, IDC_SWITCH_TO_REGISTRY);
+	AddProxy(&mStaticMigratingView, IDC_STATIC_MIGRATING);
+	AddProxy(&mStaticUsingPortableView, IDC_STATIC_PORTABLE);
+	AddProxy(&mStaticUsingRegistryView, IDC_STATIC_REGISTRY);
+
+	AddHelpEntry(IDC_RESETALL, L"Reset All Settings",
+		L"Reset all settings in the program, clearing all settings for the next startup.");
+	AddHelpEntry(IDC_SWITCH_TO_PORTABLE, L"Switch to Registry/Portable Mode",
+		L"Switch between storing settings in the Registry, which is better for reliability with multiple instances and roaming profiles, and in an INI file for portability.");
+	LinkHelpEntry(IDC_SWITCH_TO_REGISTRY, IDC_SWITCH_TO_PORTABLE);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigSettings::OnDataExchange(bool write) {
+	ATUIDialogSysConfigPage::OnDataExchange(write);
+
+	if (!write) {
+		bool isPortable = ATSettingsIsInPortableMode();
+		bool isMigrating = ATSettingsIsMigrationScheduled();
+		bool isScheduled = isMigrating || ATSettingsIsResetPending();
+
+		mStaticUsingPortableView.SetVisible(isPortable && !isMigrating);
+		mStaticUsingRegistryView.SetVisible(!isPortable && !isMigrating);
+		mStaticMigratingView.SetVisible(isMigrating);
+		mSwitchToRegistryView.SetVisible(isPortable);
+		mSwitchToPortableView.SetVisible(!isPortable);
+		mResetAllView.SetEnabled(!isScheduled);
+		mSwitchToRegistryView.SetEnabled(!isScheduled);
+		mSwitchToPortableView.SetEnabled(!isScheduled);
+	}
+}
+
+void ATUIDialogSysConfigSettings::OnResetAll() {
+	if (!ATSettingsIsResetPending() && !ATSettingsIsMigrationScheduled()) {
+		if (Confirm2(nullptr, L"This will reset all program settings to first-time defaults. Are you sure?", L"Resetting All Settings")) {
+			ATSettingsScheduleReset();
+
+			ShowInfo2(L"All settings will be reset the next time the program is restarted.", L"Reset Scheduled");
+
+			OnDataExchange(false);
+		}
+	}
+}
+
+void ATUIDialogSysConfigSettings::OnSwitchToPortable() {
+	if (!ATSettingsIsInPortableMode() && !ATSettingsIsMigrationScheduled() && !ATSettingsIsResetPending()) {
+		if (Confirm2(nullptr, L"This will remove settings from the Registry and copy them into Altirra.ini.", L"Switching to Portable Mode")) {
+			// check that we can open for write
+			const VDStringW path = ATSettingsGetDefaultPortablePath();
+			VDFile f;
+			bool success = true;
+
+			if (f.openNT(path.c_str(), nsVDFile::kCreateNew | nsVDFile::kReadWrite)) {
+				// created new -- delete the file so it doesn't exist until we migrate, in case we fail first
+				f.closeNT();
+
+				VDRemoveFile(path.c_str());
+			} else if (f.openNT(path.c_str(), nsVDFile::kOpenExisting | nsVDFile::kReadWrite)) {
+				// already exists somehow -- leave it until migration
+			} else {
+				success = false;
+			}
+
+			f.closeNT();
+
+			if (success) {
+				ATSettingsScheduleMigration();
+				ShowInfo2(L"Settings will be migrated from the Registry to Altirra.ini on exit.", L"Migration Scheduled");
+
+				OnDataExchange(false);
+			} else {
+				ShowError2(L"There was a problem creating Altirra.ini. Check if the program is in a writable location.", L"Migration failed");
+			}
+		}
+	}
+}
+
+void ATUIDialogSysConfigSettings::OnSwitchToRegistry() {
+	if (ATSettingsIsInPortableMode() && !ATSettingsIsMigrationScheduled() && !ATSettingsIsResetPending()) {
+		if (Confirm2(nullptr, L"This will delete Altirra.ini and copy the settings back into the Registry.", L"Switching to Registry Mode")) {
+			ATSettingsScheduleMigration();
+
+			ShowInfo2(L"Settings will be migrated from Altirra.ini to the Registry on exit.", L"Migration Scheduled");
+			OnDataExchange(false);
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogSysConfigCompatDB final : public ATUIDialogSysConfigPage {
+public:
+	ATUIDialogSysConfigCompatDB();
+
+	const char *GetPageTag() const override { return "compatdb"; }
+
+private:
+	bool OnLoaded() override;
+	void OnDataExchange(bool write) override;
+
+	void OnUnmuteAll();
+	void OnExternalDBToggled();
+	void OnBrowse();
+	void UpdateEnables();
+
+	VDUIProxyButtonControl mCheckExternalDB;
+	VDUIProxyButtonControl mButtonUnmuteAll;
+	VDUIProxyButtonControl mButtonBrowse;
+};
+
+ATUIDialogSysConfigCompatDB::ATUIDialogSysConfigCompatDB()
+	: ATUIDialogSysConfigPage(IDD_CONFIGURE_COMPATDB)
+{
+	mCheckExternalDB.SetOnClicked([this] { OnExternalDBToggled(); });
+	mButtonUnmuteAll.SetOnClicked([this] { OnUnmuteAll(); });
+	mButtonBrowse.SetOnClicked([this] { OnBrowse(); });
+}
+
+bool ATUIDialogSysConfigCompatDB::OnLoaded() {
+	AddProxy(&mCheckExternalDB, IDC_COMPAT_EXTERNAL);
+	AddProxy(&mButtonUnmuteAll, IDC_UNMUTE_ALL);
+	AddProxy(&mButtonBrowse, IDC_BROWSE);
+
+	AddHelpEntry(IDC_COMPAT_ENABLE, L"Show compatibility warnings",
+		L"If enabled, detect and warn about compatibility issues with loaded titles.");
+
+	AddHelpEntry(IDC_COMPAT_INTERNAL, L"Use internal database",
+		L"Use built-in compatibility database.");
+
+	AddHelpEntry(IDC_COMPAT_EXTERNAL, L"Use external database",
+		L"Use compatibility database in external file.");
+
+	LinkHelpEntry(IDC_COMPAT_EXTERNAL, IDC_PATH);
+	LinkHelpEntry(IDC_COMPAT_EXTERNAL, IDC_BROWSE);
+
+	return ATUIDialogSysConfigPage::OnLoaded();
+}
+
+void ATUIDialogSysConfigCompatDB::OnDataExchange(bool write) {
+	if (write) {
+		auto prevOpts = g_ATOptions;
+
+		g_ATOptions.mbCompatEnable = IsButtonChecked(IDC_COMPAT_ENABLE);
+		g_ATOptions.mbCompatEnableInternalDB = IsButtonChecked(IDC_COMPAT_INTERNAL);
+		g_ATOptions.mbCompatEnableExternalDB = IsButtonChecked(IDC_COMPAT_EXTERNAL);
+		GetControlText(IDC_PATH, g_ATOptions.mCompatExternalDBPath);
+
+		if (g_ATOptions != prevOpts) {
+			g_ATOptions.mbDirty = true;
+
+			ATOptionsRunUpdateCallbacks(&prevOpts);
+			ATOptionsSave();
+		}
+	} else {
+		CheckButton(IDC_COMPAT_ENABLE, g_ATOptions.mbCompatEnable);
+		CheckButton(IDC_COMPAT_INTERNAL, g_ATOptions.mbCompatEnableInternalDB);
+		CheckButton(IDC_COMPAT_EXTERNAL, g_ATOptions.mbCompatEnableExternalDB);
+		SetControlText(IDC_PATH, g_ATOptions.mCompatExternalDBPath.c_str());
+
+		UpdateEnables();
+	}
+}
+
+void ATUIDialogSysConfigCompatDB::OnUnmuteAll() {
+	if (Confirm(L"This will unmute all compatibility warnings previously muted. Are you sure?"))
+		ATCompatUnmuteAllTitles();
+}
+
+void ATUIDialogSysConfigCompatDB::OnExternalDBToggled() {
+	UpdateEnables();
+}
+
+void ATUIDialogSysConfigCompatDB::OnBrowse() {
+	const auto& path = VDGetLoadFileName('cpdc', (VDGUIHandle)mhdlg, L"Load external compatibility database", g_ATUIFileFilter_LoadCompatEngine, L"atcpengine");
+
+	if (!path.empty()) {
+		try {
+			ATCompatLoadExtDatabase(path.c_str(), true);
+
+			SetControlText(IDC_PATH, path.c_str());
+		} catch(const MyError& e) {
+			ShowError(e);
+		}
+	}
+}
+
+void ATUIDialogSysConfigCompatDB::UpdateEnables() {
+	bool extdb = mCheckExternalDB.GetChecked();
+
+	EnableControl(IDC_PATH, extdb);
+	mButtonBrowse.SetEnabled(extdb);
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+class ATUIDialogConfigureSystem final : public ATUIDialogSysConfigHost {
 public:
 	ATUIDialogConfigureSystem();
 
-protected:
-	bool OnLoaded();
-	void OnDestroy();
-	void OnPopulatePages();
+	bool CheckReopenNeeded();
+
+private:
+	bool OnLoaded() override;
+	void OnDestroy() override;
+	void OnPopulatePages() override;
+
+	void RequestReopen() override;
+
+	bool mbReopenNeeded = false;
 };
 
 ATUIDialogConfigureSystem::ATUIDialogConfigureSystem()
-	: ATUIPagedDialog(IDD_CONFIGURE)
+	: ATUIDialogSysConfigHost(IDD_CONFIGURE)
 {
+}
+
+bool ATUIDialogConfigureSystem::CheckReopenNeeded() {
+	return std::exchange(mbReopenNeeded, false);
 }
 
 bool ATUIDialogConfigureSystem::OnLoaded() {
@@ -3347,67 +4158,80 @@ void ATUIDialogConfigureSystem::OnPopulatePages() {
 	PushCategory(L"Peripherals");
 	AddPage(L"Devices", vdmakeunique<ATUIDialogSysConfigDevices>());
 	AddPage(L"Keyboard", vdmakeunique<ATUIDialogSysConfigKeyboard>());
+	PopCategory();
+	PushCategory(L"Media");
+	AddPage(L"Defaults", vdmakeunique<ATUIDialogSysConfigMediaDefaults>());
 	AddPage(L"Disk", vdmakeunique<ATUIDialogSysConfigDisk>());
 	AddPage(L"Cassette", vdmakeunique<ATUIDialogSysConfigCassette>());
+	AddPage(L"Flash", vdmakeunique<ATUIDialogSysConfigFlash>());
+	AddPage(L"File Types", vdmakeunique<ATUIDialogSysConfigFileTypes>());
 	PopCategory();
 	PushCategory(L"Emulator");
 	AddPage(L"Accessibility", vdmakeunique<ATUIDialogSysConfigAccessibility>());
+	AddPage(L"Compat DB", vdmakeunique<ATUIDialogSysConfigCompatDB>());
 	AddPage(L"Debugger", vdmakeunique<ATUIDialogSysConfigDebugger>());
-	AddPage(L"Display", vdmakeunique<ATUIDialogSysConfigDisplay>());
-	AddPage(L"Ease of use", vdmakeunique<ATUIDialogSysConfigEaseOfUse>());
+	AddPage(L"Display 1", vdmakeunique<ATUIDialogSysConfigDisplay>());
+	AddPage(L"Display 2", vdmakeunique<ATUIDialogSysConfigDisplay2>());
+	AddPage(L"Ease of Use", vdmakeunique<ATUIDialogSysConfigEaseOfUse>());
+	AddPage(L"Error Handling", vdmakeunique<ATUIDialogSysConfigErrorHandling>());
 	AddPage(L"Input", vdmakeunique<ATUIDialogSysConfigInput>());
+	AddPage(L"Settings", vdmakeunique<ATUIDialogSysConfigSettings>());
 	AddPage(L"UI", vdmakeunique<ATUIDialogSysConfigUI>());
-	AddPage(L"Window caption", vdmakeunique<ATUIDialogSysConfigCaption>());
+	AddPage(L"Window Caption", vdmakeunique<ATUIDialogSysConfigCaption>());
 	AddPage(L"Workarounds", vdmakeunique<ATUIDialogSysConfigWorkarounds>());
 	PopCategory();
 }
 
+void ATUIDialogConfigureSystem::RequestReopen() {
+	mbReopenNeeded = true;
+
+	PostCall(
+		[this] {
+			End(0);
+		}
+	);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
-void ATUIShowDialogConfigureSystem(VDGUIHandle hParent) {
+void ATUIShowDialogConfigureSystem(VDGUIHandle hParent, const char *initialPage) {
 	static int sLastPage = 0;
 
 	ATUIDialogConfigureSystem dlg;
 
-	dlg.SetInitialPage(sLastPage);
-	dlg.ShowDialog(hParent);
+	do {
+		if (initialPage) {
+			dlg.SetInitialPageByName(initialPage);
+			initialPage = nullptr;
+		} else
+			dlg.SetInitialPage(sLastPage);
 
-	sLastPage = dlg.GetSelectedPage();
+		dlg.ShowDialog(hParent);
+
+		sLastPage = dlg.GetSelectedPage();
+	} while(dlg.CheckReopenNeeded());
+}
+
+void ATUIShowDialogConfigureSystem(VDGUIHandle hParent) {
+	ATUIShowDialogConfigureSystem(hParent, nullptr);
 }
 
 void ATUIShowCPUOptionsDialog(VDGUIHandle h) {
-	ATUIDialogConfigureSystem dlg;
-	
-	dlg.SetInitialPageByName("cpu");
-	dlg.ShowDialog(h);
+	ATUIShowDialogConfigureSystem(h, "cpu");
 }
 
 void ATUIShowDialogDevices(VDGUIHandle hParent) {
-	ATUIDialogConfigureSystem dlg;
-
-	dlg.SetInitialPageByName("devices");
-	dlg.ShowDialog(hParent);
+	ATUIShowDialogConfigureSystem(hParent, "devices");
 }
 
 void ATUIShowDialogSpeedOptions(VDGUIHandle hParent) {
-	ATUIDialogConfigureSystem dlg;
-
-	dlg.SetInitialPageByName("speed");
-	dlg.ShowDialog(hParent);
+	ATUIShowDialogConfigureSystem(hParent, "speed");
 }
 
-struct ATUIKeyboardOptions;
-bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opts) {
-	ATUIDialogConfigureSystem dlg;
-
-	dlg.SetInitialPageByName("keyboard");
-	dlg.ShowDialog(hParent);
-	return false;
+void ATUIShowDialogKeyboardOptions(VDGUIHandle hParent) {
+	ATUIShowDialogConfigureSystem(hParent, "keyboard");
 }
 
-void ATUIShowDialogConfigureSystemDisplay(VDGUIHandle hParent) {
-	ATUIDialogConfigureSystem dlg;
-
-	dlg.SetInitialPageByName("display");
-	dlg.ShowDialog(hParent);
+void ATUIShowDialogConfigureSystemDisplay2(VDGUIHandle hParent) {
+	ATUIShowDialogConfigureSystem(hParent, "display2");
 }

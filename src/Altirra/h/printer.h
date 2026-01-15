@@ -52,7 +52,7 @@ public:
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
-	void GetCIODevices(char *buf, size_t len) const override;
+	void GetCIODevices(IATDeviceCIODeviceList& deviceList) const override;
 	sint32 OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) override;
 	sint32 OnCIOClose(int channel, uint8 deviceNo) override;
 	sint32 OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) override;
@@ -70,7 +70,7 @@ public:	// IATDeviceSIO
 	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 public:	// IATDeviceParent
-	IATDeviceBus *GetDeviceBus(uint32 index);
+	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 public:	// IATSchedulerCallback
 	void OnScheduledEvent(uint32 id) override;
@@ -91,7 +91,11 @@ protected:
 	int FlushCIOBuffer(bool sideways);
 
 	void HandleFrame(const uint8 *data, uint32 len, bool fromCIO);
-	virtual void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) = 0;
+
+	VDStringW GetPrinterOutputName();
+
+	IATPrinterOutput *GetTextOutput();
+	virtual void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) = 0;
 
 	struct RenderLineParams {
 		float mPreDelay = 0;
@@ -137,6 +141,7 @@ protected:
 
 	IATDeviceCIOManager *mpCIOMgr = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	vdrefptr<IATPrinterOutput> mpOutput;
 	vdrefptr<IATPrinterGraphicalOutput> mpPrinterGraphicalOutput;
 	ATScheduler *mpScheduler = nullptr;
@@ -186,11 +191,11 @@ public:
 	void GetSettings(ATPropertySet& settings) override;
 	bool SetSettings(const ATPropertySet& settings) override;
 
-	bool IsSupportedDeviceId(uint8 id) const;
-	bool IsSupportedOrientation(uint8 aux1) const;
-	uint8 GetWidthForOrientation(uint8 aux1) const;
+	bool IsSupportedDeviceId(uint8 id) const override;
+	bool IsSupportedOrientation(uint8 aux1) const override;
+	uint8 GetWidthForOrientation(uint8 aux1) const override;
 	void GetStatusFrameInternal(uint8 frame[4]) override;
-	void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
+	void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
 
 private:
 	ATPrinterPortTranslationMode mTranslationMode = ATPrinterPortTranslationMode::Default;
@@ -208,7 +213,7 @@ public:
 	bool IsSupportedOrientation(uint8 aux1) const override;
 	uint8 GetWidthForOrientation(uint8 aux1) const override;
 	void GetStatusFrameInternal(uint8 frame[4]) override;
-	void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
+	void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
 };
 
 class ATDevicePrinter1025 final : public ATDevicePrinterBase {
@@ -224,10 +229,10 @@ public:
 	bool IsSupportedOrientation(uint8 aux1) const override;
 	uint8 GetWidthForOrientation(uint8 aux1) const override;
 	void GetStatusFrameInternal(uint8 frame[4]) override;
-	void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
+	void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
 
 private:
-	void FlushLine(IATPrinterOutput& output, bool graphics);
+	void FlushLine(bool graphics);
 	void UpdateLineLength();
 	void ResetState();
 
@@ -263,10 +268,10 @@ public:
 	bool IsSupportedOrientation(uint8 aux1) const override;
 	uint8 GetWidthForOrientation(uint8 aux1) const override;
 	void GetStatusFrameInternal(uint8 frame[4]) override;
-	void HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
+	void HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) override;
 
 private:
-	void FlushLine(IATPrinterOutput& output, bool graphics);
+	void FlushLine(bool graphics);
 	void ResetState();
 	void ClearLineBuffer();
 

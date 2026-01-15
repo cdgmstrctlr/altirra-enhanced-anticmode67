@@ -30,7 +30,7 @@ class vdfloat2;
 // output. This can either be the default output or a child device with a
 // parallel port interface.
 //
-class IATPrinterOutput : public IVDRefUnknown {
+class IATPrinterOutput : public virtual IVDRefUnknown {
 public:
 	static constexpr uint32 kTypeID = "IATPrinterOutput"_vdtypeid;
 
@@ -70,7 +70,7 @@ struct ATPrinterGraphicsSpec {
 // Interface for output sinks connecting to printer ports and receiving
 // graphical output. This is currently only the default output.
 //
-class IATPrinterGraphicalOutput : public IVDRefUnknown {
+class IATPrinterGraphicalOutput : public virtual IVDRefUnknown {
 public:
 	static constexpr uint32 kTypeID = "IATPrinterGraphicalOutput"_vdtypeid;
 
@@ -86,8 +86,10 @@ public:
 	virtual void Print(float x, uint32 dots) = 0;
 
 	// Add a vector (line segment) from pt1 to pt2 with the specified dot size.
-	// Color index sets the pen index.
-	virtual void AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 colorIndex) = 0;
+	virtual void AddVector(const vdfloat2& pt1, const vdfloat2& pt2, uint32 color) = 0;
+
+	// Convert a standard sRGB color to internal print color.
+	virtual uint32 ConvertColor(uint32 srgb) const = 0;
 };
 
 // Service that provides for creation of default printer outputs.
@@ -103,11 +105,11 @@ public:
 
 	// Create a printer output for text output. The output is automatically
 	// closed when the last reference is deleted.
-	virtual vdrefptr<IATPrinterOutput> CreatePrinterOutput() = 0;
+	virtual vdrefptr<IATPrinterOutput> CreatePrinterOutput(const wchar_t *name) = 0;
 
 	// Create a printer output for graphical output. The output is automatically
 	// closed when the last reference is deleted.
-	virtual vdrefptr<IATPrinterGraphicalOutput> CreatePrinterGraphicalOutput(const ATPrinterGraphicsSpec& spec) = 0;
+	virtual vdrefptr<IATPrinterGraphicalOutput> CreatePrinterGraphicalOutput(const wchar_t *name, const ATPrinterGraphicsSpec& spec) = 0;
 
 protected:
 	~IATPrinterOutputManager() = default;

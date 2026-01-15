@@ -85,6 +85,7 @@ public:
 	void conv_555_to_565();
 	void conv_565_to_555();
 	void conv_8888_to_X32F();
+	void conv_8888_to_X32F_linear();
 	void conv_8_to_32F();
 	void conv_16F_to_32F();
 
@@ -93,6 +94,7 @@ public:
 	void conv_8888_to_888();
 	void conv_32F_to_8();
 	void conv_X32F_to_8888();
+	void conv_X32F_linear_to_8888();
 	void conv_32F_to_16F();
 
 	void convd_8888_to_555();

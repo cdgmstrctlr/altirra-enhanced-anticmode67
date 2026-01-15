@@ -52,19 +52,14 @@ void tool_hash(const vdfastvector<const char *>& args, const vdfastvector<const 
 void tool_signxml(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 void tool_signexport(const vdfastvector<const char *>& args, const vdfastvector<const char *>& switches);
 
-int VDCDECL main(int argc, char **argv) {
-	--argc;
+int VDCDECL main(int /*argc*/, char **argv) {
 	++argv;
 
 	vdfastvector<const char *> switches, args;
-	bool amd64 = false;
 
 	while(const char *s = *argv++) {
 		if (s[0] == '/') {
-			if (!_stricmp(s+1, "amd64"))
-				amd64 = true;
-			else
-				switches.push_back(s+1);
+			switches.push_back(s+1);
 		} else {
 			args.push_back(s);
 		}
@@ -103,10 +98,13 @@ int VDCDECL main(int argc, char **argv) {
 			tool_signexport(args, switches);
 		} else
 			help();
+	} catch(const VDExitToolWithErrorException&) {
+		CoUninitialize();
+		return 10;
 	} catch(const char *s) {
 		fail("%s", s);
 	} catch(const MyError& e) {
-		fail("%s", e.gets());
+		fail("%ls", e.wc_str());
 	}
 
 	CoUninitialize();

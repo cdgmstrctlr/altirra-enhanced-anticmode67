@@ -198,7 +198,8 @@ bool ATHistoryTree::Verify() {
 }
 
 bool ATHistoryTree::VerifyNode(ATHTNode *node, uint32 depth) {
-	uint32 h = 0;
+	// This is only used by an assert.
+	[[maybe_unused]] uint32 h = 0;
 
 	for(ATHTNode *c = node->mpFirstChild; c; c = c->mpNextSibling) {
 		if (depth)
@@ -570,9 +571,8 @@ uint32 ATHistoryTree::UnsearchNodes(ATHTNode *node) {
 	for(ATHTNode *child = node->mpFirstChild; child; child = child->mpNextSibling) {
 		child->mbExpanded = false;
 
-		uint32 childHt = 0;
 		if (child->mpFirstChild)
-			childHt = UnsearchNodes(child);
+			UnsearchNodes(child);
 
 		if (child->mNodeType == kATHTNodeType_Insn)
 			child->mVisibleLines = child->mInsn.mCount;

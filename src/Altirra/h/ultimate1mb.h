@@ -51,7 +51,7 @@ public:
 	ATUltimate1MBEmulator();
 	~ATUltimate1MBEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
 	void Init(void *memory,
 		ATMMUEmulator *mmu,
@@ -95,8 +95,8 @@ public:
 	void DumpStatus(ATConsoleOutput&);
 	void DumpRTCStatus(ATConsoleOutput&);
 
-	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx);
-	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const;
+	void LoadState(const IATObjectState *state, ATSnapshotContext& ctx) override;
+	vdrefptr<IATObjectState> SaveState(ATSnapshotContext& ctx) const override;
 
 public:		// IATDeviceCartridge
 	void InitCartridge(IATDeviceCartridgePort *cartPort) override;
@@ -210,6 +210,8 @@ protected:
 
 	ATCallbackHandler0<void> mVBXEPageHandler {};
 	ATCallbackHandler0<void> mSBPageHandler {};
+
+	vdfunction<void()> mROMChangeMappingFn;
 	
 	ATBusSignalOutput	mStereoEnableOutput;
 	ATBusSignalOutput	mCovoxEnableOutput;

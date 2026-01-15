@@ -78,6 +78,7 @@ class ATModemEmulator final : public ATDevice
 					, public IATDeviceScheduling
 					, public IATDeviceIndicators
 					, public IATDeviceSerial
+					, public IATDeviceDiagnostics
 {
 	ATModemEmulator(const ATModemEmulator&) = delete;
 	ATModemEmulator& operator=(const ATModemEmulator&) = delete;
@@ -109,6 +110,9 @@ public:
 	virtual void SetTerminalState(const ATDeviceSerialTerminalState&) override;
 	virtual ATDeviceSerialStatus GetStatus() override;
 
+public:	// IATDeviceDiagnostics
+	void DumpStatus(ATConsoleOutput& output) override;
+
 public:
 	void Init(ATScheduler *sched, ATScheduler *slowsched, IATDeviceIndicatorManager *uir, IATAudioMixer *mixer, IATAsyncDispatcher *asyncDispatcher);
 
@@ -128,6 +132,7 @@ public:
 	void Answer();
 	void OnHook();
 	void OffHook();
+	void SetAutoAnswer(bool enabled);
 	void SetAudioToPhoneEnabled(bool enabled);
 	void SetPhoneToAudioEnabled(bool enabled);
 

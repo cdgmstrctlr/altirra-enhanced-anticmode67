@@ -1535,10 +1535,10 @@ bool ATDebuggerCmdAssemble::ProcessSubCommand(const char *s) {
 	} catch(const ParseException& e) {
 		if (e.mpMsg) {
 			ATConsolePrintf("ERROR: %s\n       %s\n", e.mpMsg, s0);
-			ATConsolePrintf("%*c^\n", 7 + (e.mpPos - s0), ' ');
+			ATConsolePrintf("%*c^\n", 7 + (int)(e.mpPos - s0), ' ');
 		} else {
 			ATConsolePrintf("ERROR: %s\n", s0);
-			ATConsolePrintf("%*c^\n", 7 + (e.mpPos - s0), ' ');
+			ATConsolePrintf("%*c^\n", 7 + (int)(e.mpPos - s0), ' ');
 		}
 	}
 

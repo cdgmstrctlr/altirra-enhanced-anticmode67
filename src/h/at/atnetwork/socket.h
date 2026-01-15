@@ -149,6 +149,7 @@ public:
 	//
 	virtual void SetOnEvent(IATAsyncDispatcher *dispatcher, vdfunction<void(const ATSocketStatus&)> fn, bool callIfReady) = 0;
 
+	// Retrieve the latest snapshot of socket state.
 	virtual ATSocketStatus GetSocketStatus() const = 0;
 
 	// Close the socket, but leave the socket object still valid to receive callbacks. If force
@@ -158,6 +159,14 @@ public:
 	// Note that if a socket is abandoned by final release, it will be automatically hard closed
 	// by the socket system.
 	virtual void CloseSocket(bool force) = 0;
+
+	// Re-execute the event handler if there is potentially pending status for
+	// it to handle. This is used in cases where the event handler did not handle
+	// a received event, such as CanRead/CanWrite.
+	//
+	// If the event handler is bound using an async dispatcher, it is queued even if the poll
+	// call occurs on the dispatcher thread -- it is not called synchronously.
+	virtual void PollSocket() = 0;
 };
 
 // Interface for stream (TCP) sockets in data mode.

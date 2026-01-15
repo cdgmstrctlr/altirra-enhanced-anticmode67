@@ -24,6 +24,7 @@
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
 #include "inputcontroller.h"
+#include "inputdefs.h"
 #include "inputmanager.h"
 #include <at/ataudio/pokey.h>
 #include "antic.h"
@@ -548,20 +549,17 @@ void ATPaddleController::SetHalf(bool second) {
 }
 
 void ATPaddleController::AddDelta(int delta) {
-	int oldPos = mRawPos;
-
-	mRawPos -= delta * 113;
-
-	if (mRawPos < (1 << 16) + 0x8000)
-		mRawPos = (1 << 16) + 0x8000;
-
-	if (mRawPos > (228 << 16) + 0x8000)
-		mRawPos = (228 << 16) + 0x8000;
-
 	int newPos = mRawPos;
 
-	if (newPos != oldPos)
-		SetPotHiPosition(mbSecond, newPos);
+	newPos -= delta * 113;
+
+	if (newPos < (1 << 16) + 0x8000)
+		newPos = (1 << 16) + 0x8000;
+
+	if (newPos > (229 << 16) + 0x8000)
+		newPos = (229 << 16) + 0x8000;
+
+	SetRawHiPos(newPos);
 }
 
 void ATPaddleController::SetTrigger(bool enable) {
@@ -574,36 +572,29 @@ void ATPaddleController::SetTrigger(bool enable) {
 }
 
 void ATPaddleController::SetDigitalTrigger(uint32 trigger, bool state) {
-	const auto setPot = [this](int pos, bool grounded) {
-		if (mRawPos != pos) {
-			mRawPos = pos;
-			SetPotHiPosition(mbSecond, pos, grounded);
-		}
-	};
-
 	if (trigger == kATInputTrigger_Button0)
 		SetTrigger(state);
 	else if (trigger == kATInputTrigger_Axis0) {
 		const int pos = state ? (1 << 16) + 0x8000 : (228 << 16) + 0x8000;
 
-		setPot(pos, false);
+		SetRawHiPos(pos);
 	} else if (trigger == kATInputTrigger_Left) {
 		if (mbLeft != state) {
 			mbLeft = state;
 
 			if (mbRight == state)
-				setPot(114 << 16, false);
+				SetRawHiPos(114 << 16);
 			else
-				setPot(state ? 1 << 16 : 227 << 16, false);
+				SetRawHiPos(state ? 1 << 16 : 227 << 16);
 		}
 	} else if (trigger == kATInputTrigger_Right) {
 		if (mbRight != state) {
 			mbRight = state;
 
 			if (mbLeft == state)
-				setPot(114 << 16, false);
+				SetRawHiPos(114 << 16);
 			else
-				setPot(state ? 227 << 16 : 1 << 16, false);
+				SetRawHiPos(state ? 227 << 16 : 1 << 16);
 		}
 	}
 }
@@ -666,7 +657,49 @@ void ATPaddleController::Tick() {
 }
 
 void ATPaddleController::OnDetach() {
-	SetPotPosition(mbSecond, 228);
+	SetPotPosition(mbSecond, 229);
+}
+
+void ATPaddleController::SetRawHiPos(int hiPos) {
+
+
+	if (mRawPos != hiPos) {
+		mRawPos = hiPos;
+
+		if (mpControllerPort->IsPotNoiseEnabled()) {
+			// The method to the madness below:
+			//
+			// Paddle pot noise comes from dirt or worn out portions between
+			// the wiper and the track. This means that the noise is semi-
+			// deterministic per position. We quantize to ~57 positions,
+			// compute noise per position, and linearly interpolate between
+			// the two adjacent positions.
+			//
+			// The noise is squared to bias it toward higher values, or rotating
+			// the paddle knob left.
+
+			const uint32 noiseHash = (uint32)hiPos;
+			const uint32 noiseIndex = noiseHash >> 18;
+
+			const auto h = [](uint32 v) {
+				v *= 0xacf0fd51;		// randomly selected value
+				v ^= v >> 16;
+
+				return (float)(v & 0xFFF) / 4095.0f;
+			};
+
+			float v0 = h(noiseIndex);
+			float v1 = h(noiseIndex + 1);
+			float v = v0 + (v1 - v0) * (float)(noiseHash & 0x3FFFF) / 262144.0f;
+
+			v *= v;
+			v *= (65536.0f * 40.0f);
+
+			hiPos += VDRoundToInt32(v);
+		}
+
+		SetPotHiPosition(mbSecond, hiPos, false);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -1649,7 +1682,7 @@ void ATKeypadController::SetDigitalTrigger(uint32 trigger, bool state) {
 		uint8 code = kButtonLookup[trigger];
 		mPortBits = 0x100 + (code & 0x0F);
 
-		SetPotPosition(true, code & 0x10 ? 228 : 0);
+		SetPotPosition(true, code & 0x10 ? 229 : 0);
 	} else
 		mPortBits &= ~0x100;
 

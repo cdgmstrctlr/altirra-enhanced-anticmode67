@@ -49,6 +49,11 @@ public:
 
 	// Callback when a requested frame render capture has completed.
 	virtual void OnFrameCaptured(const VDPixmap *px) = 0;
+
+	virtual void OnBeginPresent(uint32 frameNumber, bool rePresent) = 0;
+	virtual void OnEndPresent(uint32 frameNumber, bool rePresent) = 0;
+
+	virtual void OnVsyncInfo(const VDDVSyncProfileInfo& vsyncInfo) = 0;
 };
 
 struct VDVideoDisplaySourceInfo {
@@ -59,6 +64,7 @@ struct VDVideoDisplaySourceInfo {
 	bool		bPersistent = false;
 	bool		use16bit = false;
 	bool		mbHDR = false;
+	uint32		mFrameNumber = 0;
 	IVDVideoDisplayMinidriverCallback *mpCB = nullptr;
 };
 

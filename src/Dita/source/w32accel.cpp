@@ -12,7 +12,7 @@ void VDUIExtractAcceleratorTableW32(VDAccelTableDefinition& dst, HACCEL haccel, 
 	for(uint32 i=0; i<n; ++i) {
 		const ACCEL& accel = accels[i];
 
-		bool found = false;
+		[[maybe_unused]] bool found = false;
 		for(uint32 j=0; j<nCommands; ++j) {
 			if (pCommands[j].mId == accel.cmd) {
 				VDAccelTableEntry ent;
@@ -43,6 +43,10 @@ void VDUIExtractAcceleratorTableW32(VDAccelTableDefinition& dst, HACCEL haccel, 
 					case VK_RIGHT:
 					case VK_UP:
 					case VK_DOWN:
+					case VK_HELP:
+					case VK_LWIN:
+					case VK_RWIN:
+					case VK_APPS:
 						ent.mAccel.mModifiers |= VDUIAccelerator::kModExtended;
 						break;
 				}

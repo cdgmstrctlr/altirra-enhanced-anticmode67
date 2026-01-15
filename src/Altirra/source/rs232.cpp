@@ -163,6 +163,10 @@ protected:
 };
 
 ATRS232Channel850::ATRS232Channel850() {
+	// 850 Interface Module technical manual chapter 7: default state
+	// of DTR and RTS is off, and not changed until power cycle.
+	mTerminalState.mbDataTerminalReady = false;
+	mTerminalState.mbRequestToSend = false;
 }
 
 void ATRS232Channel850::SetSerialDevice(IATDeviceSerial *dev) {
@@ -172,8 +176,10 @@ void ATRS232Channel850::SetSerialDevice(IATDeviceSerial *dev) {
 	if (mpDeviceSerial)
 		mpDeviceSerial->SetOnStatusChange(nullptr);
 
-	if (dev)
+	if (dev) {
 		dev->SetOnStatusChange([this](const ATDeviceSerialStatus& status) { this->OnControlStateChanged(status); });
+		dev->SetTerminalState(mTerminalState);
+	}
 
 	mpDeviceSerial = dev;
 
@@ -263,12 +269,6 @@ uint8 ATRS232Channel850::Open(uint8 aux1, uint8 aux2, bool sioBased) {
 	//mbConcurrentMode = (aux1 & 1) != 0;
 
 	mbSuspended = false;
-
-	if (!sioBased) {
-		// ICD Multi I/O Manual Chapter 6: Open sets RTS and DTR to high.
-		mTerminalState.mbDataTerminalReady = true;
-		mTerminalState.mbRequestToSend = true;
-	}
 
 	if (mpDeviceSerial)
 		mpDeviceSerial->SetTerminalState(mTerminalState);
@@ -744,7 +744,7 @@ public:	// IATDeviceIndicators
 
 public:	// IATDeviceCIO
 	void InitCIO(IATDeviceCIOManager *mgr) override;
-	void GetCIODevices(char *buf, size_t len) const override;
+	void GetCIODevices(IATDeviceCIODeviceList& deviceList) const override;
 	sint32 OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) override;
 	sint32 OnCIOClose(int channel, uint8 deviceNo) override;
 	sint32 OnCIOGetBytes(int channel, uint8 deviceNo, void *buf, uint32 len, uint32& actual) override;
@@ -771,29 +771,30 @@ public:	// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 public:
-	virtual void OnChannelReceiveReady(int index);
+	void OnChannelReceiveReady(int index) override;
 
 protected:
 	void InitChannels();
 	void ShutdownChannels();
 
-	ATScheduler *mpScheduler;
-	ATScheduler *mpSlowScheduler;
-	IATDeviceIndicatorManager *mpUIRenderer;
-	ATFirmwareManager *mpFwMgr;
-	IATDeviceCIOManager *mpCIOMgr;
-	IATDeviceSIOManager *mpSIOMgr;
+	ATScheduler *mpScheduler = nullptr;
+	ATScheduler *mpSlowScheduler = nullptr;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
+	ATFirmwareManager *mpFwMgr = nullptr;
+	IATDeviceCIOManager *mpCIOMgr = nullptr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 
-	ATRS232Channel850 *mpChannels[4];
+	ATRS232Channel850 *mpChannels[4] {};
 	ATRS232Config mConfig;
 
 	bool	mbFirmwareUsable = false;
 
-	sint8	mActiveConcurrentIndex;
-	uint8	mActiveCommandData;
+	sint8	mActiveConcurrentIndex = 0;
+	uint8	mActiveCommandData = 0;
 
-	sint8	mPollCounter;
-	sint8	mDiskCounter;
+	sint8	mPollCounter = 0;
+	sint8	mDiskCounter = 0;
 	uint8	mPrinterStatus = 0;
 	uint8	mPrinterLastAUX1 = 0;
 	bool	mbPrinterLastEOL = false;
@@ -897,8 +898,9 @@ void ATRS232Emulator::Shutdown() {
 		mpCIOMgr = nullptr;
 	}
 
+	mpSIOInterface = nullptr;
+
 	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
 		mpSIOMgr->RemoveRawDevice(this);
 		mpSIOMgr = nullptr;
 	}
@@ -953,9 +955,9 @@ bool ATRS232Emulator::SetSettings(const ATPropertySet& props) {
 	if (mConfig.m850SIOLevel != newLevel) {
 		if (mpSIOMgr) {
 			if (newLevel == kAT850SIOEmulationLevel_None)
-				mpSIOMgr->RemoveDevice(this);
+				mpSIOInterface = nullptr;
 			else if (mConfig.m850SIOLevel == kAT850SIOEmulationLevel_None)
-				mpSIOMgr->AddDevice(this);
+				mpSIOInterface = mpSIOMgr->AddDevice(this);
 
 			if (newLevel != kAT850SIOEmulationLevel_Full)
 				mpSIOMgr->RemoveRawDevice(this);
@@ -1024,8 +1026,8 @@ void ATRS232Emulator::InitCIO(IATDeviceCIOManager *mgr) {
 		mpCIOMgr->AddCIODevice(this);
 }
 
-void ATRS232Emulator::GetCIODevices(char *buf, size_t len) const {
-	vdstrlcpy(buf, "R", len);
+void ATRS232Emulator::GetCIODevices(IATDeviceCIODeviceList& deviceList) const {
+	deviceList.AddDevice('R');
 }
 
 sint32 ATRS232Emulator::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {
@@ -1149,10 +1151,18 @@ void ATRS232Emulator::OnCIOAbortAsync() {
 
 void ATRS232Emulator::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
+	const auto setTransferRate = [this] {
+		// Transmit byte rate for the 850 is 632 cycles @ 1.11MHz, or ~1019
+		// computer cycles. This is noticeably slower than usual, about
+		// 9% slower than optimal. Bit rate is 59 cycles @ 1.11MHz or
+		// ~95 computer cycles, which is ~2% slow.
+		mpSIOInterface->SetTransferRate(95, 1019);
+	};
+
 	if (!cmd.mbStandardRate)
 		return kCmdResponse_NotHandled;
 
@@ -1175,7 +1185,7 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 
 			mPrinterLastAUX1 = cmd.mAUX[0];
 
-			mpSIOMgr->HandleCommand(printerStatusFrame, 4, true);
+			mpSIOInterface->HandleCommand(printerStatusFrame, 4, true);
 
 			return kCmdResponse_Start;
 		} else if (cmdid == 0x57) {	// write
@@ -1186,11 +1196,12 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 			}
 
 			// start command and receive 40 byte frame
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->ReceiveData('P', 40, true);
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			setTransferRate();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->ReceiveData('P', 40, true);
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->EndCommand();
 			return kCmdResponse_Start;
 		}
 	}
@@ -1206,14 +1217,15 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 			// that status request and any subsequent disk requests. Another status request
 			// turns off disk emulation.
 			if (mDiskCounter > 0 && !--mDiskCounter) {
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
+				mpSIOInterface->BeginCommand();
+				setTransferRate();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
 
 				const uint8 kData[4]={ 0x00, 0xFF, 0xFE, 0x00 };
-				mpSIOMgr->SendData(kData, 4, true);
+				mpSIOInterface->SendData(kData, 4, true);
 
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->EndCommand();
 				return kCmdResponse_Start;
 			}
 
@@ -1236,11 +1248,12 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 				if (offset < rellen)
 					memcpy(buf.data(), mRelocator.data() + offset, std::min<uint32>(128, rellen - offset));
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->SendData(buf.data(), 128, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				setTransferRate();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->SendData(buf.data(), 128, true);
+				mpSIOInterface->EndCommand();
 				return kCmdResponse_Start;
 			}
 
@@ -1282,15 +1295,16 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 				0x00,		// DAUX2
 			};
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->BeginCommand();
+			setTransferRate();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->SendComplete();
 
 			uint32 relsize = (uint32)mRelocator.size();
 			bootBlock[8] = (uint8)relsize;
 			bootBlock[9] = (uint8)(relsize >> 8);
-			mpSIOMgr->SendData(bootBlock, 12, true);
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->SendData(bootBlock, 12, true);
+			mpSIOInterface->EndCommand();
 
 			// Once the poll is answered, we don't answer it again until power cycle.
 			mPollCounter = -1;
@@ -1305,7 +1319,11 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 	
 	if (cmdid == 0x21) {
 		// Boot command -- send back boot loader.
-		static const uint8 kLoaderBlock[7]={
+		//
+		// When using the full R: handler, this is 3 sectors containing the
+		// relocating loader. In minimal mode, the R: handler is implmented
+		// HLE and a dummy boot sector is returned.
+		static const uint8 kStubLoaderBlock[7]={
 			0x00,		// flags
 			0x01,		// sector count
 			0x00, 0x05,	// load address
@@ -1313,17 +1331,18 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 			0x60
 		};
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
+		mpSIOInterface->BeginCommand();
+		setTransferRate();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
 
 		if (mConfig.m850SIOLevel == kAT850SIOEmulationLevel_StubLoader) {
-			mpSIOMgr->SendData(kLoaderBlock, (uint32)sizeof kLoaderBlock, true);
+			mpSIOInterface->SendData(kStubLoaderBlock, (uint32)sizeof kStubLoaderBlock, true);
 		} else {
-			mpSIOMgr->SendData(mRelocator.data(), (uint32)mRelocator.size(), true);
+			mpSIOInterface->SendData(mRelocator.data(), (uint32)mRelocator.size(), true);
 		}
 
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->EndCommand();
 		return kCmdResponse_Start;
 	}
 	
@@ -1336,11 +1355,12 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 		uint8 buf[2];
 		ch.ReadControlStatus(buf[0], buf[1]);
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->SendData(buf, 2, true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		setTransferRate();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->SendData(buf, 2, true);
+		mpSIOInterface->EndCommand();
 		return kCmdResponse_Start;
 	} else if (cmdid == 0x57) {	// 'W' / write
 
@@ -1356,10 +1376,11 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 		} else {
 			mActiveCommandData = dataLen;
 
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->ReceiveData(index, 64, true);
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->BeginCommand();
+			setTransferRate();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->ReceiveData(index, 64, true);
+			mpSIOInterface->SendComplete();
 		}
 	} else if (cmdid == 0x41) {	// 'A' / control
 		ch.SetTerminalState(cmd.mAUX[0]);
@@ -1401,11 +1422,12 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 		buf[7] = 0xA0;		// AUDC4
 		buf[8] = 0x78;		// AUDCTL
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->SendData(buf, 9, true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		setTransferRate();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->SendData(buf, 9, true);
+		mpSIOInterface->EndCommand();
 
 		return kCmdResponse_Start;
 	} else if (cmdid == 0x42) {	// 'B' / configure
@@ -1413,11 +1435,12 @@ IATDeviceSIO::CmdResponse ATRS232Emulator::OnSerialBeginCommand(const ATDeviceSI
 
 		return kCmdResponse_Send_ACK_Complete;
 	} else if (cmdid == 0x26) {	// '&' / load handler
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->SendData(mHandler.data(), (uint32)mHandler.size(), true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		setTransferRate();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->SendData(mHandler.data(), (uint32)mHandler.size(), true);
+		mpSIOInterface->EndCommand();
 
 		return kCmdResponse_Start;
 	}
@@ -1441,7 +1464,7 @@ void ATRS232Emulator::OnSerialReceiveComplete(uint32 id, const void *data, uint3
 		IATPrinterOutput *output = mParallelPort.GetChild<IATPrinterOutput>();
 		if (!output) {
 			if (!mpDefaultPrinterOutput)
-				mpDefaultPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+				mpDefaultPrinterOutput = GetService<IATPrinterOutputManager>()->CreatePrinterOutput(g_ATDeviceDef850.mpName);
 
 			output = mpDefaultPrinterOutput;
 		}

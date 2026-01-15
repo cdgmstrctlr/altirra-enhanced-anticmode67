@@ -1086,6 +1086,17 @@ void VDPixmapUberBlitterGenerator::conv_8888_to_X32F() {
 	args[0] = StackEntry(src, 0);
 }
 
+void VDPixmapUberBlitterGenerator::conv_8888_to_X32F_linear() {
+	StackEntry *args = &mStack.back();
+	VDPixmapGen_X8R8G8B8_To_X32B32G32R32F_Linear *src = new VDPixmapGen_X8R8G8B8_To_X32B32G32R32F_Linear;
+
+	src->Init(args[0].mpSrc, args[0].mSrcIndex);
+
+	mGenerators.push_back(src);
+	MarkDependency(src, args[0].mpSrc);
+	args[0] = StackEntry(src, 0);
+}
+
 void VDPixmapUberBlitterGenerator::conv_8888_to_555() {
 	StackEntry *args = &mStack.back();
 #ifdef VD_CPU_X86
@@ -1175,6 +1186,17 @@ void VDPixmapUberBlitterGenerator::conv_32F_to_8() {
 void VDPixmapUberBlitterGenerator::conv_X32F_to_8888() {
 	StackEntry *args = &mStack.back();
 	VDPixmapGen_X32B32G32R32F_To_X8R8G8B8 *src = new VDPixmapGen_X32B32G32R32F_To_X8R8G8B8;
+
+	src->Init(args[0].mpSrc, args[0].mSrcIndex);
+
+	mGenerators.push_back(src);
+	MarkDependency(src, args[0].mpSrc);
+	args[0] = StackEntry(src, 0);
+}
+
+void VDPixmapUberBlitterGenerator::conv_X32F_linear_to_8888() {
+	StackEntry *args = &mStack.back();
+	VDPixmapGen_X32B32G32R32F_Linear_To_X8R8G8B8 *src = new VDPixmapGen_X32B32G32R32F_Linear_To_X8R8G8B8;
 
 	src->Init(args[0].mpSrc, args[0].mSrcIndex);
 

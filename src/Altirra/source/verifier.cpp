@@ -448,7 +448,7 @@ void ATCPUVerifier::VerifyInsn(const ATCPUEmulator& cpu, uint8 opcode, uint16 ta
 				if (mpCPU->GetS16() < 0x100) {
 					ATConsolePrintf("\n");
 					ATConsolePrintf("VERIFIER: Stack pointer changed to point to page zero.\n");
-					ATConsolePrintf("          PC=%02X:%04X  S=%04X\n", mpCPU->GetK(), mpCPU->GetInsnPC(), mpCPU->GetS16(), target);
+					ATConsolePrintf("          PC=%02X:%04X  S=%04X\n", mpCPU->GetK(), mpCPU->GetInsnPC(), mpCPU->GetS16());
 					mpSimEventMgr->NotifyEvent(kATSimEvent_VerifierFailure);
 					return;
 				}

@@ -40,7 +40,7 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\obj\HelpFile\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles(x86)%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles(x86)%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
+    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">del "$(OutDir)*.html" "$(OutDir)*.chm" "$(OutDir)*.hh?" "$(OutDir)pics\*.*" /q</NMakeCleanCommandLine>
     <NMakeOutput Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">..\..\out\Helpfile\Altirra.chm</NMakeOutput>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakeIncludeSearchPath Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
@@ -51,7 +51,7 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\HelpFile\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles(x86)%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\athelpbuilder.exe "%programfiles(x86)%\html help workshop\hhc.exe" source ..\..\out\Helpfile</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />
+    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">del "$(OutDir)*.html" "$(OutDir)*.chm" "$(OutDir)*.hh?" "$(OutDir)pics\*.*" /q</NMakeCleanCommandLine>
     <NMakeOutput Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\Helpfile\Altirra.chm</NMakeOutput>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakeIncludeSearchPath Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
@@ -84,7 +84,7 @@
     <None Include="source\emulation-accuracy.xml" />
     <None Include="source\faq.xml" />
     <None Include="source\getting-started.xml" />
-    <None Include="source\host-device.xml" />
+    <None Include="source\devices-hostdevice.xml" />
     <None Include="source\index.xml" />
     <None Include="source\indicators.xml" />
     <None Include="source\input.xml" />
@@ -104,7 +104,7 @@
     <None Include="source\troubleshooting.xml" />
     <None Include="source\ultimate1mb.xml" />
     <None Include="source\vbxe.xml" />
-    <None Include="source\xep80.xml" />
+    <None Include="source\devices-xep80.xml" />
     <None Include="source\compatibility.xsl" />
     <None Include="source\index.xsl" />
     <None Include="source\toc.xsl" />

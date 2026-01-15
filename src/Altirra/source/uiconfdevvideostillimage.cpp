@@ -20,7 +20,7 @@
 bool ATUIConfDevVideoStillImage(VDGUIHandle hParent, ATPropertySet& props) {
 	return ATUIShowDialogGenericConfig(hParent, props, L"Video still image",
 		[](IATUIConfigView& view) {
-			view.AddPath().SetTypeImage().AsStringView()->SetLabel(L"&Path").SetTag("path");
+			view.AddPath().SetTypeImage().SetLabel(L"&Path").SetTag("path");
 		}
 	);
 }

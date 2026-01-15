@@ -40,7 +40,7 @@ public:
 	void Reset();
 
 public:
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	void SetOnStatusChange(const vdfunction<void(const ATDeviceSerialStatus&)>& fn) override;
 	void SetTerminalState(const ATDeviceSerialTerminalState&) override;
@@ -305,7 +305,7 @@ class ATDeviceMidiMate final
 public:
 	ATDeviceMidiMate() = default;
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 public:
 	void GetDeviceInfo(ATDeviceInfo& info) override;
@@ -329,6 +329,7 @@ public:
 
 protected:
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	bool mbActive {};
 
 	vdrefptr<ATMidiOutput> mpMidiOutput;
@@ -411,9 +412,10 @@ void ATDeviceMidiMate::Shutdown() {
 		mpScheduler = nullptr;
 	}
 
+	mpSIOInterface = nullptr;
+
 	if (mpSIOMgr) {
 		mpSIOMgr->RemoveRawDevice(this);
-		mpSIOMgr->RemoveDevice(this);
 		mpSIOMgr = nullptr;
 	}
 }

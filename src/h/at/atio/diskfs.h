@@ -76,6 +76,7 @@ enum ATDiskFSError {
 	kATDiskFSError_CRCError,
 	kATDiskFSError_NotSupported,
 	kATDiskFSError_MediaNotSupported,
+	kATDiskFSError_NotAFile,
 };
 
 class ATDiskFSException : public MyError {

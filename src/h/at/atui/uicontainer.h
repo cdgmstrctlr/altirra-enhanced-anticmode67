@@ -16,7 +16,7 @@ public:
 	void BringToFront(ATUIWidget *w);
 
 	void InvalidateLayout(ATUIWidget *w);
-	void UpdateLayout();
+	void UpdateLayout() override;
 
 	ATUIWidget *HitTest(vdpoint32 pt) override;
 

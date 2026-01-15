@@ -140,6 +140,7 @@ void OnCommandViewToggleFPS();
 void OnCommandViewAdjustWindowSize();
 void OnCommandViewResetWindowLayout();
 void OnCommandViewEffectReload();
+void OnCommandViewEffectClear();
 void OnCommandAnticVisualizationNext();
 void OnCommandGTIAVisualizationNext();
 void OnCommandVideoToggleXEP80Output();
@@ -234,7 +235,7 @@ void OnCommandDiskRotate(int delta);
 void OnCommandVideoStandard(ATVideoStandard mode);
 void OnCommandVideoToggleStandardNTSCPAL();
 void OnCommandVideoToggleCTIA();
-void OnCommandVideoToggleEnhancedMode67();
+void OnCommandVideoToggleEnhancedMode67();	// CMC
 void OnCommandVideoToggleFrameBlending();
 void OnCommandVideoToggleLinearFrameBlending();
 void OnCommandVideoToggleMonoPersistence();
@@ -271,10 +272,14 @@ void OnCommandInputLightPenDialog();
 void OnCommandInputCycleQuickMaps();
 void OnCommandInputInputSetupDialog();
 void OnCommandRecordStop();
+void OnCommandRecordPause();
+void OnCommandRecordResume();
+void OnCommandRecordPauseResume();
 void OnCommandRecordRawAudio();
 void OnCommandRecordAudio();
 void OnCommandRecordVideo();
 void OnCommandRecordSapTypeR();
+void OnCommandRecordVgm();
 void OnCommandCheatTogglePMCollisions();
 void OnCommandCheatTogglePFCollisions();
 void OnCommandCheatCheatDialog();
@@ -401,6 +406,10 @@ namespace ATCommands {
 	bool Is65C816AccelN() {
 		auto& cpu = g_sim.GetCPU();
 		return cpu.GetCPUMode() == kATCPUMode_65C816 && cpu.GetSubCycles() == N;
+	}
+
+	bool CanChangeCPUMode() {
+		return !g_sim.IsCPUModeOverridden();
 	}
 
 	template<sint32 T_Banks>
@@ -743,6 +752,7 @@ namespace ATCommands {
 		{ "View.ToggleVideoOutputAutoswitching", OnCommandVideoToggleOutputAutoswitching, ATUIIsAltOutputAvailable, CheckedIf<IsVideoOutputAutoswitchingEnabled> },
 
 		{ "View.EffectReload", OnCommandViewEffectReload },
+		{ "View.EffectClear", OnCommandViewEffectClear },
 
 		{ "Pane.Display",			[]() { OnCommandPane(kATUIPaneId_Display); }		},
 		{ "Pane.PrinterOutput",		[]() { OnCommandPane(kATUIPaneId_PrinterOutput); }	},
@@ -795,16 +805,16 @@ namespace ATCommands {
 		{ "System.PowerOnDelay2s", [] { g_sim.SetPowerOnDelay(20); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 20 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
 		{ "System.PowerOnDelay3s", [] { g_sim.SetPowerOnDelay(30); }, nullptr, [] { return g_sim.GetPowerOnDelay() == 30 ? kATUICmdState_RadioChecked : kATUICmdState_None; } },
 
-		{ "System.CPUMode6502", OnCommandSystemCPUMode6502, nullptr, CheckedIf<Is6502> },
-		{ "System.CPUMode65C02", OnCommandSystemCPUMode65C02, nullptr, CheckedIf<Is65C02> },
-		{ "System.CPUMode65C816", OnCommandSystemCPUMode65C816, nullptr, CheckedIf<Is65C816AccelN<1>> },
-		{ "System.CPUMode65C816x2", OnCommandSystemCPUMode65C816x2, nullptr, CheckedIf<Is65C816AccelN<2>> },
-		{ "System.CPUMode65C816x4", OnCommandSystemCPUMode65C816x4, nullptr, CheckedIf<Is65C816AccelN<4>> },
-		{ "System.CPUMode65C816x6", OnCommandSystemCPUMode65C816x6, nullptr, CheckedIf<Is65C816AccelN<6>> },
-		{ "System.CPUMode65C816x8", OnCommandSystemCPUMode65C816x8, nullptr, CheckedIf<Is65C816AccelN<8>> },
-		{ "System.CPUMode65C816x10", OnCommandSystemCPUMode65C816x10, nullptr, CheckedIf<Is65C816AccelN<10>> },
-		{ "System.CPUMode65C816x12", OnCommandSystemCPUMode65C816x12, nullptr, CheckedIf<Is65C816AccelN<12>> },
-		{ "System.CPUMode65C816x23", OnCommandSystemCPUMode65C816x23, nullptr, CheckedIf<Is65C816AccelN<23>> },
+		{ "System.CPUMode6502", OnCommandSystemCPUMode6502, CanChangeCPUMode, CheckedIf<Is6502> },
+		{ "System.CPUMode65C02", OnCommandSystemCPUMode65C02, CanChangeCPUMode, CheckedIf<Is65C02> },
+		{ "System.CPUMode65C816", OnCommandSystemCPUMode65C816, CanChangeCPUMode, CheckedIf<Is65C816AccelN<1>> },
+		{ "System.CPUMode65C816x2", OnCommandSystemCPUMode65C816x2, CanChangeCPUMode, CheckedIf<Is65C816AccelN<2>> },
+		{ "System.CPUMode65C816x4", OnCommandSystemCPUMode65C816x4, CanChangeCPUMode, CheckedIf<Is65C816AccelN<4>> },
+		{ "System.CPUMode65C816x6", OnCommandSystemCPUMode65C816x6, CanChangeCPUMode, CheckedIf<Is65C816AccelN<6>> },
+		{ "System.CPUMode65C816x8", OnCommandSystemCPUMode65C816x8, CanChangeCPUMode, CheckedIf<Is65C816AccelN<8>> },
+		{ "System.CPUMode65C816x10", OnCommandSystemCPUMode65C816x10, CanChangeCPUMode, CheckedIf<Is65C816AccelN<10>> },
+		{ "System.CPUMode65C816x12", OnCommandSystemCPUMode65C816x12, CanChangeCPUMode, CheckedIf<Is65C816AccelN<12>> },
+		{ "System.CPUMode65C816x23", OnCommandSystemCPUMode65C816x23, CanChangeCPUMode, CheckedIf<Is65C816AccelN<23>> },
 		{ "System.ToggleCPUHistory", OnCommandSystemCPUToggleHistory, nullptr, [] { return g_sim.GetCPU().IsHistoryEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "System.ToggleCPUPathTracing", OnCommandSystemCPUTogglePathTracing, nullptr, [] { return g_sim.GetCPU().IsPathfindingEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
 		{ "System.ToggleCPUIllegalInstructions", OnCommandSystemCPUToggleIllegalInstructions, nullptr, [] { return g_sim.GetCPU().AreIllegalInsnsEnabled() ? kATUICmdState_Checked : kATUICmdState_None; } },
@@ -1097,7 +1107,7 @@ namespace ATCommands {
 		{ "Video.ToggleStandardNTSCPAL", OnCommandVideoToggleStandardNTSCPAL, IsNot5200 },
 
 		{ "Video.ToggleCTIA", OnCommandVideoToggleCTIA, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsCTIAMode> > },
-		{ "Video.ToggleEnhancedMode67", OnCommandVideoToggleEnhancedMode67, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsAllowingEnhancedMode67> > },
+		{ "Video.ToggleEnhancedMode67", OnCommandVideoToggleEnhancedMode67, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsAllowingEnhancedMode67> > },	// CMC
 		{ "Video.ToggleFrameBlending", OnCommandVideoToggleFrameBlending, NULL, CheckedIf<GTIATest<&ATGTIAEmulator::IsBlendModeEnabled> > },
 		{ "Video.ToggleLinearFrameBlending",
 			OnCommandVideoToggleLinearFrameBlending,
@@ -1184,7 +1194,11 @@ namespace ATCommands {
 		{ "Record.RawAudio", OnCommandRecordRawAudio, Not<IsRecording>, CheckedIf<RecordingStatusIs<kATUIRecordingStatus_RawAudio>> },
 		{ "Record.Audio", OnCommandRecordAudio, Not<IsRecording>, CheckedIf<RecordingStatusIs<kATUIRecordingStatus_Audio>> },
 		{ "Record.Video", OnCommandRecordVideo, Not<IsRecording>, CheckedIf<RecordingStatusIs<kATUIRecordingStatus_Video>> },
+		{ "Record.Pause", OnCommandRecordPause, RecordingStatusIs<kATUIRecordingStatus_Video> },
+		{ "Record.Resume", OnCommandRecordResume, RecordingStatusIs<kATUIRecordingStatus_Video> },
+		{ "Record.PauseResume", OnCommandRecordPauseResume, RecordingStatusIs<kATUIRecordingStatus_Video> },
 		{ "Record.SAPTypeR", OnCommandRecordSapTypeR, Not<IsRecording>, CheckedIf<RecordingStatusIs<kATUIRecordingStatus_Sap>> },
+		{ "Record.VGM", OnCommandRecordVgm, Not<IsRecording>, CheckedIf<RecordingStatusIs<kATUIRecordingStatus_Vgm>> },
 
 		{ "Cheat.ToggleDisablePMCollisions", OnCommandCheatTogglePMCollisions, NULL, CheckedIf<Not<GTIATest<&ATGTIAEmulator::ArePMCollisionsEnabled> > > },
 		{ "Cheat.ToggleDisablePFCollisions", OnCommandCheatTogglePFCollisions, NULL, CheckedIf<Not<GTIATest<&ATGTIAEmulator::ArePFCollisionsEnabled> > > },
@@ -1192,7 +1206,7 @@ namespace ATCommands {
 
 		{ "Tools.DiskExplorer", OnCommandToolsDiskExplorer },
 		{ "Tools.ConvertSAPToEXE", OnCommandToolsConvertSapToExe },
-		{ "Tools.OptionsDialog", OnCommandToolsOptionsDialog },
+		{ "Tools.OptionsDialog", OnCommandConfigureSystem },
 		{ "Tools.KeyboardShortcutsDialog", OnCommandToolsKeyboardShortcutsDialog },
 		{ "Tools.CompatDBDialog", OnCommandToolsCompatDBDialog },
 		{ "Tools.SetupWizard", OnCommandToolsSetupWizard },

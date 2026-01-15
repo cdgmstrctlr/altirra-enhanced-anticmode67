@@ -24,6 +24,7 @@
 
 enum ATProfileEvent {
 	kATProfileEvent_BeginFrame,
+	kATProfileEvent_DisplayVSync,
 };
 
 enum ATProfileRegion {
@@ -31,6 +32,8 @@ enum ATProfileRegion {
 	kATProfileRegion_IdleFrameDelay,
 	kATProfileRegion_Simulation,
 	kATProfileRegion_NativeEvents,
+	kATProfileRegion_NativeMessage,
+	kATProfileRegion_DisplayPost,
 	kATProfileRegion_DisplayTick,
 	kATProfileRegion_DisplayPresent,
 	kATProfileRegionCount
@@ -39,7 +42,17 @@ enum ATProfileRegion {
 class IATProfiler {
 public:
 	virtual void OnEvent(ATProfileEvent event) = 0;
+
+	virtual void OnEventWithArg(ATProfileEvent event, uintptr arg) {
+		OnEvent(event);
+	}
+
 	virtual void BeginRegion(ATProfileRegion region) = 0;
+
+	virtual void BeginRegionWithArg(ATProfileRegion region, uintptr arg) {
+		BeginRegion(region);
+	}
+
 	virtual void EndRegion(ATProfileRegion region) = 0;
 };
 
@@ -50,9 +63,19 @@ inline void ATProfileMarkEvent(ATProfileEvent event) {
 		g_pATProfiler->OnEvent(event);
 }
 
+inline void ATProfileMarkEventWithArg(ATProfileEvent event, uintptr arg) {
+	if (g_pATProfiler)
+		g_pATProfiler->OnEventWithArg(event, arg);
+}
+
 inline void ATProfileBeginRegion(ATProfileRegion region) {
 	if (g_pATProfiler)
 		g_pATProfiler->BeginRegion(region);
+}
+
+inline void ATProfileBeginRegionWithArg(ATProfileRegion region, uintptr arg) {
+	if (g_pATProfiler)
+		g_pATProfiler->BeginRegionWithArg(region, arg);
 }
 
 inline void ATProfileEndRegion(ATProfileRegion region) {

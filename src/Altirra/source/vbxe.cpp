@@ -1765,7 +1765,7 @@ void ATVBXEEmulator::BeginScanline(uint32 y, uint32 *dst, const uint8 *mergeBuff
 			mOvTextRow = mOvVscroll & 7;
 
 			if (reloadAttrMap)
-				mAttrRow = mAttrVscroll % mAttrHeight;
+				mAttrRow = mAttrVscroll;
 
 			// deduct XDL cycles
 			mDMACyclesXDL = (mXdlAddr - xdlStart);
@@ -2049,9 +2049,13 @@ void ATVBXEEmulator::EndScanline() {
 			mOvAddr += mOvStep;
 	}
 
-	if (mbAttrMapEnabled && ++mAttrRow >= mAttrHeight) {
-		mAttrRow = 0;
-		mAttrAddr += mAttrStep;
+	if (mbAttrMapEnabled) {
+		mAttrRow = (mAttrRow + 1) & 31;
+
+		if (mAttrRow == mAttrHeight) {
+			mAttrRow = 0;
+			mAttrAddr += mAttrStep;
+		}
 	}
 }
 
@@ -2231,8 +2235,13 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 		x1h = xlh;
 	}
 
+	// If the hscroll value is >= cell width, then it wraps around the whole
+	// 5-bit field, similarly to the ANTIC delta counter. Thus, we need to
+	// detect this case and replace it with a negative offset.
+	const int effectiveHscroll = (int)mAttrHscroll + (mAttrHscroll >= mAttrWidth ? -32 : 0);
+
 	// attribute map fetch is constrained to 172 bytes (43 cells)
-	int xrh2 = (xlh - mAttrHscroll) + 43 * mAttrWidth;
+	int xrh2 = (xlh - effectiveHscroll) + 43 * mAttrWidth;
 	if (xrh > xrh2)
 		xrh = xrh2;
 
@@ -2248,29 +2257,47 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 	if (x2h <= x1h)
 		return x1h;
 
-	uint32 offset = (x1h - xlh + mAttrHscroll) % mAttrWidth;
-	uint32 srcAddr = mAttrAddr + (x1h - xlh) / mAttrWidth * 4;
-	int hiresShift = mAttrWidth > 16 ? 2 : mAttrWidth > 8 ? 1 : 0;
+	// Compute horizontal offset into the attribute map.
+	const int attrOffset = (x1h - xlh) + effectiveHscroll;
+	uint32 srcAddr = mAttrAddr;
+
+	int offset = attrOffset;
+	
+	if (offset >= 0) {
+		offset %= mAttrWidth;
+		srcAddr += (attrOffset / mAttrWidth) * 4;
+	}
+
+	// The hires bitmap is 1 bit/px for widths 1-8, 2 bit/px for 9-16, and 4 bit/px for 17-32.
+	const int hiresShift = mAttrWidth > 16 ? 2 : mAttrWidth > 8 ? 1 : 0;
 
 	const uint8 colorMask = mbExtendedColor ? 0xFF : 0xFE;
 
 	AttrPixel px;
 	px.mPFK = 0;
-	px.mPF0 = VBXE_FETCH(srcAddr + 0) & colorMask;
+
+	uint8 hrMaskOrPF0 = VBXE_FETCH(srcAddr + 0);
+	px.mPF0 = hrMaskOrPF0 & colorMask;
 	px.mPF1 = VBXE_FETCH(srcAddr + 1) & colorMask;
 	px.mPF2 = VBXE_FETCH(srcAddr + 2) & colorMask;
 	px.mCtrl = VBXE_FETCH(srcAddr + 3);
 	px.mPriority = mOvPriority[px.mCtrl & 3];
 	srcAddr += 4;
 
-	const uint8 resBit = x1h > x1h0 ? 0 : px.mCtrl;
+	const uint8 resBit = px.mCtrl;
+
+	// if we have already rendered a default pixel, stop immediately at the left
+	// border if the attribute map starts with a RES swap
+	if (x1h > x1h0 && resBit)
+		return x1h;
 
 	do {
-		px.mHiresFlag = (sint8)(px.mPF0 << (offset >> hiresShift)) >> 7;
+		px.mHiresFlag = (sint8)(hrMaskOrPF0 << (((unsigned)offset >> hiresShift) & 7)) >> 7;
 		mAttrPixels[x1h] = px;
 
-		if (++offset >= mAttrWidth) {
-			px.mPF0 = VBXE_FETCH(srcAddr + 0) & colorMask;
+		if (++offset >= (int)mAttrWidth) {
+			hrMaskOrPF0 = VBXE_FETCH(srcAddr + 0);
+			px.mPF0 = hrMaskOrPF0 & colorMask;
 			px.mPF1 = VBXE_FETCH(srcAddr + 1) & colorMask;
 			px.mPF2 = VBXE_FETCH(srcAddr + 2) & colorMask;
 			px.mCtrl = VBXE_FETCH(srcAddr + 3);
@@ -2278,12 +2305,19 @@ int ATVBXEEmulator::RenderAttrPixels(int x1h, int x2h) {
 			srcAddr += 4;
 			offset = 0;
 
+			// force break in span rendering if RES bit is set
 			if ((px.mCtrl ^ resBit) & 0x04)
 				return x1h + 1;
 		}
 	} while(++x1h < x2h);
 
 	if (x2h < x2h0) {
+		// If the last in-range pixel had the resolution swap bit set, we must
+		// force a stop at the border, same as if the transition had happened
+		// within visible range.
+		if (resBit)
+			return x2h;
+
 		RenderAttrDefaultPixels(x2h, x2h0);
 		x2h = x2h0;
 	}
@@ -2503,15 +2537,15 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 			uint8 i1 = *src++;
 
 			// For V1.26+, use PF1 priority for set pixels.
-			// For V1.25-, only do so for the color.
+			// For V1.25-, use PF2/PF3 priority for all pixels.
 			uint8 ic1 = i1;
 
 			if (lb & 1)
 				ic1 -= (ic1 & PF2) >> 1;
 
 			if (T_Version126) {
+				ic1 += (ic1 & PF2) & apx->mHiresFlag;
 				i1 = ic1;
-				i1 += (i1 & PF2) & apx->mHiresFlag;
 			} else {
 				i1 += (i1 & PF2) & apx->mHiresFlag;
 				ic1 += (ic1 & PF2) & apx->mHiresFlag;
@@ -2556,12 +2590,12 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 				ic1 -= (ic1 & PF2) >> 1;
 
 			if (T_Version126) {
+				// promote PF2 to PF3 according to attribute map bitmap
+				ic0 += (ic0 & PF2) & apx[0].mHiresFlag;
+				ic1 += (ic1 & PF2) & apx[1].mHiresFlag;
+
 				i0 = ic0;
 				i1 = ic1;
-
-				// promote PF2 to PF3 according to attribute map bitmap
-				i0 += (i0 & PF2) & apx[0].mHiresFlag;
-				i1 += (i1 & PF2) & apx[1].mHiresFlag;
 			} else {
 				// promote PF2 to PF3 according to attribute map bitmap
 				i0 += (i0 & PF2) & apx[0].mHiresFlag;
@@ -2610,8 +2644,8 @@ void ATVBXEEmulator::RenderMode8(int x1h, int x2h) {
 				ic0 -= (ic0 & PF2) >> 1;
 
 			if (T_Version126) {
+				ic0 += (ic0 & PF2) & apx[0].mHiresFlag;
 				i0 = ic0;
-				i0 += (i0 & PF2) & apx[0].mHiresFlag;
 			} else {
 				i0 += (i0 & PF2) & apx[0].mHiresFlag;
 				ic0 += (ic0 & PF2) & apx[0].mHiresFlag;

@@ -1,11 +1,30 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2024 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_VD2_VDDISPLAY_DISPLAYNODE3D_H
 #define f_VD2_VDDISPLAY_DISPLAYNODE3D_H
 
 #include <vd2/system/vdstl.h>
 #include <vd2/Tessa/Context.h>
+#include <vd2/VDDisplay/displaytypes.h>
 
 struct VDPixmap;
+class IVDDisplayCustomEffectD3D11;
 class VDDisplayNode3D;
+enum class VDDScreenMaskType : uint8;
 
 struct VDDisplayVertex3D {
 	float x;
@@ -71,7 +90,8 @@ public:
 	void SetFragmentProgram(IVDTFragmentProgram *fp);
 	void SetFragmentProgram(VDTData fpdata);
 
-	void SetVPConstData(const void *src, size_t len);
+	void SetVsConstBufferCount(uint32 count);
+	void SetVPConstData(const void *src, size_t len, bool dynamic = false, uint32 slot = 0);
 
 	template<typename T>
 	void SetVPConstData(const T& obj) {
@@ -80,16 +100,20 @@ public:
 	}
 
 	void SetVPConstDataReuse();
-	void SetFPConstData(const void *src, size_t len);
+	void UpdateVPConstData(const void *src, uint32 slot);
+
+	void SetPsConstBufferCount(uint32 count);
+	void SetFPConstData(const void *src, size_t len, bool dynamic = false, uint32 slot = 0);
 
 	template<typename T>
-	void SetFPConstData(const T& obj) {
+	void SetFPConstData(const T& obj, uint32 slot = 0) {
 		static_assert(!(sizeof(obj) & 15));
 
-		SetFPConstData(&obj, sizeof obj);
+		SetFPConstData(&obj, sizeof obj, false, slot);
 	}
 
 	void SetFPConstDataReuse();
+	void UpdateFPConstData(const void *src, uint32 slot = 0);
 
 	void *InitVertices(size_t vertexSize, uint32 vertexCount, VDDVertexTransformer vertexTransformer);
 
@@ -230,21 +254,13 @@ public:
 	VDDisplayMeshBuilder3D AddMesh(VDDisplayNodeContext3D& dctx);
 	VDDisplayDispatchBuilder3D AddDispatch(VDDisplayNodeContext3D& dctx);
 
-	void UpdateDispatchConstants(VDDPoolCommandIndex index, const void *data, size_t len);
+	VDDisplayMeshBuilder3D UpdateMesh(VDDisplayNodeContext3D& dctx, VDDPoolCommandIndex index);
+
+	void UpdateDispatchConstants(VDDPoolCommandIndex index, const void *data);
 	
 	template<typename T>
 	void UpdateDispatchConstants(VDDPoolCommandIndex index, const T& data) {
 		UpdateDispatchConstants(index, &data, sizeof data);
-	}
-
-	void ReadDispatchConstants(VDDPoolCommandIndex index, void *data, size_t len) const;
-
-	template<typename T>
-	T ReadDispatchConstants(VDDPoolCommandIndex index) const {
-		T data {};
-		ReadDispatchConstants(index, &data, sizeof data);
-
-		return data;
 	}
 
 	void UpdateDispatchUAV(VDDPoolCommandIndex cmdIndex, uint32 viewIndex, IVDTUnorderedAccessView *view);
@@ -270,6 +286,7 @@ private:
 	vdfastvector<VDDisplayCommand3D> mMeshes;
 	vdfastvector<IVDTTexture *> mpAllocatedTextures;
 	vdfastvector<IVDTUnorderedAccessView *> mpUAVs;
+	vdfastvector<IVDTConstantBuffer *> mpConstantBuffers;
 
 	vdfastvector<VDDRenderView> mRenderViews;
 	bool mbError = false;
@@ -288,14 +305,12 @@ struct VDDisplayMeshCommand3D {
 
 	bool mbRenderClear = false;
 	uint32 mRenderClearColor = 0;
-	VDDPoolRenderViewId mRenderView {};
+	VDDPoolRenderViewId mRenderViewId {};
 
-	// Vertex/fragment program constant data. Special case: len=0, offset>0
-	// means to reuse existing set data.
-	uint32 mVPConstOffset = 0;
-	uint32 mFPConstOffset = 0;
-	uint16 mVPConstCount = 0;
-	uint16 mFPConstCount = 0;
+	sint32 mVsConstantBufferStart = 0;
+	uint32 mVsConstantBufferCount = 0;
+	sint32 mPsConstantBufferStart = 0;
+	uint32 mPsConstantBufferCount = 0;
 
 	uint32 mVertexSourceOffset = 0;
 	uint32 mVertexSourceLen = 0;
@@ -326,10 +341,7 @@ struct VDDisplayDispatchCommand3D {
 	uint8 mTextureCount = 0;
 	uint8 mUAVCount = 0;
 
-	// Vertex/fragment program constant data. Special case: len=0, offset>0
-	// means to reuse existing set data.
-	uint32 mCPConstOffset = 0;
-	uint16 mCPConstCount = 0;
+	sint32 mCsConstantBufferIndex = 0;
 
 	uint32 mSizeX = 0;
 	uint32 mSizeY = 0;
@@ -486,9 +498,26 @@ public:
 };
 
 ///////////////////////////////////////////////////////////////////////////
+// VDDisplayQueuedSourceNode3D
+//
+// A queued source node has an adjustable queue for the output textures,
+// allowing retrieval of a window of recent output frames. The queue can
+// be adjusted post-init.
+//
+class VDDisplayQueuedSourceNode3D : public VDDisplaySourceNode3D {
+public:
+	virtual ~VDDisplayQueuedSourceNode3D() = default;
+
+	virtual bool SetQueueLength(IVDTContext *ctx, uint32 queueLen) = 0;
+	virtual void AdvanceQueue() = 0;
+
+	virtual IVDTTexture2D *GetResultTexture(uint32 pastIndex) const = 0;
+};
+
+///////////////////////////////////////////////////////////////////////////
 // VDDisplayTextureSourceNode3D
 //
-class VDDisplayTextureSourceNode3D : public VDDisplaySourceNode3D {
+class VDDisplayTextureSourceNode3D final : public VDDisplaySourceNode3D {
 public:
 	VDDisplayTextureSourceNode3D();
 	~VDDisplayTextureSourceNode3D();
@@ -511,7 +540,7 @@ private:
 // They can only support one image or video per texture and only those
 // that can be uploaded in native format or through a red/blue flip.
 //
-class VDDisplayImageSourceNode3D : public VDDisplaySourceNode3D {
+class VDDisplayImageSourceNode3D final : public VDDisplayQueuedSourceNode3D {
 public:
 	VDDisplayImageSourceNode3D();
 	~VDDisplayImageSourceNode3D();
@@ -520,14 +549,20 @@ public:
 	void Shutdown();
 
 	void Load(const VDPixmap& px);
+	bool SetQueueLength(IVDTContext *ctx, uint32 len) override;
+	void AdvanceQueue() override;
 
-	VDDisplaySourceTexMapping GetTextureMapping() const;
-	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+	VDDisplaySourceTexMapping GetTextureMapping() const override;
+	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) override;
+	IVDTTexture2D *GetResultTexture(uint32 pastIndex) const override;
 
 private:
-	IVDTTexture2D *mpImageTex = nullptr;
+	vdfastvector<IVDTTexture2D *> mpImageTexs;
 	VDDisplaySourceTexMapping mMapping {};
-	bool mbTextureInited = false;
+	uint32 mTextureInitsPending = 0;
+	uint32 mTexWidth = 0;
+	uint32 mTexHeight = 0;
+	VDTFormat mTexFormat {};
 };
 
 ///////////////////////////////////////////////////////////////////////////
@@ -536,7 +571,7 @@ private:
 // This node collects the output of a subrender tree and makes it available
 // as a source node.
 //
-class VDDisplayBufferSourceNode3D : public VDDisplaySourceNode3D {
+class VDDisplayBufferSourceNode3D final : public VDDisplayQueuedSourceNode3D {
 public:
 	VDDisplayBufferSourceNode3D();
 	~VDDisplayBufferSourceNode3D();
@@ -544,16 +579,24 @@ public:
 	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool format, VDDisplayNode3D *child);
 	bool InitWithFormat(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, float outx, float outy, float outw, float outh, uint32 w, uint32 h, VDTFormat format, VDDisplayNode3D *child);
 	void Shutdown();
+	
+	bool SetQueueLength(IVDTContext *ctx, uint32 len) override;
+	void AdvanceQueue() override;
 
-	VDDisplaySourceTexMapping GetTextureMapping() const;
-	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+	VDDisplaySourceTexMapping GetTextureMapping() const override;
+	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) override;
+	virtual IVDTTexture2D *GetResultTexture(uint32 pastIndex) const override;
 
 private:
 	struct Vertex;
 
 	float mDestX = 0;
 	float mDestY = 0;
-	IVDTTexture2D *mpRTT;
+	uint32 mRTTIndex = 0;
+	uint32 mRTTWidth = 0;
+	uint32 mRTTHeight = 0;
+	VDTFormat mRTTFormat {};
+	vdfastvector<IVDTTexture2D *> mpRTTs;
 	VDDisplayNode3D *mpChildNode;
 	VDDisplaySourceTexMapping mMapping;
 };
@@ -639,7 +682,6 @@ private:
 	IVDTVertexFormat *mpVF;
 
 	RenderMode	mRenderMode;
-	bool	mbRender2T;
 	bool	mbBilinear;
 	float	mDstX;
 	float	mDstY;
@@ -731,6 +773,7 @@ public:
 	const vdrect32 GetDestArea() const;
 
 	struct Params {
+		uint32 mSrcW;
 		uint32 mSrcH;
 		float mDstX;
 		float mDstY;
@@ -753,6 +796,8 @@ public:
 		float mGamma;
 		float mPALBlendingOffset;
 		float mColorCorrectionMatrix[3][3];
+
+		VDDScreenMaskParams mScreenMaskParams;
 	};
 
 	bool Init(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const Params& initParams, VDDisplaySourceNode3D *child);
@@ -765,12 +810,11 @@ private:
 
 	IVDTTexture2D *mpGammaRampTex = nullptr;
 	IVDTTexture2D *mpScanlineMaskTex = nullptr;
+	IVDTTexture2D *mpDotMaskTex = nullptr;
 	vdrefptr<VDDisplaySourceNode3D> mpSourceNode;
 
 	VDDisplaySourceTexMapping mMapping {};
 	Params mParams {};
-	float mScanlineMaskVBase = 0;
-	float mScanlineMaskVScale = 0;
 	
 	VDDPoolTextureIndex mSourceTextureIndex {};
 	VDDPoolRenderViewId mOutputViewId {};
@@ -839,10 +883,6 @@ private:
 	struct CpBloomV2Final;
 
 	Params mParams {};
-	uint32 mBlurW = 0;
-	uint32 mBlurH = 0;
-	uint32 mBlurW2 = 0;
-	uint32 mBlurH2 = 0;
 	bool mbPrescale2x = false;
 	uint32 mChangeCounter = 0;
 
@@ -860,6 +900,70 @@ private:
 	VDDisplayCommandList3D mMeshPool;
 
 	VDDisplaySourceTexMapping mMapping {};
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayCustomEffectPipelineNode3D final : public vdrefcount {
+public:
+	VDDisplayCustomEffectPipelineNode3D(IVDDisplayCustomEffectD3D11& customEffect, VDDisplayQueuedSourceNode3D& src, const vdint2& viewportSize);
+	~VDDisplayCustomEffectPipelineNode3D();
+
+	void AdvanceQueue();
+
+	void PreRun();
+	void Run(IVDTContext& ctx, VDDisplayNodeContext3D& dctx);
+	void RunFinal(const VDDRenderView& renderView);
+	void PostRun();
+
+	VDDisplaySourceTexMapping GetFinalResultMapping() const;
+	IVDTTexture2D *GetFinalTexture() const;
+
+private:
+	const vdrefptr<IVDDisplayCustomEffectD3D11> mpCustomEffect;
+	const vdrefptr<VDDisplayQueuedSourceNode3D> mpSrcNode;
+	const vdint2 mViewportSize;
+
+	vdfastvector<IVDTTexture2D *> mpInputSrcTextures;
+	bool mbAdvanceQueue = false;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDDisplayCustomEffectSourceNode3D final : public VDDisplaySourceNode3D {
+public:
+	VDDisplayCustomEffectSourceNode3D(VDDisplayCustomEffectPipelineNode3D& src);
+	~VDDisplayCustomEffectSourceNode3D();
+
+	VDDisplaySourceTexMapping GetTextureMapping() const override;
+	IVDTTexture2D *Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx) override;
+
+private:
+	const vdrefptr<VDDisplayCustomEffectPipelineNode3D> mpSource;
+};
+
+class VDDisplayCustomEffectNode3D final : public VDDisplayNode3D {
+public:
+	VDDisplayCustomEffectNode3D(VDDisplayCustomEffectPipelineNode3D& src,
+		uint32 clipdstw,
+		uint32 clipdsth,
+		float dstxf,
+		float dstyf,
+		float dstwf,
+		float dsthf
+	);
+
+	~VDDisplayCustomEffectNode3D();
+
+	void Draw(IVDTContext& ctx, VDDisplayNodeContext3D& dctx, const VDDRenderView& renderView) override;
+
+private:
+	const vdrefptr<VDDisplayCustomEffectPipelineNode3D> mpSource;
+
+	float mDstX = 0;
+	float mDstY = 0;
+	float mDstW = 0;
+	float mDstH = 0;
 };
 
 #endif

@@ -133,6 +133,14 @@ void ATArtifactPAL32(void *dst, void *delayLine, uint32 n, bool useSignedPalette
 	void ATArtifactNTSCAccum_NEON(void *rout, const void *table, const void *src, uint32 count);
 	void ATArtifactNTSCAccumTwin_NEON(void *rout, const void *table, const void *src, uint32 count);
 	void ATArtifactNTSCFinal_NEON(void *dst0, const void *srcr0, const void *srcg0, const void *srcb0, uint32 count);
+
+	void ATArtifactPALLuma_NEON(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALLumaTwin_NEON(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALChroma_NEON(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALChromaTwin_NEON(uint32 *dst, const uint8 *src, uint32 n, const uint32 *kernels);
+	void ATArtifactPALFinalMono_NEON(uint32 *dst, const uint32 *ybuf, uint32 n, const uint32 palette[256]);
+	void ATArtifactPALFinal_NEON(uint32 *dst, const uint32 *ybuf, const uint32 *ubuf, const uint32 *vbuf, uint32 *ulbuf, uint32 *vlbuf, uint32 n);
+	void ATArtifactPAL32_NEON(void *dst, void *delayLine, uint32 n, bool useSignedPalette);
 #endif
 
 namespace {
@@ -815,9 +823,14 @@ void ATArtifactingEngine::ArtifactPAL32(uint32 *dst, uint32 width) {
 		ATArtifactPAL32_SSE2(dst, mPALDelayLine32, width, compressOutput);
 		return;
 	}
+#elif defined(VD_CPU_ARM64)
+	if constexpr(true) {
+		ATArtifactPAL32_NEON(dst, mPALDelayLine32, width, compressOutput);
+	} else
 #endif
-
-	ATArtifactPAL32(dst, mPALDelayLine32, width, compressOutput);
+	{
+		ATArtifactPAL32(dst, mPALDelayLine32, width, compressOutput);
+	}
 }
 
 void ATArtifactingEngine::ArtifactCompressRange(uint32 *dst, uint32 width) {
@@ -1203,13 +1216,45 @@ void ATArtifactColorCorrect_SSE2(uint8 *VDRESTRICT dst8, uint32 N, const sint16 
 }
 #endif
 
-void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const {
-#if VD_CPU_X86 || VD_CPU_X64
-	if (SSE2_enabled)
-		ATArtifactColorCorrect_SSE2(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
-	else
+#if VD_CPU_ARM64
+void ATArtifactColorCorrect_NEON(uint8 *VDRESTRICT dst8, uint32 N, const sint16 linearTab[256], const uint8 gammaTab[1024], const sint16 matrix16[3][3]) {
+	int16x4_t m0 = vld1_s16(matrix16[0]);
+	int16x4_t m1 = vld1_s16(matrix16[1]);
+	int16x4_t m2 = vld1_s16(matrix16[2]);
+	uint16x4_t limit = vcreate_u16(0x0000'03FF'03FF'03FF);
+
+	for(uint32 i=0; i<N; ++i) {
+		// convert NTSC gamma to linear (2.2)
+		int16x4_t r = vcreate_s16(linearTab[dst8[2]]);
+		int16x4_t g = vcreate_s16(linearTab[dst8[1]]);
+		int16x4_t b = vcreate_s16(linearTab[dst8[0]]);
+
+		// convert to new color space
+		int32x4_t rgb = vmull_lane_s16(m0, r, 0);
+		rgb = vmlal_lane_s16(rgb, m1, g, 0);
+		rgb = vmlal_lane_s16(rgb, m2, b, 0);
+
+		uint16x4_t indices = vmin_u16(limit, vrshr_n_u16(vqshrun_n_s32(rgb, 16), 1));
+
+		dst8[2] = gammaTab[vget_lane_u16(indices, 0)];
+		dst8[1] = gammaTab[vget_lane_u16(indices, 1)];
+		dst8[0] = gammaTab[vget_lane_u16(indices, 2)];
+		dst8 += 4;
+	}
+}
 #endif
+
+void ATArtifactingEngine::ColorCorrect(uint8 *VDRESTRICT dst8, uint32 n) const {
+#if VD_CPU_ARM64
+	ATArtifactColorCorrect_NEON(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
+#else
+	#if VD_CPU_X86 || VD_CPU_X64
+		if (SSE2_enabled)
+			ATArtifactColorCorrect_SSE2(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
+		else
+	#endif
 		ATArtifactColorCorrect_Scalar(dst8, n, mCorrectLinearTable, mCorrectGammaTable, mColorMatchingMatrix16);
+#endif
 }
 
 void ATArtifactingEngine::ArtifactNTSCHi(uint32 dst[N*2], const uint8 src[N], bool scanlineHasHiRes, bool includeHBlank) {
@@ -1367,7 +1412,33 @@ void ATArtifactingEngine::ArtifactPALHi(uint32 dst[N*2], const uint8 src0[N], bo
 			ATArtifactPALFinalMono_SSE2(dst, ybuf + 4, N, mMonoTable);
 		else
 			ATArtifactPALFinal_SSE2(dst, ybuf + 4, ubuf + 4, vbuf + 4, ulbuf, vlbuf, N);
-	} else 
+	} else
+#elif defined(VD_CPU_ARM64)
+	if constexpr (true) {
+		// luma routine writes N+8 elements (requires N multiple of 8)
+		// chroma routine writes N+8 elements (requires N multiple of 16)
+
+		if (scanlineHasHiRes) {
+			ATArtifactPALLuma_NEON(ybuf, src, N+16, &mPal8x.mPalToY[oddLine][0][0][0]);
+
+			if (!mbTintColorEnabled) {
+				ATArtifactPALChroma_NEON(ubuf, src, N+16, &mPal8x.mPalToU[oddLine][0][0][0]);
+				ATArtifactPALChroma_NEON(vbuf, src, N+16, &mPal8x.mPalToV[oddLine][0][0][0]);
+			}
+		} else {
+			ATArtifactPALLumaTwin_NEON(ybuf, src, N+16, &mPal8x.mPalToYTwin[oddLine][0][0][0]);
+
+			if (!mbTintColorEnabled) {
+				ATArtifactPALChromaTwin_NEON(ubuf, src, N+16, &mPal8x.mPalToUTwin[oddLine][0][0][0]);
+				ATArtifactPALChromaTwin_NEON(vbuf, src, N+16, &mPal8x.mPalToVTwin[oddLine][0][0][0]);
+			}
+		}
+
+		if (mbTintColorEnabled)
+			ATArtifactPALFinalMono_NEON(dst, ybuf + 4, N, mMonoTable);
+		else
+			ATArtifactPALFinal_NEON(dst, ybuf + 4, ubuf + 4, vbuf + 4, ulbuf, vlbuf, N);
+	} else
 #endif
 	{
 		VDMemset32(ubuf, 0x20002000, sizeof(ubuf)/sizeof(ubuf[0]));
@@ -2433,7 +2504,7 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	const float ycphasec = cosf(ycphase);
 	const float ycphases = sinf(ycphase);
 
-#if VD_CPU_X86 || VD_CPU_X64
+#if VD_CPU_X86 || VD_CPU_X64 || VD_CPU_ARM64
 	const auto twinAdd = [](uint32 x, uint32 y) -> uint32 {
 		return (x & 0x7FFF7FFF) + (y & 0x7FFF7FFF) ^ ((x ^ y) & 0x80008000);
 	};
@@ -2558,8 +2629,12 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 				float p2uw[24 + 8] = {0};
 				float p2vw[24 + 8] = {0};
 
+#if VD_CPU_X86 || VD_CPU_X64 || VD_CPU_ARM64
 #if VD_CPU_X86 || VD_CPU_X64
 				if (SSE2_enabled) {
+#else
+				if constexpr (true) {
+#endif 
 					const int phase4 = phase & 4;
 					int ypos = 4 - phase4*2;
 					int cpos = 13 - phase4*2;
@@ -2721,8 +2796,11 @@ void ATArtifactingEngine::RecomputePALTables(ATConsoleOutput *debugOut) {
 	// What we do here is precompute pairs of adjacent phase filter kernels added together. On
 	// any scanline that is lores only, we can use a faster twin-mode set of filter routines.
 
+#if VD_CPU_X86 || VD_CPU_X64 || VD_CPU_ARM64
 #if VD_CPU_X86 || VD_CPU_X64
-	if (SSE2_enabled) {
+	if (SSE2_enabled)
+#endif
+	{
 		for(int i=0; i<2; ++i) {
 			for(int j=0; j<256; ++j) {
 				for(int k=0; k<4; ++k) {

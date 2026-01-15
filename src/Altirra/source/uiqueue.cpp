@@ -61,8 +61,9 @@ bool ATUIQueue::Run() {
 
 	try {
 		step();
-	} catch(const MyError& e) {
-		PushStep(ATUIShowAlertError(e.wc_str(), nullptr)->GetStep());
+	} catch(const VDException& e) {
+		if (e.visible())
+			PushStep(ATUIShowAlertError(e.wc_str(), nullptr)->GetStep());
 	}
 
 	return true;

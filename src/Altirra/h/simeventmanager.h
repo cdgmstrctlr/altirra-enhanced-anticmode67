@@ -23,6 +23,7 @@
 
 enum ATSimulatorEvent {
 	kATSimEvent_None,
+	kATSimEvent_AnonymousPause,
 	kATSimEvent_AnonymousInterrupt,
 	kATSimEvent_CPUSingleStep,
 	kATSimEvent_CPUStackBreakpoint,
@@ -48,6 +49,8 @@ enum ATSimulatorEvent {
 	kATSimEvent_VBLANK,
 	kATSimEvent_TracingLimitReached,
 	kATSimEvent_CPURestart,
+	kATSimEvent_SimResume,
+	kATSimEvent_SimPause,
 	kATSimEventCount
 };
 

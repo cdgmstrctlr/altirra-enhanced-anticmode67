@@ -61,6 +61,8 @@ enum : uint8 {
 	kATCIOStat_DirFull		= 0xA9,	// directory full (64 files)
 	kATCIOStat_FileNotFound	= 0xAA,	// file not found
 	kATCIOStat_InvPoint		= 0xAB,	// invalid point
+	kATCIOStat_MyDOS_AlreadyExists		= 0xAC,		// [MyDOS] File or directory of same name already exists
+	kATCIOStat_MyDOS_DirectoryNotEmpty	= 0xAF,		// [MyDOS] Directory not empty
 	kATCIOStat_AccessDenied	= 0xB0,	// [SDX] access denied
 	kATCIOStat_PathTooLong	= 0xB6,	// [SDX] path too long
 	kATCIOStat_SystemError	= 0xFF,	// {SDX] system error

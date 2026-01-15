@@ -625,7 +625,6 @@ void ATDiskDriveDebugTargetControl::ApplyDisplayCPUClockMultiplier(double f) {
 void ATDiskDriveDebugTargetControl::ResetTargetControl() {
 	mLastSync = ATSCHEDULER_GETTIME(mpScheduler);
 	mLastSyncDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	mLastSyncDriveTimeF32 = 0;
 	mRawTimestampToDriveAdjust = mLastSyncDriveTime - mpProxy->GetTime();
 
 	mpScheduler->UnsetEvent(mpImmRunEvent);
@@ -653,7 +652,7 @@ void ATDiskDriveDebugTargetControl::ShutdownTargetControl() {
 uint32 ATDiskDriveDebugTargetControl::DriveTimeToMasterTime() const {
 	// convert drive time to computer time
 	const uint32 currentDriveTime = ATSCHEDULER_GETTIME(&mDriveScheduler);
-	const uint64 driveTimeSyncDeltaF32 = mLastSyncDriveTimeF32 - ((uint64)(currentDriveTime - mLastSyncDriveTime) << 32);
+	const uint64 driveTimeSyncDeltaF32 = mDriveCycleAccumF32 - ((uint64)(currentDriveTime - mLastSyncDriveTime) << 32);
 	VDASSERT(driveTimeSyncDeltaF32 < UINT64_C(0x80000000'00000000));
 
 	const uint64 systemTimeSyncDelta = VDUMul64x64To128(driveTimeSyncDeltaF32, mSystemCyclesPerDriveCycleF32).getHi();
@@ -701,10 +700,9 @@ uint32 ATDiskDriveDebugTargetControl::AccumSubCycles() {
 	uint64 driveCyclesF32 = mDriveCycleAccumF32 + cycles * mDriveCyclesPerSystemCycleF32;
 	mDriveCycleAccumF32 = (uint32)driveCyclesF32;
 
-	mLastSyncDriveTime = mDriveCycleLimit;
-	mLastSyncDriveTimeF32 = driveCyclesF32;
-
 	mDriveCycleLimit += (uint32)(driveCyclesF32 >> 32);
+
+	mLastSyncDriveTime = mDriveCycleLimit;
 
 	return mDriveCycleLimit;
 }

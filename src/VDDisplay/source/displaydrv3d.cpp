@@ -21,12 +21,14 @@
 #include <numeric>
 #include <vd2/system/binary.h>
 #include <vd2/system/bitmath.h>
+#include <vd2/system/Error.h>
 #include <vd2/system/time.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/Kasumi/pixmap.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
 #include <vd2/Tessa/Context.h>
+#include <vd2/VDDisplay/internal/customeffectd3d11.h>
 #include <vd2/VDDisplay/compositor.h>
 #include <vd2/VDDisplay/logging.h>
 #include "displaydrv3d.h"
@@ -46,7 +48,6 @@ VDDisplayDriver3D::VDDisplayDriver3D()
 	, mpSwapChain(NULL)
 	, mpImageNode(NULL)
 	, mpImageSourceNode(NULL)
-	, mpRootNode(NULL)
 	, mFilterMode(kFilterBilinear)
 	, mbCompositionTreeDirty(false)
 	, mbFramePending(false)
@@ -97,12 +98,17 @@ bool VDDisplayDriver3D::Init(HWND hwnd, HMONITOR hmonitor, const VDVideoDisplayS
 }
 
 void VDDisplayDriver3D::Shutdown() {
+	mpCustomEffect = nullptr;
+
 	mDisplayNodeContext.Shutdown();
 	mRenderer.Shutdown();
 
 	DestroyImageNode();
 
-	vdsaferelease <<= mpRootNode,
+	mpRootNode = nullptr;
+	mpCustomEffectPipelineNode = nullptr;
+
+	vdsaferelease <<=
 		mpSwapChain,
 		mpContext,
 		mpDebugFont;
@@ -190,24 +196,8 @@ bool VDDisplayDriver3D::SetScreenFX(const VDVideoDisplayScreenFXInfo *screenFX) 
 		}
 
 		if (!mbCompositionTreeDirty) {
-			if (mScreenFXInfo.mScanlineIntensity != screenFX->mScanlineIntensity
-				|| mScreenFXInfo.mGamma != screenFX->mGamma
-				|| mScreenFXInfo.mPALBlendingOffset != screenFX->mPALBlendingOffset
-				|| mScreenFXInfo.mOutputGamma != screenFX->mOutputGamma
-				|| memcmp(mScreenFXInfo.mColorCorrectionMatrix, screenFX->mColorCorrectionMatrix, sizeof(mScreenFXInfo.mColorCorrectionMatrix))
-				|| mScreenFXInfo.mDistortionX != screenFX->mDistortionX
-				|| mScreenFXInfo.mDistortionYRatio != screenFX->mDistortionYRatio
-				|| mScreenFXInfo.mbBloomEnabled != screenFX->mbBloomEnabled
-				|| mScreenFXInfo.mBloomThreshold != screenFX->mBloomThreshold
-				|| mScreenFXInfo.mBloomRadius != screenFX->mBloomRadius
-				|| mScreenFXInfo.mBloomDirectIntensity != screenFX->mBloomDirectIntensity
-				|| mScreenFXInfo.mBloomIndirectIntensity != screenFX->mBloomIndirectIntensity
-				|| mScreenFXInfo.mbSignedRGBEncoding != screenFX->mbSignedRGBEncoding
-				|| mScreenFXInfo.mHDRIntensity != screenFX->mHDRIntensity
-				)
-			{
+			if (mScreenFXInfo != *screenFX)
 				mbCompositionTreeDirty = true;
-			}
 		}
 
 		mScreenFXInfo = *screenFX;
@@ -258,6 +248,9 @@ bool VDDisplayDriver3D::Update(UpdateMode) {
 		mpImageNode->Load(mSource.pixmap);
 	else if (mpImageSourceNode)
 		mpImageSourceNode->Load(mSource.pixmap);
+
+	if (mpCustomEffectPipelineNode)
+		mpCustomEffectPipelineNode->AdvanceQueue();
 
 	return true;
 }
@@ -336,7 +329,10 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 
 	mDisplayNodeContext.ApplyRenderView(renderView);
 
-	if (mpCompositor || mbDisplayDebugInfo || mbTraceRendering) {
+	const bool hasCustomEffectError = !mErrorString.empty();
+	const bool hasCustomEffectStats = (mpCustomEffect && mpCustomEffect->HasTimingInfo());
+
+	if (mpCompositor || mbDisplayDebugInfo || mbTraceRendering || hasCustomEffectError || hasCustomEffectStats) {
 
 		mRenderer.Begin(w, h, mDisplayNodeContext, mbHDR);
 
@@ -345,9 +341,61 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 			mpCompositor->Composite(mRenderer, compInfo);
 		}
 
-		if (mbTraceRendering || mbDisplayDebugInfo) {
+		if (mbTraceRendering || mbDisplayDebugInfo || hasCustomEffectError || hasCustomEffectStats) {
 			if (!mpDebugFont)
 				VDCreateDisplaySystemFont(20, false, "Arial", &mpDebugFont);
+
+			if (hasCustomEffectError) {
+				VDDisplayTextRenderer *tr = mRenderer.GetTextRenderer();
+
+				tr->Begin();
+				tr->SetFont(mpDebugFont);
+				tr->SetAlignment(tr->kAlignLeft, tr->kVertAlignTop);
+				tr->SetColorRGB(0xFF);
+
+				tr->SetColorRGB(0xFF4040);
+				tr->DrawTextLine(10, h - 60, mErrorString.c_str());
+
+				tr->End();
+			} else if (hasCustomEffectStats) {
+				VDDisplayTextRenderer *tr = mRenderer.GetTextRenderer();
+
+				const auto passInfos = mpCustomEffect->GetPassTimings();
+
+				if (!passInfos.empty()) {
+					tr->Begin();
+					tr->SetFont(mpDebugFont);
+					tr->SetAlignment(tr->kAlignLeft, tr->kVertAlignTop);
+					tr->SetColorRGB(0xFFFF00);
+
+					const uint32 numTimings = (uint32)passInfos.size();
+					for(uint32 i=0; i<numTimings; ++i) {
+						if (i + 1 == numTimings) {
+							mDebugString.sprintf(L"Total: %7.2fms %ux%u"
+								, passInfos[i].mTiming * 1000.0f, mbDestRectEnabled ? mDestRect.width() : w
+								, mbDestRectEnabled ? mDestRect.height() : h
+							);
+						} else {
+							const auto& passInfo = passInfos[i];
+
+							mDebugString.sprintf(L"Pass #%-2u: %7.2fms %ux%u %ls%ls%ls%ls"
+								, i + 1
+								, passInfo.mTiming * 1000.0f
+								, passInfo.mOutputWidth
+								, passInfo.mOutputHeight
+								, passInfo.mbOutputLinear ? L"linear" : L"point"
+								, passInfo.mbOutputFloat ? passInfos[i].mbOutputHalfFloat ? L" half" : L" float" : L""
+								, passInfo.mbOutputSrgb ? L" sRGB" : L""
+								, passInfo.mbCached ? L" cached" : L""
+							);
+						}
+
+						tr->DrawTextLine(10, 10 + 16*i, mDebugString.c_str());
+					}
+
+					tr->End();
+				}
+			}
 		}
 		
 		VDStringW s;
@@ -528,16 +576,40 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 
 		pxbuf.init(desc.mWidth, desc.mHeight, nsVDPixmap::kPixFormat_XRGB8888);
 
-		vdrefptr<IVDTReadbackBuffer> rbuf;
-		if (mpContext->CreateReadbackBuffer(desc.mWidth, desc.mHeight, kVDTF_B8G8R8A8, ~rbuf)) {
-			if (mpSwapChain->GetBackBuffer()->Readback(rbuf)) {
-				VDTLockData2D lock;
+		VDTSurfaceDesc surfaceDesc;
+		mpSwapChain->GetBackBuffer()->GetDesc(surfaceDesc);
 
-				if (rbuf->Lock(lock)) {
-					VDMemcpyRect(pxbuf.data, pxbuf.pitch, lock.mpData, lock.mPitch, desc.mWidth * 4, desc.mHeight);
-					rbuf->Unlock();
+		if (surfaceDesc.mFormat == kVDTF_B8G8R8A8 || surfaceDesc.mFormat == kVDTF_R8G8B8A8) {
+			vdrefptr<IVDTReadbackBuffer> rbuf;
+			if (mpContext->CreateReadbackBuffer(desc.mWidth, desc.mHeight, surfaceDesc.mFormat, ~rbuf)) {
+				if (mpSwapChain->GetBackBuffer()->Readback(rbuf)) {
+					VDTLockData2D lock;
 
-					readbackSucceeded = true;
+					if (rbuf->Lock(lock)) {
+						if (surfaceDesc.mFormat == kVDTF_R8G8B8A8) {
+							// RGBA -> BGRA conversion
+							uint32 *VDRESTRICT dst = (uint32 *)pxbuf.data;
+							const uint32 *VDRESTRICT src = (const uint32 *)lock.mpData;
+
+							const uint32 w = desc.mWidth;
+							const uint32 h = desc.mHeight;
+							for(uint32 y=0; y<h; ++y) {
+								for(uint32 x=0; x<w; ++x) {
+									uint32 px = src[x];
+									dst[x] = VDSwizzleU32((px >> 24) + (px << 8));
+								}
+
+								src = vdptroffset(src, lock.mPitch);
+								dst = vdptroffset(dst, pxbuf.pitch);
+							}
+						} else {
+							VDMemcpyRect(pxbuf.data, pxbuf.pitch, lock.mpData, lock.mPitch, desc.mWidth * 4, desc.mHeight);
+						}
+
+						rbuf->Unlock();
+
+						readbackSucceeded = true;
+					}
 				}
 			}
 		}
@@ -555,7 +627,11 @@ void VDDisplayDriver3D::Refresh(UpdateMode updateMode) {
 		mbFrameVSync = true;
 		mbFrameVSyncAdaptive = (updateMode & kModeVSyncAdaptive) != 0;
 
-		mpSwapChain->PresentVSync(mhMonitor, mbFrameVSyncAdaptive);
+		mSource.mpCB->OnBeginPresent(mSource.mFrameNumber, false);
+
+		mpSwapChain->PresentVSync(mhMonitor);
+
+		mSource.mpCB->OnEndPresent(mSource.mFrameNumber, false);
 	} else {
 		mVSyncStatus = {};
 
@@ -574,9 +650,28 @@ bool VDDisplayDriver3D::Paint(HDC hdc, const RECT& rClient, UpdateMode lastUpdat
 
 void VDDisplayDriver3D::PresentQueued() {
 	if (mpSwapChain) {
-		if (!mpSwapChain->PresentVSyncComplete())
-			return;
+		mSource.mpCB->OnBeginPresent(mSource.mFrameNumber, true);
+
+		mpSwapChain->PresentVSyncComplete();
+
+		mSource.mpCB->OnEndPresent(mSource.mFrameNumber, true);
 	}
+}
+
+void VDDisplayDriver3D::LoadCustomEffect(const wchar_t *path) {
+	mErrorString.clear();
+
+	if (path && *path) {
+		try {
+			mpCustomEffect = VDDisplayParseCustomEffectD3D11(*mpContext, mDisplayNodeContext, path);
+		} catch(const VDException& e) {
+			mErrorString = e.wc_str();
+		}
+	} else {
+		mpCustomEffect = nullptr;
+	}
+
+	RebuildTree();
 }
 
 void VDDisplayDriver3D::QueuePresent(bool restarted) {
@@ -585,6 +680,17 @@ void VDDisplayDriver3D::QueuePresent(bool restarted) {
 }
 
 void VDDisplayDriver3D::OnPresentCompleted(const VDTAsyncPresentStatus& status) {
+	if (mSource.mpCB && status.mbHaveVSyncInfo) {
+		VDDVSyncProfileInfo vsinfo {};
+
+		vsinfo.mQpcTimes[0] = status.mVSyncQpcCounts[0];
+		vsinfo.mQpcTimes[1] = status.mVSyncQpcCounts[1];
+		vsinfo.mRefreshCounts[0] = status.mVSyncRefreshCounts[0];
+		vsinfo.mRefreshCounts[1] = status.mVSyncRefreshCounts[1];
+
+		mSource.mpCB->OnVsyncInfo(vsinfo);
+	}
+
 	mTimingLog[mTimingIndex] = TimingEntry {
 		.mVSyncOffset = status.mVSyncOffset,
 		.mPresentWaitTime = status.mPresentWaitTime,
@@ -675,7 +781,23 @@ bool VDDisplayDriver3D::CreateImageNode() {
 }
 
 void VDDisplayDriver3D::DestroyImageNode() {
-	vdsaferelease <<= mpRootNode, mpImageNode, mpImageSourceNode;
+	mpRootNode = nullptr;
+	mpCustomEffectPipelineNode = nullptr;
+	vdsaferelease <<= mpImageNode, mpImageSourceNode;
+}
+
+bool VDDisplayDriver3D::BufferQueuedNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplayQueuedSourceNode3D **ppNode) {
+	return BufferQueuedNode(srcNode, 0.0f, 0.0f, (float)w, (float)h, w, h, hdr, ppNode);
+}
+
+bool VDDisplayDriver3D::BufferQueuedNode(VDDisplayNode3D *srcNode, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplayQueuedSourceNode3D **ppNode) {
+	vdrefptr<VDDisplayBufferSourceNode3D> bufferNode { new VDDisplayBufferSourceNode3D };
+
+	if (!bufferNode->Init(*mpContext, mDisplayNodeContext, outx, outy, outw, outh, w, h, hdr, srcNode))
+		return false;
+
+	*ppNode = bufferNode.release();
+	return true;
 }
 
 bool VDDisplayDriver3D::BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode) {
@@ -693,7 +815,8 @@ bool VDDisplayDriver3D::BufferNode(VDDisplayNode3D *srcNode, float outx, float o
 }
 
 bool VDDisplayDriver3D::RebuildTree() {
-	vdsaferelease <<= mpRootNode;
+	mpRootNode = nullptr;
+	mpCustomEffectPipelineNode = nullptr;
 
 	if (!mpImageNode && !mpImageSourceNode && !CreateImageNode())
 		return false;
@@ -742,7 +865,7 @@ bool VDDisplayDriver3D::RebuildTree() {
 		// carefully to avoid accumulating multiple subpixel offsets.
 
 		vdrefptr<VDDisplayNode3D> imgNode(mpImageNode);
-		vdrefptr<VDDisplaySourceNode3D> imgSrcNode(mpImageSourceNode);
+		vdrefptr<VDDisplayQueuedSourceNode3D> imgQueuedSrcNode(mpImageSourceNode);
 
 		// reset the dest area for the image node, in case previously it was set up for fast path
 		// direct blitting, which we might not be able to do here
@@ -750,10 +873,12 @@ bool VDDisplayDriver3D::RebuildTree() {
 			mpImageNode->SetDestArea(0, 0, mSource.pixmap.w, mSource.pixmap.h);
 
 		// check if either PAL artifacting or HDR is enabled, in which case we must buffer
+		bool signedInput = mScreenFXInfo.mbSignedRGBEncoding;
+
 		if (mbUseScreenFX) {
 			if (mScreenFXInfo.mPALBlendingOffset != 0) {
-				if (!imgSrcNode) {
-					if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
+				if (!imgQueuedSrcNode) {
+					if (!BufferQueuedNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgQueuedSrcNode))
 						return false;
 				}
 
@@ -761,66 +886,115 @@ bool VDDisplayDriver3D::RebuildTree() {
 				// highly saturated colors. However, this is only enabled if the color correction matrix
 				// is being used or we're rendering HDR (which forces CC on). If CC is off, then there's no
 				// point in producing extended colors here.
+				signedInput = mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0 || mbHDR;
+
 				vdrefptr<VDDisplayArtifactingNode3D> p(new VDDisplayArtifactingNode3D);
-				if (!p->Init(*mpContext, mDisplayNodeContext, mScreenFXInfo.mPALBlendingOffset, mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0 || mbHDR, imgSrcNode))
+				if (!p->Init(*mpContext, mDisplayNodeContext, mScreenFXInfo.mPALBlendingOffset, signedInput, imgQueuedSrcNode))
 					return false;
 
 				imgNode = p;
-				imgSrcNode = nullptr;
+				imgQueuedSrcNode = nullptr;
 			} else if (mbHDR) {
-				if (!imgSrcNode) {
-					if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
+				if (!imgQueuedSrcNode) {
+					if (!BufferQueuedNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgQueuedSrcNode))
 						return false;
 				}
 			}
 		}
-		
-		const bool useDistortion = mbUseScreenFX && mScreenFXInfo.mDistortionX != 0;
-		bool useFastPath = false;
 
-		switch(mFilterMode) {
-			case kFilterBicubic:
-				if (!mbHDR && !useDistortion) {
-					if (!imgSrcNode) {
-						if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
-							return false;
-					}
+		// process custom effect
+		vdrefptr<VDDisplaySourceNode3D> imgSrcNode;
+		bool skipBlit = false;
+		bool enableScreenFX = mbUseScreenFX;
 
-					vdrefptr p { new VDDisplayStretchBicubicNode3D };
-					if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, clipdstw, clipdsth, dstxf, dstyf, dstwf, dsthf, imgSrcNode)) {
-						if (mbUseScreenFX) {
-							imgNode = std::move(p);
+		if (mpCustomEffect) {
+			// if we don't already have a buffered source node, explicitly buffer the incoming
+			// image
+			if (!imgQueuedSrcNode) {
+				if (!BufferQueuedNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgQueuedSrcNode))
+					return false;
 
-							if (!BufferNode(imgNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, false, ~imgSrcNode))
-								return false;
+				imgNode = nullptr;
+			}
 
-						} else {
-							mpRootNode = p.release();
-							useFastPath = true;
-						}
-						break;
-					}
-				}
-				[[fallthrough]];
+			// set queue length on the input
+			if (!imgQueuedSrcNode->SetQueueLength(mpContext, mpCustomEffect->GetMaxPrevFrames() + 1))
+				return false;
 
-			case kFilterBilinear:
-			case kFilterPoint:
-			default:
-				{
-					// check if we can take the fast path of having the image node paint directly to the screen
-					if (imgNode && imgNode == mpImageNode && mpImageNode->CanStretch() && !mbUseScreenFX) {
-						mpImageNode->SetBilinear(mFilterMode != kFilterPoint);
-						mpImageNode->SetDestArea(dstxf, dstyf, dstwf, dsthf);
-						mpRootNode = mpImageNode;
-						mpRootNode->AddRef();
-						useFastPath = true;
-						break;
-					}				
-				}
-				break;
+			// create custom effect node for bulk of pipeline
+			const vdint2 viewportSize {
+				(sint32)VDCeilToInt32(dstwf),
+				(sint32)VDCeilToInt32(dsthf)
+			};
+
+			// check if the final blit is included
+			if (mpCustomEffect->ContainsFinalBlit()) {
+				// add custom effect draw node
+				mpCustomEffectPipelineNode = vdrefptr(new VDDisplayCustomEffectPipelineNode3D(*mpCustomEffect, *imgQueuedSrcNode, viewportSize));
+
+				imgNode = new VDDisplayCustomEffectNode3D(*mpCustomEffectPipelineNode, clipdstw, clipdsth, dstxf, dstyf, dstwf, dsthf);
+
+				skipBlit = true;
+				enableScreenFX = false;
+			} else {
+				// add custom effect source node
+				mpCustomEffectPipelineNode = vdrefptr(new VDDisplayCustomEffectPipelineNode3D(*mpCustomEffect, *imgQueuedSrcNode, viewportSize));
+
+				imgSrcNode = new VDDisplayCustomEffectSourceNode3D(*mpCustomEffectPipelineNode);
+			}
+		} else {
+			imgSrcNode = std::move(imgQueuedSrcNode);
+			imgQueuedSrcNode = nullptr;
 		}
 
-		if (!useFastPath) {
+		const bool useDistortion = enableScreenFX && mScreenFXInfo.mDistortionX != 0;
+		bool useFastPath = skipBlit;
+
+		if (!skipBlit) {
+			switch(mFilterMode) {
+				case kFilterBicubic:
+					if (!mbHDR && !useDistortion) {
+						if (!imgSrcNode) {
+							if (!BufferNode(imgNode, mSource.pixmap.w, mSource.pixmap.h, false, ~imgSrcNode))
+								return false;
+						}
+
+						vdrefptr p { new VDDisplayStretchBicubicNode3D };
+						if (p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, clipdstw, clipdsth, dstxf, dstyf, dstwf, dsthf, imgSrcNode)) {
+							imgNode = std::move(p);
+
+							if (mbUseScreenFX) {
+								if (!BufferNode(imgNode, dstxf, dstyf, dstwf, dsthf, clipdstw, clipdsth, false, ~imgSrcNode))
+									return false;
+
+							} else {
+								imgSrcNode = nullptr;
+								useFastPath = true;
+							}
+							break;
+						}
+					}
+					[[fallthrough]];
+
+				case kFilterBilinear:
+				case kFilterPoint:
+				default:
+					{
+						// check if we can take the fast path of having the image node paint directly to the screen
+						if (imgNode && imgNode == mpImageNode && mpImageNode->CanStretch() && !enableScreenFX) {
+							mpImageNode->SetBilinear(mFilterMode != kFilterPoint);
+							mpImageNode->SetDestArea(dstxf, dstyf, dstwf, dsthf);
+							useFastPath = true;
+							break;
+						}				
+					}
+					break;
+			}
+		}
+
+		if (useFastPath) {
+			mpRootNode = imgNode;
+		} else {
 			// if we don't already have a buffered source node, explicitly buffer the incoming
 			// image
 			if (!imgSrcNode) {
@@ -828,11 +1002,12 @@ bool VDDisplayDriver3D::RebuildTree() {
 					return false;
 			}
 
-			if (mbUseScreenFX) {
+			if (enableScreenFX) {
 				vdrefptr<VDDisplayScreenFXNode3D> p(new VDDisplayScreenFXNode3D);
 
 				VDDisplayScreenFXNode3D::Params params {};
 
+				params.mSrcW = mSource.pixmap.w;
 				params.mSrcH = mSource.pixmap.h;
 				params.mDstX = dstxf;
 				params.mDstY = dstyf;
@@ -848,7 +1023,7 @@ bool VDDisplayDriver3D::RebuildTree() {
 				params.mbLinear = mFilterMode != kFilterPoint;
 				params.mOutputGamma = mScreenFXInfo.mOutputGamma;
 				params.mbRenderLinear = mbHDR;
-				params.mbSignedInput = mScreenFXInfo.mbSignedRGBEncoding;
+				params.mbSignedInput = signedInput;
 				params.mHDRScale = mbHDR ? mScreenFXInfo.mHDRIntensity : 1.0f;
 				params.mGamma = mScreenFXInfo.mGamma;
 				params.mScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
@@ -856,25 +1031,49 @@ bool VDDisplayDriver3D::RebuildTree() {
 				params.mDistortionYRatio = mScreenFXInfo.mDistortionYRatio;
 				memcpy(params.mColorCorrectionMatrix, mScreenFXInfo.mColorCorrectionMatrix, sizeof params.mColorCorrectionMatrix);
 
+				// If screen mask compensation is active and bloom isn't, inject the color compensation
+				// scale into the correction matrix.
+				if (mScreenFXInfo.mScreenMaskParams.mType != VDDScreenMaskType::None && mScreenFXInfo.mScreenMaskParams.mbScreenMaskIntensityCompensation
+					&& !mScreenFXInfo.mbBloomEnabled) {
+					float compensationScale = 1.0f / mScreenFXInfo.mScreenMaskParams.GetMaskIntensityScale();
+
+					// force identity matrix if there isn't one already
+					if (params.mColorCorrectionMatrix[0][0] == 0.0f) {
+						params.mColorCorrectionMatrix[0][0] = compensationScale;
+						params.mColorCorrectionMatrix[0][1] = 0.0f;
+						params.mColorCorrectionMatrix[0][2] = 0.0f;
+						params.mColorCorrectionMatrix[1][0] = 0.0f;
+						params.mColorCorrectionMatrix[1][1] = compensationScale;
+						params.mColorCorrectionMatrix[1][2] = 0.0f;
+						params.mColorCorrectionMatrix[2][0] = 0.0f;
+						params.mColorCorrectionMatrix[2][1] = 0.0f;
+						params.mColorCorrectionMatrix[2][2] = compensationScale;
+					} else {
+						for(int i = 0; i < 3; ++i)
+							for(int j = 0; j < 3; ++j)
+								params.mColorCorrectionMatrix[i][j] *= compensationScale;
+					}
+				}
+
+				params.mScreenMaskParams = mScreenFXInfo.mScreenMaskParams;
+
 				if (!p->Init(*mpContext, mDisplayNodeContext, params, imgSrcNode))
 					return false;
 
-				mpRootNode = p.release();
+				mpRootNode = std::move(p);
 			} else {
-				VDDisplayBlitNode3D *p = new VDDisplayBlitNode3D;
-				p->AddRef();
+				vdrefptr<VDDisplayBlitNode3D> p(new VDDisplayBlitNode3D);
 				p->SetDestArea(dstxf, dstyf, dstwf, dsthf);
 
 				if (!p->Init(*mpContext, mDisplayNodeContext, mSource.pixmap.w, mSource.pixmap.h, mFilterMode != kFilterPoint, mPixelSharpnessX, mPixelSharpnessY, imgSrcNode)) {
-					p->Release();
 					return false;
 				}
 
-				mpRootNode = p;
+				mpRootNode = std::move(p);
 			}
 		}
 
-		const bool useBloom = mbUseScreenFX && mScreenFXInfo.mbBloomEnabled;
+		const bool useBloom = enableScreenFX && mScreenFXInfo.mbBloomEnabled;
 		if (useBloom) {
 			vdrefptr<VDDisplaySourceNode3D> bufferedRootNode;
 			bool inputLinear = false;
@@ -910,6 +1109,15 @@ bool VDDisplayDriver3D::RebuildTree() {
 			params.mDirectIntensity = mScreenFXInfo.mBloomDirectIntensity;
 			params.mIndirectIntensity = mScreenFXInfo.mBloomIndirectIntensity;
 
+			// If screen mask compensation is active and bloom, inject the color compensation
+			// scale into the bloom intensity parameters.
+			if (mScreenFXInfo.mScreenMaskParams.mType != VDDScreenMaskType::None && mScreenFXInfo.mScreenMaskParams.mbScreenMaskIntensityCompensation) {
+				float compensationScale = 1.0f / mScreenFXInfo.mScreenMaskParams.GetMaskIntensityScale();
+
+				params.mDirectIntensity *= compensationScale;
+				params.mIndirectIntensity *= compensationScale;
+			}
+
 			// The blur radius is specified in source pixels in the FXInfo, which must be
 			// converted to destination pixels.
 			params.mBlurBaseRadius = (float)dstwf / (float)mSource.pixmap.w;
@@ -921,7 +1129,7 @@ bool VDDisplayDriver3D::RebuildTree() {
 				return false;
 
 			vdsaferelease <<= mpRootNode;
-			mpRootNode = bloomNode.release();
+			mpRootNode = std::move(bloomNode);
 		}
 	}
 
@@ -934,10 +1142,10 @@ bool VDDisplayDriver3D::RebuildTree() {
 
 		if (mpRootNode) {
 			seq->AddNode(mpRootNode);
-			mpRootNode->Release();
+			mpRootNode = nullptr;
 		}
 
-		mpRootNode = seq.release();
+		mpRootNode = std::move(seq);
 	}
 
 	return true;

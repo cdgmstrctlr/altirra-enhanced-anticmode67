@@ -33,7 +33,7 @@ public:
 	static inline constexpr uint32 kTypeID = "IATDeviceIndicatorManager"_vdtypeid;
 
 	virtual void SetStatusFlags(uint32 flags) = 0;
-	virtual void ResetStatusFlags(uint32 flags) = 0;
+	virtual void ResetStatusFlags(uint32 flags, uint32 holdTime) = 0;
 	virtual void PulseStatusFlags(uint32 flags) = 0;
 
 	virtual void SetStatusCounter(uint32 index, uint32 value) = 0;
@@ -53,12 +53,16 @@ public:
 	virtual void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode) = 0;
 
 	virtual void SetRecordingPosition() = 0;
-	virtual void SetRecordingPosition(float time, sint64 size) = 0;
+	virtual void SetRecordingPositionPaused() = 0;
+	virtual void SetRecordingPosition(float time, sint64 size, bool paused) = 0;
 
 	virtual void SetModemConnection(const char *str) = 0;
 
 	virtual void SetStatusMessage(const wchar_t *s) = 0;
-	virtual void ReportError(const wchar_t *s) = 0;
+
+	virtual uint32 AllocateErrorSourceId() = 0;
+	virtual void ClearErrors(uint32 sourceId) = 0;
+	virtual void ReportError(uint32 sourceId, const wchar_t *s) = 0;
 };
 
 #endif

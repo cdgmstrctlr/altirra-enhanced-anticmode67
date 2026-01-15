@@ -122,6 +122,14 @@ struct ATUIThemeColors {
 	uint32 mFocusedBg;
 
 	uint32 mFocusedRect;
+
+	// list view header foreground/background colors
+	uint32 mListViewHeaderBg;
+	uint32 mListViewHeaderFg;
+	uint32 mListViewHeaderDivider;
+
+	uint32 mComboBoxBg;
+	uint32 mComboBoxBorder;
 };
 
 const ATUIThemeColors& ATUIGetThemeColors();

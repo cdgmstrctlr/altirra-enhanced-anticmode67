@@ -91,17 +91,17 @@ public:
 	}
 
 	bool IsHex() const { return mbHex; }
-	bool IsAddress() const { return mbAddress; }
+	bool IsAddress() const override { return mbAddress; }
 	sint32 GetValue() const { return mVal; }
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeConst(mVal, mbHex, mbAddress); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		result = mVal;
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		sint32 v = mVal;
 
 		if (mbAddress) {
@@ -179,7 +179,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -189,7 +189,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += '-';
 	}
 };
@@ -284,7 +284,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Optimize(ATDebugExpNode **result) {
+	bool Optimize(ATDebugExpNode **result) override {
 		if (ATDebugExpNodeBinary::Optimize(result))
 			return true;
 
@@ -309,7 +309,7 @@ public:
 		return false;
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -321,7 +321,7 @@ public:
 		return true;
 	}
 
-	bool ExtractEqConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder) {
+	bool ExtractEqConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder) override {
 		vdautoptr<ATDebugExpNode> rem;
 
 		if (mpLeft->ExtractEqConst(type, extracted, ~rem)) {
@@ -351,7 +351,7 @@ public:
 		return false;
 	}
 
-	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) override {
 		vdautoptr<ATDebugExpNode> rem;
 
 		if (mpLeft->ExtractRelConst(type, extracted, ~rem, relop)) {
@@ -381,15 +381,15 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
+	bool OptimizeInvert(ATDebugExpNode **result) override;
 
-	bool CanOptimizeInvert() const {
+	bool CanOptimizeInvert() const override {
 		return mpLeft->CanOptimizeInvert() && mpRight->CanOptimizeInvert();
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecAnd; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecAnd; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += " and ";
 	}
 };
@@ -405,7 +405,7 @@ public:
 	
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -417,7 +417,7 @@ public:
 		return true;
 	}
 
-	bool Optimize(ATDebugExpNode **result) {
+	bool Optimize(ATDebugExpNode **result) override {
 		if (ATDebugExpNodeBinary::Optimize(result))
 			return true;
 
@@ -442,15 +442,15 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
+	bool OptimizeInvert(ATDebugExpNode **result) override;
 
-	bool CanOptimizeInvert() const {
+	bool CanOptimizeInvert() const override {
 		return mpLeft->CanOptimizeInvert() && mpRight->CanOptimizeInvert();
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecOr; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecOr; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += " or ";
 	}
 };
@@ -505,7 +505,7 @@ public:
 	
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -517,9 +517,9 @@ public:
 		return true;
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecBitAnd; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecBitAnd; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += " & ";
 	}
 };
@@ -535,7 +535,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -547,9 +547,9 @@ public:
 		return true;
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecBitOr; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecBitOr; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += " | ";
 	}
 };
@@ -565,7 +565,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -577,9 +577,9 @@ public:
 		return true;
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecBitXor; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecBitXor; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += " ^ ";
 	}
 };
@@ -632,9 +632,9 @@ public:
 		return false;
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecAdd; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecAdd; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '+';
 	}
 };
@@ -688,8 +688,8 @@ public:
 		return false;
 	}
 
-	int GetPrecedence() const { return kNodePrecAdd; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecAdd; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '-';
 	}
 };
@@ -705,7 +705,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -752,9 +752,9 @@ public:
 		return false;
 	}
 
-	int GetAssociativity() const { return 0; }
-	int GetPrecedence() const { return kNodePrecMul; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetAssociativity() const override { return 0; }
+	int GetPrecedence() const override { return kNodePrecMul; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '*';
 	}
 };
@@ -770,7 +770,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -785,8 +785,8 @@ public:
 		return true;
 	}
 
-	int GetPrecedence() const { return kNodePrecMul; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecMul; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '%';
 	}
 };
@@ -802,7 +802,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -822,8 +822,8 @@ public:
 		return true;
 	}
 
-	int GetPrecedence() const { return kNodePrecMul; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecMul; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '/';
 	}
 };
@@ -839,7 +839,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -851,7 +851,7 @@ public:
 		return true;
 	}
 
-	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) override {
 		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
 			*remainder = NULL;
 			*extracted = mpRight;
@@ -873,11 +873,11 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '<';
 	}
 };
@@ -893,7 +893,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -905,7 +905,7 @@ public:
 		return true;
 	}
 
-	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) override {
 		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
 			*remainder = NULL;
 			*extracted = mpRight;
@@ -927,11 +927,11 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += "<=";
 	}
 };
@@ -947,7 +947,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -959,7 +959,7 @@ public:
 		return true;
 	}
 
-	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) override {
 		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
 			*remainder = NULL;
 			*extracted = mpRight;
@@ -981,11 +981,11 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '>';
 	}
 };
@@ -1001,7 +1001,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -1013,7 +1013,7 @@ public:
 		return true;
 	}
 
-	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) {
+	bool ExtractRelConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder, ATDebugExpNodeType *relop) override {
 		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
 			*remainder = NULL;
 			*extracted = mpRight;
@@ -1035,11 +1035,11 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += ">=";
 	}
 };
@@ -1055,7 +1055,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -1067,7 +1067,7 @@ public:
 		return true;
 	}
 
-	bool ExtractEqConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder) {
+	bool ExtractEqConst(ATDebugExpNodeType type, ATDebugExpNode **extracted, ATDebugExpNode **remainder) override {
 		if (mpLeft->mType == type && mpRight->mType == kATDebugExpNodeType_Const) {
 			*remainder = NULL;
 			*extracted = mpRight;
@@ -1087,11 +1087,11 @@ public:
 		return false;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += '=';
 	}
 };
@@ -1107,7 +1107,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneBinary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 		sint32 y;
 
@@ -1119,11 +1119,11 @@ public:
 		return true;
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result);
-	bool CanOptimizeInvert() const { return true; }
+	bool OptimizeInvert(ATDebugExpNode **result) override;
+	bool CanOptimizeInvert() const override { return true; }
 
-	int GetPrecedence() const { return kNodePrecRel; }
-	void EmitBinaryOp(VDStringA& s) {
+	int GetPrecedence() const override { return kNodePrecRel; }
+	void EmitBinaryOp(VDStringA& s) override {
 		s += "!=";
 	}
 };
@@ -1183,7 +1183,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Optimize(ATDebugExpNode **result) {
+	bool Optimize(ATDebugExpNode **result) override {
 		if (mpArg->OptimizeInvert(result)) {
 			return true;
 		}
@@ -1191,15 +1191,15 @@ public:
 		return ATDebugExpNodeUnary::Optimize(result);
 	}
 
-	bool OptimizeInvert(ATDebugExpNode **result) {
+	bool OptimizeInvert(ATDebugExpNode **result) override {
 		*result = mpArg;
 		mpArg.release();
 		return true;
 	}
 
-	bool CanOptimizeInvert() const { return true; }
+	bool CanOptimizeInvert() const override { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1209,7 +1209,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += '!';
 	}
 };
@@ -1225,7 +1225,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1238,7 +1238,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += "db ";
 	}
 };
@@ -1254,7 +1254,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1267,7 +1267,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += "dsb ";
 	}
 };
@@ -1283,7 +1283,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1298,7 +1298,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += "dsw ";
 	}
 };
@@ -1314,7 +1314,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1331,7 +1331,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += "dd ";
 	}
 };
@@ -1347,7 +1347,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1361,7 +1361,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += "dw ";
 	}
 };
@@ -1377,7 +1377,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1387,7 +1387,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += '<';
 	}
 };
@@ -1403,7 +1403,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1413,7 +1413,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += '>';
 	}
 };
@@ -1429,7 +1429,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return CloneUnary<decltype(*this)>(); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1461,7 +1461,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodePC; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1473,7 +1473,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@pc";
 	}
 };
@@ -1486,7 +1486,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeA; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1498,7 +1498,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@a";
 	}
 };
@@ -1511,7 +1511,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeX; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1523,7 +1523,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@x";
 	}
 };
@@ -1536,7 +1536,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeY; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1548,7 +1548,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@y";
 	}
 };
@@ -1561,7 +1561,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeS; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1574,7 +1574,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@s";
 	}
 };
@@ -1587,7 +1587,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeP; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -1599,7 +1599,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@p";
 	}
 };
@@ -1612,7 +1612,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeRead; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mbAccessReadValid)
 			return false;
 
@@ -1620,7 +1620,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@read";
 	}
 };
@@ -1633,7 +1633,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeWrite; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mbAccessWriteValid)
 			return false;
 
@@ -1641,7 +1641,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@write";
 	}
 };
@@ -1654,7 +1654,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeHPOS; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpAntic)
 			return false;
 
@@ -1662,7 +1662,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@hpos";
 	}
 };
@@ -1675,7 +1675,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeVPOS; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpAntic)
 			return false;
 
@@ -1683,7 +1683,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@vpos";
 	}
 };
@@ -1696,7 +1696,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeAddress; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mbAccessValid)
 			return false;
 
@@ -1704,7 +1704,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@address";
 	}
 };
@@ -1717,7 +1717,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeValue; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mbAccessValid)
 			return false;
 
@@ -1725,7 +1725,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@value";
 	}
 };
@@ -1738,7 +1738,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankReg; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpMMU)
 			return false;
 
@@ -1746,7 +1746,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@xbankreg";
 	}
 };
@@ -1759,7 +1759,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankCPU; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpMMU)
 			return false;
 
@@ -1767,7 +1767,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@xbankcpu";
 	}
 };
@@ -1780,7 +1780,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeXBankANTIC; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpMMU)
 			return false;
 
@@ -1788,7 +1788,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@xbankantic";
 	}
 };
@@ -1812,9 +1812,9 @@ public:
 		return result;
 	}
 
-	bool IsAddress() const { return true; }
+	bool IsAddress() const override { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 x;
 
 		if (!mpArg->Evaluate(x, context, cache))
@@ -1824,7 +1824,7 @@ public:
 		return true;
 	}
 
-	void EmitUnaryOp(VDStringA& s) {
+	void EmitUnaryOp(VDStringA& s) override {
 		s += ATAddressGetSpacePrefix(mSpace);
 	}
 
@@ -1855,7 +1855,7 @@ public:
 		return r;
 	}
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		sint32 cond;
 
 		if (!mpArgCond->Evaluate(cond, context, cache))
@@ -1864,10 +1864,10 @@ public:
 		return (cond ? mpArgTrue : mpArgFalse)->Evaluate(result, context, cache);
 	}
 
-	bool Optimize(ATDebugExpNode **result);
+	bool Optimize(ATDebugExpNode **result) override;
 	bool Optimize2(ATDebugExpNode **result);
 
-	bool OptimizeInvert(ATDebugExpNode **result) {
+	bool OptimizeInvert(ATDebugExpNode **result) override {
 		ATDebugExpNode *newArg;
 
 		if (CanOptimizeInvert())
@@ -1883,11 +1883,11 @@ public:
 	}
 
 	// We can always swap around arguments for free.
-	bool CanOptimizeInvert() const {
+	bool CanOptimizeInvert() const override {
 		return mpArgFalse->CanOptimizeInvert() && mpArgTrue->CanOptimizeInvert();
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		if (prec > kNodePrecTernary)
 			s += '(';
 
@@ -2015,7 +2015,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeTemporary(mIndex); }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpTemporaries)
 			return false;
 
@@ -2023,7 +2023,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += '@';
 		s += 't';
 		s += (char)('0' + mIndex);
@@ -2041,7 +2041,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeReturnAddress; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		const ATCPUExecState *state = cache.GetExecState(context);
 		if (!state)
 			return false;
@@ -2077,7 +2077,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@ra";
 	}
 };
@@ -2090,7 +2090,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeFrame; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpAntic)
 			return false;
 
@@ -2098,7 +2098,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@frame";
 	}
 };
@@ -2111,7 +2111,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeClock; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpClockFn)
 			return false;
 
@@ -2119,7 +2119,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@clk";
 	}
 };
@@ -2132,7 +2132,7 @@ public:
 
 	ATDebugExpNode *Clone() const override { return new ATDebugExpNodeCpuClock; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpCpuClockFn)
 			return false;
 
@@ -2140,7 +2140,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@cclk";
 	}
 };
@@ -2155,7 +2155,7 @@ public:
 
 	bool IsAddress() const override { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (context.mpXPCFn) {
 			result = context.mpXPCFn(context.mpXPCFnData);
 		} else {
@@ -2172,7 +2172,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@xpc";
 	}
 };
@@ -2187,7 +2187,7 @@ public:
 
 	bool IsAddress() const override { return true; }
 
-	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const {
+	bool Evaluate(sint32& result, const ATDebugExpEvalContext& context, ATDebugExpEvalCache& cache) const override {
 		if (!context.mpTapePosFn)
 			return false;
 
@@ -2195,7 +2195,7 @@ public:
 		return true;
 	}
 
-	void ToString(VDStringA& s, int prec) {
+	void ToString(VDStringA& s, int prec) override {
 		s += "@tapepos";
 	}
 };

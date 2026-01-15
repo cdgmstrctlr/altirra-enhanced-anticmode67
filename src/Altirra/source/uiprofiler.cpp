@@ -24,6 +24,7 @@ protected:
 
 	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
 
+	bool IsRecordedRegion(ATProfileRegion) const;
 	void RecordRegion(ATProfileRegion region, uint64 t);
 
 	int mX;
@@ -90,6 +91,9 @@ void ATUIProfilerWindow::OnEvent(ATProfileEvent event) {
 }
 
 void ATUIProfilerWindow::BeginRegion(ATProfileRegion region) {
+	if (!IsRecordedRegion(region))
+		return;
+
 	if (mRegionStackHt < vdcountof(mRegionStack)) {
 		if (mRegionStackHt) {
 			uint64 t = VDGetPreciseTick();
@@ -101,7 +105,10 @@ void ATUIProfilerWindow::BeginRegion(ATProfileRegion region) {
 	}
 }
 
-void ATUIProfilerWindow::EndRegion(ATProfileRegion) {
+void ATUIProfilerWindow::EndRegion(ATProfileRegion region) {
+	if (!IsRecordedRegion(region))
+		return;
+
 	if (mRegionStackHt) {
 		uint64 t = VDGetPreciseTick();
 
@@ -141,8 +148,10 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		0xFFFFFF,
 		0x4060E0,
 		0xE02010,
-		0x20E010,
-		0xFFE010,
+		0,			// NativeMessage
+		0,			// DisplayPost
+		0x20E010,	// DisplayTick
+		0xFFE010,	// DisplayPresent
 	};
 
 	VDASSERTCT(vdcountof(kColors) == kATProfileRegionCount);
@@ -170,6 +179,8 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 			L"Idle (frame delay)",
 			L"Simulation",
 			L"Native messages",
+			nullptr,
+			nullptr,
 			L"Display tick",
 			L"Display present",
 		};
@@ -179,16 +190,36 @@ void ATUIProfilerWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) {
 		VDDisplayFontMetrics metrics;
 		mpFont->GetMetrics(metrics);
 
+		int y2 = y;
 		for(size_t i=0; i<vdcountof(kNames); ++i) {
+			if (!IsRecordedRegion((ATProfileRegion)i))
+				continue;
+
 			rdr.SetColorRGB(kColors[i]);
-			rdr.FillRect(4, y + (metrics.mAscent + metrics.mDescent)*(int)i, 40, metrics.mAscent + metrics.mDescent);
+			rdr.FillRect(4, y2, 40, metrics.mAscent + metrics.mDescent);
+
+			y2 += metrics.mAscent + metrics.mDescent;
 		}
 
 		tr.SetColorRGB(0xFFFFFF);
 		for(size_t i=0; i<vdcountof(kNames); ++i) {
+			if (!IsRecordedRegion((ATProfileRegion)i))
+				continue;
+
 			tr.DrawTextLine(x, y, kNames[i]);
 			y += metrics.mAscent + metrics.mDescent;
 		}
+	}
+}
+
+bool ATUIProfilerWindow::IsRecordedRegion(ATProfileRegion region) const {
+	switch(region) {
+		case kATProfileRegion_NativeMessage:
+		case kATProfileRegion_DisplayPost:
+			return false;
+
+		default:
+			return true;
 	}
 }
 

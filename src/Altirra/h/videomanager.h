@@ -21,8 +21,8 @@
 
 class ATVideoManager final : public IATDeviceVideoManager {
 public:
-	void ResetActivityCounters();
-	sint32 CheckForNewlyActiveOutputs();
+	void ResetActivityCounters() override;
+	sint32 CheckForNewlyActiveOutputs() override;
 
 	uint32 GetOutputCount() const override;
 	uint32 GetOutputListChangeCount() const override;

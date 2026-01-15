@@ -62,9 +62,8 @@ void ATDeviceBrowser::InitCIO(IATDeviceCIOManager *mgr) {
 	mgr->AddCIODevice(this);
 }
 
-void ATDeviceBrowser::GetCIODevices(char *buf, size_t len) const {
-	if (len > 0)
-		buf[0] = 'B';
+void ATDeviceBrowser::GetCIODevices(IATDeviceCIODeviceList& deviceList) const {
+	deviceList.AddDevice('B');
 }
 
 sint32 ATDeviceBrowser::OnCIOOpen(int channel, uint8 deviceNo, uint8 aux1, uint8 aux2, const uint8 *filename) {

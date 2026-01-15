@@ -255,6 +255,14 @@ IATSerializable *ATDeserializer::ReadReference(const char *key, const ATSerializ
 	return mInput.ReadObject(key, def, p) ? p : nullptr;
 }
 
+IATSerializable *ATDeserializer::ReadInlineReference(const char *key, const ATSerializationTypeDef *def) {
+	if (mInlineDepth > 100)
+		throw ATSerializationTooComplexException();
+
+	IATSerializable *p = nullptr;
+	return mInput.ReadInlineObject(key, def, mInlineDepth, p) ? p : nullptr;
+}
+
 ///////////////////////////////////////////////////////////////////////////
 
 template<> void ATSerializer::Write<bool	 >(const char *key, bool v) {
@@ -455,4 +463,22 @@ void ATSerializer::WriteReference(const char *key, IATSerializable *p) {
 		mOutput.CreateMember(key);
 
 	mOutput.WriteObject(p);
+}
+
+void ATSerializer::WriteInlineReference(const char *key, IATSerializable *p) {
+	if (!p) {
+		if (key)
+			mOutput.CreateMember(key);
+
+		mOutput.WriteNullInlineObject();
+	} else {
+		mOutput.OpenObject(key);
+
+		mOutput.CreateMember("_type");
+		mOutput.WriteStringA(VDStringSpanA(p->GetSerializationType().mpName));
+
+		p->Serialize(*this);
+
+		mOutput.CloseObject();
+	}
 }

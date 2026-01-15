@@ -292,10 +292,14 @@ void ATMMUEmulator::ShutdownMapping() {
 	mAnticBase = 0;
 }
 
-void ATMMUEmulator::SetROMMappingHook(const vdfunction<void()>& fn) {
-	mpROMMappingChangeFn = fn;
+void ATMMUEmulator::AddROMMappingHook(const vdfunction<void()> *fn) {
+	mROMMappingChangeFns.Add(fn);
 
-	UpdateROMMappingHook();
+	(*fn)();
+}
+
+void ATMMUEmulator::RemoveROMMappingHook(const vdfunction<void()> *fn) {
+	mROMMappingChangeFns.Remove(fn);
 }
 
 void ATMMUEmulator::SetHighMemory(uint32 numBanks, void *mem) {
@@ -502,6 +506,5 @@ bool ATMMUEmulator::OnAxlonWrite(void *thisptr, uint32 addr, uint8 value) {
 }
 
 void ATMMUEmulator::UpdateROMMappingHook() {
-	if (mpROMMappingChangeFn)
-		mpROMMappingChangeFn();
+	mROMMappingChangeFns.InvokeAll();
 }

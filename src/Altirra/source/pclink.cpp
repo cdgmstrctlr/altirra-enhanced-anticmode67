@@ -711,10 +711,8 @@ void ATPCLinkDevice::Shutdown() {
 
 	mpUIRenderer = nullptr;
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATPCLinkDevice::ColdReset() {
@@ -728,7 +726,7 @@ void ATPCLinkDevice::InitIndicators(IATDeviceIndicatorManager *uir) {
 
 void ATPCLinkDevice::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATPCLinkDevice::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -763,16 +761,16 @@ IATDeviceSIO::CmdResponse ATPCLinkDevice::OnSerialBeginCommand(const ATDeviceSIO
 		return kCmdResponse_Fail_NAK;
 	}
 
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 
 	// High-speed via bit 7 uses 38400 baud.
 	// High-speed via HS command frame uses 52Kbaud. Currently we use US Doubler timings.
 	if (cmd.mCommand & 0x80)
-		mpSIOMgr->SetTransferRate(45, 450);
+		mpSIOInterface->SetTransferRate(45, 450);
 	else if (!cmd.mbStandardRate)
-		mpSIOMgr->SetTransferRate(34, 394);
+		mpSIOInterface->SetTransferRate(34, 394);
 
-	mpSIOMgr->SendACK();
+	mpSIOInterface->SendACK();
 
 	BeginCommand(command);
 	return kCmdResponse_Start;
@@ -844,7 +842,7 @@ void ATPCLinkDevice::AbortCommand() {
 		mCommand = kCommandNone;
 		mCommandPhase = 0;
 
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->EndCommand();
 	}
 }
 
@@ -852,17 +850,17 @@ void ATPCLinkDevice::AdvanceCommand() {
 	switch(mCommand) {
 		case kCommandGetHiSpeedIndex:
 			g_ATLCPCLink("Sending high-speed index\n");
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->SendComplete();
 			{
 				uint8 hsindex = 9;
-				mpSIOMgr->SendData(&hsindex, 1, true);
+				mpSIOInterface->SendData(&hsindex, 1, true);
 			}
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->EndCommand();
 			break;
 
 		case kCommandStatus:
 			g_ATLCPCLink("Sending status: Flags=$%02x, Error=%3d, Length=%02x%02x\n", mStatusFlags, mStatusError, mStatusLengthHi, mStatusLengthLo);
-			mpSIOMgr->SendComplete();
+			mpSIOInterface->SendComplete();
 			{
 				const uint8 data[4] = {
 					mStatusFlags,
@@ -871,24 +869,24 @@ void ATPCLinkDevice::AdvanceCommand() {
 					mStatusLengthHi
 				};
 
-				mpSIOMgr->SendData(data, 4, true);
+				mpSIOInterface->SendData(data, 4, true);
 			}
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->EndCommand();
 			break;
 
 		case kCommandPut:
 			mpReceiveFn = [this](const void *src, uint32 len) {
 				memcpy(&mParBuf, src, std::min<uint32>(len, sizeof(mParBuf)));
 			};
-			mpSIOMgr->ReceiveData(0, mCommandAux1 ? mCommandAux1 : 256, true);
+			mpSIOInterface->ReceiveData(0, mCommandAux1 ? mCommandAux1 : 256, true);
 			mpFenceFn = [this]() {
 				if (OnPut())
-					mpSIOMgr->SendComplete();
+					mpSIOInterface->SendComplete();
 				else
-					mpSIOMgr->SendError();
-				mpSIOMgr->EndCommand();
+					mpSIOInterface->SendError();
+				mpSIOInterface->EndCommand();
 			};
-			mpSIOMgr->InsertFence(0);
+			mpSIOInterface->InsertFence(0);
 			break;
 
 		case kCommandRead:
@@ -897,20 +895,20 @@ void ATPCLinkDevice::AdvanceCommand() {
 				mpReceiveFn = [this](const void *src, uint32 len) {
 					memcpy(mTransferBuffer, src, len);
 				};
-				mpSIOMgr->ReceiveData(0, mParBuf.mF[0] + ((uint32)mParBuf.mF[1] << 8), true);
-				mpSIOMgr->InsertFence(0);
+				mpSIOInterface->ReceiveData(0, mParBuf.mF[0] + ((uint32)mParBuf.mF[1] << 8), true);
+				mpSIOInterface->InsertFence(0);
 				mpFenceFn = [this]() {
 					OnRead();
-					mpSIOMgr->EndCommand();
+					mpSIOInterface->EndCommand();
 				};
-				mpSIOMgr->SendComplete();
+				mpSIOInterface->SendComplete();
 			} else {
-				mpSIOMgr->SendComplete();
+				mpSIOInterface->SendComplete();
 				mpFenceFn = [this]() {
 					OnRead();
-					mpSIOMgr->EndCommand();
+					mpSIOInterface->EndCommand();
 				};
-				mpSIOMgr->InsertFence(0);
+				mpSIOInterface->InsertFence(0);
 			}
 
 			break;
@@ -1674,7 +1672,7 @@ bool ATPCLinkDevice::OnRead() {
 					mStatusLengthHi = (uint8)(actual >> 8);
 				}
 
-				mpSIOMgr->SendData(mTransferBuffer, blocklen, true);
+				mpSIOInterface->SendData(mTransferBuffer, blocklen, true);
 			}
 			return true;
 
@@ -1710,7 +1708,7 @@ bool ATPCLinkDevice::OnRead() {
 				mTransferBuffer[2] = (uint8)(len >> 16);
 				mStatusError = kATCIOStat_Success;
 			}
-			mpSIOMgr->SendData(mTransferBuffer, 3, true);
+			mpSIOInterface->SendData(mTransferBuffer, 3, true);
 			return true;
 
 		case 4:		// flen
@@ -1728,7 +1726,7 @@ bool ATPCLinkDevice::OnRead() {
 					mTransferBuffer[2] = (uint8)(len >> 16);
 				}
 			}
-			mpSIOMgr->SendData(mTransferBuffer, 3, true);
+			mpSIOInterface->SendData(mTransferBuffer, 3, true);
 			return true;
 
 		case 5:		// reserved
@@ -1757,7 +1755,7 @@ bool ATPCLinkDevice::OnRead() {
 			}
 
 			mTransferBuffer[0] = mStatusError;
-			mpSIOMgr->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
+			mpSIOInterface->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
 			return true;
 
 		case 7:		// fclose
@@ -1779,7 +1777,7 @@ bool ATPCLinkDevice::OnRead() {
 
 				memcpy(mTransferBuffer + 1, &dirEnt, sizeof(ATPCLinkDirEnt));
 			}
-			mpSIOMgr->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
+			mpSIOInterface->SendData(mTransferBuffer, sizeof(ATPCLinkDirEnt) + 1, true);
 			return true;
 
 		case 11:	// rename
@@ -1795,7 +1793,7 @@ bool ATPCLinkDevice::OnRead() {
 			{
 				memset(mTransferBuffer, 0, 65);
 				strncpy((char *)mTransferBuffer, mCurDir.c_str(), 64);
-				mpSIOMgr->SendData(mTransferBuffer, 64, true);
+				mpSIOInterface->SendData(mTransferBuffer, 64, true);
 			}
 			return true;
 
@@ -1821,7 +1819,7 @@ bool ATPCLinkDevice::OnRead() {
 				memcpy(diskInfo.mVolumeLabel, "PCLink  ", 8);
 
 				memcpy(mTransferBuffer, &diskInfo, 64);
-				mpSIOMgr->SendData(mTransferBuffer, 64, true);
+				mpSIOInterface->SendData(mTransferBuffer, 64, true);
 			}
 			return true;
 

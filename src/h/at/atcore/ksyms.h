@@ -138,7 +138,11 @@ namespace ATKernelSymbols {
 		LPENV  = 0x0235,
 		BRKKY  = 0x0236,
 		VPIRQ  = 0x0238,	// XL/XE
+		DFLAGS = 0x0240,
+		DBSECT = 0x0241,
+		BOOTAD = 0x0242,
 		COLDST = 0x0244,
+		DSKTIM = 0x0246,
 		PDVMSK = 0x0247,	// XL/XE
 		SHPDVS = 0x0248,	// XL/XE
 		PDMSK  = 0x0249,	// XL/XE

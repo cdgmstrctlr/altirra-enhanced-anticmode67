@@ -1518,6 +1518,12 @@ have_carrier:
 hatabs_loop:
 		lda		hatabs,x
 		beq		found_hatabs_slot
+
+		;Testing against a physical 1030 confirms that it will overwrite an
+		;exiting T: handler, whether it's its own or not.
+		cmp		#'T'
+		beq		found_hatabs_slot
+
 		inx
 		inx
 		inx

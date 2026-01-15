@@ -132,12 +132,12 @@ public:
 	ATUIEnumSetting(const wchar_t *name, const ATUIEnumValue *values, uint32 n);
 	ATUIEnumSetting(const wchar_t *name, std::initializer_list<ATUIEnumValue> il);
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	bool IsDeferred() const override;
 
-	void Read();
-	void Write();
+	void Read() override;
+	void Write() override;
 
 	void SetGetter(const vdfunction<sint32()>& fn);
 	void SetSetter(const vdfunction<void(sint32)>& fn);

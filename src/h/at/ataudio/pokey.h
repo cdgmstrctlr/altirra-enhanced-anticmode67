@@ -120,6 +120,7 @@ public:
 	void	Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched, IATAudioOutput *output, ATPokeyTables *tables);
 	void	ColdReset();
 
+	bool	IsStereoEnabled() const;
 	void	SetSlave(ATPokeyEmulator *slave);
 	void	SetCassette(IATPokeyCassetteDevice *dev);
 	void	SetAudioLog(ATPokeyAudioLog *log);
@@ -185,8 +186,21 @@ public:
 
 	void	SetKeyMatrix(const bool matrix[64]);
 
-	void	SetPotPos(unsigned idx, int pos);
-	void	SetPotPosHires(unsigned idx, int pos, bool grounded);
+	static constexpr int kPotHiPosUnconnected = 0x7FFFFFFE;
+	static constexpr int kPotHiPosGrounded = 0x7FFFFFFF;
+
+	// Set a pot input position. This value is a hires position consisting of
+	// the normal pot position shifted left by 16 bits, from 1 << 16 to
+	// 228 << 16. There are two other special values:
+	//
+	//	Unconnected:
+	//		No input connection. Capacitors don't charge or discharge.
+	//
+	//	Grounded:
+	//		Input is being actively pulled down, forcing the capacitors to
+	//		discharge even if fast pot scan mode is enabled.
+	//
+	void	SetPotPosHires(unsigned idx, int hiPos);
 
 	// Get/set immediate pot mode. Immediate pot mode allows the POT0-7 registers
 	// to update within a frame of the last pot scan triggered via POTGO. This
@@ -438,17 +452,34 @@ private:
 	uint8	mKeyScanCode = 0;
 	uint8	mKeyScanLatch = 0;
 
-	uint8	mPotPositions[8] = {};
-	uint8	mPotHiPositions[8] = {};
-	uint16	mPotBasePositions[8] = {};
+	// Hires pot position, as a POTn << 16 value, or one of the special
+	// unconnected or grounded constants.
+	uint32	mPotHiPositions[8] = {};
+
+	// Capacitor charge levels. The pot counter stops updating on the cycle
+	// when the charge level reaches threshold.
+
+	static constexpr uint32 kPotChargeThreshold	= 0x40000000;	// ~2V
+	static constexpr uint32 kPotChargeLimit		= 0x96666666;	// ~4.7V
+	static constexpr uint32 kPotDischargeRate	= 0x03936c71;	// ~2V/10us
+
+	uint32	mPotChargeLevels[8] {};
+
+	// Charge rate/cycle when slow pot scan is active, or at any time during
+	// fast pot scan. Units are charge/cycle.
+	uint32	mPotChargeRates[8] {};
+
+	// POT0-7 registers, after reaching threshold during scan or outside of
+	// scan. Otherwise, these must be updated live.
 	uint8	mPotLatches[8] = {};
+
 	uint8	mPotGroundedMask = 0;			// mask POTn lines that are grounded
 	uint8	mALLPOT = 0;					// architectural ALLPOT register, at last pot update
 	uint8	mPotMasterCounter = 0;
 	uint64	mPotLastScanTime = 0;			// cycle time of last write to POTGO
 	uint32	mPotLastTimeFast = 0;
 	uint32	mPotLastTimeSlow = 0;
-	bool	mbPotScanLastActive = false;	// true if pot scan was active at last update
+	bool	mbPotScanActive = false;	// true if pot scan was active at last update
 
 	bool	mbAllowImmediatePotUpdate = false;
 	bool	mbStereoSoftEnable = true;
@@ -460,6 +491,15 @@ private:
 
 	bool	mTraceDirectionSend = false;
 	uint32	mTraceByteIndex = 0;
+	uint32	mTraceByteSum = 0;
+
+	enum class TraceReceiveState : uint8 {
+		None,
+		Ack,
+		AckCE
+	} mTraceReceiveState = TraceReceiveState::None;
+
+	uint8	mTraceCommandBuffer[5] {};
 
 	bool	mbTraceIrqPending = false;
 	uint64	mTraceIrqStart = 0;

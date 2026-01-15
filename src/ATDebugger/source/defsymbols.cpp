@@ -135,7 +135,11 @@ void ATCreateDefaultVariableSymbolStore(IATSymbolStore **ppStore) {
 		{ LPENV , "LPENV" , 1 },
 		{ BRKKY , "BRKKY" , 2 },
 		{ VPIRQ , "VPIRQ" , 2 },	// XL/XE
+		{ DFLAGS, "DFLAGS", 1 },
+		{ DBSECT, "DBSECT", 1 },
+		{ BOOTAD, "BOOTAD", 2 },
 		{ COLDST, "COLDST", 1 },
+		{ DSKTIM, "DSKTIM", 1 },
 		{ PDVMSK, "PDVMSK", 1 },
 		{ SHPDVS, "SHPDVS", 1 },
 		{ PDMSK , "PDMSK" , 1 },	// XL/XE

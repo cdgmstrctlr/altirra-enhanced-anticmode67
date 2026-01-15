@@ -30,6 +30,11 @@
   </p>
   
   <dl class="scripting-ref">
+    <dt>int get_length();</dt>
+    <dd>
+      Returns the length of the segment, in bytes.
+    </dd>
+    
     <dt>void clear(int value);</dt>
     <dd>
       Clears the entire segment segment with the given byte value.
@@ -981,4 +986,140 @@
     </dd>
   </dl>
 
+  <h3>SoundParam class<span class="req">v0.7+</span></h3>
+  <p>
+    SoundParam objects hold parameters used when playing a sound. Parameters may be set on initialization, or modified
+    on the SoundParam object before playing each sound instance.
+  </p>
+  <dl class="scripting-ref">
+    <dt>
+      looping: <i>int</i>
+    </dt>
+    <dd>
+      Optional; a non-zero value enables looping for the sound.
+    </dd>
+    
+    <dt>
+      pan: <i>int</i>
+    </dt>
+    <dd>
+      Optional; sets the initial panning setting for sound playback. Panning is set from -100 to 100, where -100 is
+      full left, 0 is center, and 100 is full right. The default is 0 (center).
+    </dd>
+
+    <dt>
+      rate: <i>int</i>
+    </dt>
+    <dd>
+      Optional; sets the initial rate setting for sound playback. Rate is set from 10 to 1000, where 10 is 10% playback
+      rate, 100 is normal, and 1000 is 10x faster. The default is 100 (1x rate).
+    </dd>
+
+    <dt>
+      volume: <i>int</i>
+    </dt>
+    <dd>
+      Optional; sets the initial volume setting for sound playback. Volume is set 0 to 100, where 0 is silent and
+      100 is full volume. The volume is set linearly in amplitude, so a value of 50 specifies half amplitude (quarter
+      power).
+    </dd>
+    
+    <dt>void set_looping(int enable);</dt>
+    <dd>
+      Change the looping setting on the sound parameter object to enable looping if the argument is non-zero, or disable
+      looping if it is zero.
+    </dd>
+    <dd>
+      Changes to looping only affect new sound instances played with the parameter object. They do not affect sound
+      instances already started with the same object.
+    </dd>
+
+    <dt>void set_pan(int x, int y);</dt>
+    <dd>
+      Change the panning setting on the sound parameter object to <tt>x</tt> divided by <tt>y</tt>, where a result of
+      -1 is panned hard left, +1 is panned hard right, and 0 is centered.
+    </dd>
+    <dd>
+      Changes to panning only affect new sound instances played with the parameter object. They do not affect sound
+      instances already started with the same object.
+    </dd>
+
+    <dt>void set_rate(int x, int y);</dt>
+    <dd>
+      Change the rate setting on the sound parameter object to <tt>x</tt> divided by <tt>y</tt>, where a result of
+      0.1 is 10% playback rate, 1 is normal, and 10 is 10x playback rate. The result is clamped to [0.1, 10.0].
+    </dd>
+    <dd>
+      Changes to panning only affect new sound instances played with the parameter object. They do not affect sound
+      instances already started with the same object.
+    </dd>
+
+    <dt>void set_volume(int x, int y);</dt>
+    <dd>
+      Change the volume setting on the sound parameter object to <tt>x</tt> divided by <tt>y</tt>, where a result of
+      0 is silent and 1 is full volume. The result is clamped to 0-1.
+    </dd>
+    <dd>
+      Changes to volume only affect new sound instances played with the parameter object. They do not affect sound
+      instances already started with the same object.
+    </dd>
+  </dl>
+
+  <h3>Sound class<span class="req">v0.7+</span></h3>
+  <p>
+    Sound objects hold sound samples that can be used for playback.
+  </p>
+  <dl class="scripting-ref">
+    <dt>
+      source_file: <i>string</i>
+    </dt>
+    <dd>
+      Required; points to the source file providing the sound data. Supported formats include uncompressed WAV,
+    </dd>
+    <dd>
+      Sound data is always mono. If a stereo file is provided, it is down-mixed to mono before use.
+    </dd>
+
+    <dt>void play(SoundParams params);</dt>
+    <dd>
+      Play a new instance of the sound. Any previous instance of the sound is stopped before the new instance is
+      played.
+    </dd>
+    <dd>
+      Parameters are captured from the provided parameter object at the time of the play() call. Changing the
+      parameters on the parameter object will not affect the currently playing sound, only new calls to play()
+      with that object.
+    </dd>
+    
+    <dt>void stop_all();</dt>
+    <dd>
+      Stop all currently playing instances of the sound.
+    </dd>
+  </dl>
+
+  <h3>Emulator class<span class="req">v0.7+</span></h3>
+  <p>
+    Allows control of the emulator from the custom device. This is accessible through the <tt>$emulator</tt> special variable.
+  </p>
+  <p>
+    All of the methods of <tt>Emulator</tt> are marked <tt>unsafe</tt> and cannot be used unless the custom device
+    is compiled with unsafe methods enabled.
+  </p>
+  <dl class="scripting-ref">
+    <dt>unsafe async void run_command(String *cmd);</dt>
+    <dd>
+      Runs the emulator UI command given by the input string. For instance, <tt>"File.Exit"</tt> will attempt to exit
+      the emulator the same way as the Exit command on the menu. The Keyboard Shortcuts dialog has a list of the
+      available UI command names.
+    </dd>
+    <dd>
+      Adding <tt>!</tt> after the command name, such as <tt>"File.Exit!"</tt>, will suppress confirmation prompts for
+      some commands.
+    </dd>
+    <dd>
+      <tt>run_command()</tt> requires an async-capable context, so issuing UI commands from some places like a memory
+      handler will require handing off execution to a separate thread. See the <tt>emulator-control</tt> sample device
+      for an example of how to do this.
+    </dd>
+  </dl>
 </topic>

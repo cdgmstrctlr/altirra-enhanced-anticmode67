@@ -2673,7 +2673,7 @@ ATDeviceXEP80::ATDeviceXEP80() {
 				printer->WriteRaw(&c, 1);
 			else {
 				if (!mpDefaultPrinter)
-					mpDefaultPrinter = GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+					mpDefaultPrinter = GetService<IATPrinterOutputManager>()->CreatePrinterOutput(g_ATDeviceDefXEP80.mpName);
 
 				mpDefaultPrinter->WriteRaw(&c, 1);
 			}

@@ -62,6 +62,7 @@ protected:
 	ATCPUHookManager *mpCPUHookMgr = nullptr;
 	ATSimulatorEventManager *mpSimEventMgr = nullptr;
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	ATSimulator *mpSim = nullptr;
 	ATCPUHookNode *mpLaunchHook = nullptr;
 	ATCPUHookNode *mpLoadContinueHook = nullptr;

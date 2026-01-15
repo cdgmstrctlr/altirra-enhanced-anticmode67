@@ -29,6 +29,7 @@
 #include <at/atcore/audiomixer.h>
 #include <at/atcore/device.h>
 #include <at/atcore/scheduler.h>
+#include <at/atcpu/history.h>
 #include <at/atdebugger/breakpointsimpl.h>
 #include <at/atdebugger/target.h>
 
@@ -294,7 +295,7 @@ public:
 		mpImpl = &impl;
 	}
 
-	std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const {
+	std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const override {
 		return { mpImpl->GetReadMap(), mpImpl->GetWriteMap() };
 	}
 
@@ -424,7 +425,6 @@ private:
 
 	uint32 mLastSync = 0;
 	uint32 mLastSyncDriveTime = 0;
-	uint64 mLastSyncDriveTimeF32 = 0;
 	uint32 mDriveCycleAccumF32 = 0;
 	uint32 mDriveCycleLimit = 0;
 	uint32 mRawTimestampToDriveAdjust = 0;

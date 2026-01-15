@@ -495,7 +495,7 @@ accel_2coeff:
 	punpcklqdq	xmm8, xmm8
 
 	sub			r10d, 1
-	jc			oddpixel_2coeff
+	jbe			oddpixel_2coeff
 pixelloop_2coeff:
 	movq		xmm0, qword ptr [r12+rbx]
 	movq		xmm1, qword ptr [r13+rbx]
@@ -554,7 +554,7 @@ accel_4coeff:
 	punpcklqdq	xmm9, xmm9
 
 	sub			r10d, 1
-	jc			oddpixel_4coeff
+	jbe			oddpixel_4coeff
 pixelloop_4coeff:
 	movq		xmm0, qword ptr [r12+rbx]
 	movq		xmm1, qword ptr [r13+rbx]
@@ -633,7 +633,7 @@ accel_6coeff:
 	punpcklqdq	xmm12, xmm12
 
 	sub			r10d, 1
-	jc			oddpixel_6coeff
+	jbe			oddpixel_6coeff
 pixelloop_6coeff:
 	movq		xmm0, qword ptr [r12+rbx]
 	movq		xmm1, qword ptr [r13+rbx]

@@ -49,7 +49,7 @@ public:
 	ATMyIDEEmulator(bool version2, bool useD5xx);
 	~ATMyIDEEmulator();
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	bool IsUsingD5xx() const { return mbUseD5xx; }
 

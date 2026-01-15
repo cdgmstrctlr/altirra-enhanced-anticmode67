@@ -24,8 +24,14 @@
 //		distribution.
 
 #include <stdafx.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/error.h>
 #include <vd2/system/vdstl.h>
+#include <vd2/system/vdstl_algorithm.h>
+
+static_assert(VDFixedSize<int[10]>);
+static_assert(VDFixedSize<VDCxArray<int, 4>>);
+static_assert(!VDFixedSize<vdspan<int>>);
 
 void VDNORETURN vdallocator_base::throw_oom() {
 	throw MyMemoryError();

@@ -43,6 +43,8 @@ AT_DEFINE_TEST(System_Exception) {
 
 		AT_TEST_ASSERT(!a.empty());
 		AT_TEST_ASSERT(!b.empty());
+		AT_TEST_ASSERT(a.visible());
+		AT_TEST_ASSERT(b.visible());
 		AT_TEST_ASSERT(VDStringSpanA(a.c_str()) == "hello, world!");
 		AT_TEST_ASSERT(VDStringSpanW(a.wc_str()) == L"hello, world!");
 		AT_TEST_ASSERT(VDStringSpanA(b.c_str()) == "hello, world!");
@@ -53,7 +55,10 @@ AT_DEFINE_TEST(System_Exception) {
 		VDException a("hello, world!");
 		VDException b(std::move(a));
 
+		AT_TEST_ASSERT(a.empty());
+		AT_TEST_ASSERT(!a.visible());
 		AT_TEST_ASSERT(!b.empty());
+		AT_TEST_ASSERT(b.visible());
 		AT_TEST_ASSERT(VDStringSpanA(b.c_str()) == "hello, world!");
 		AT_TEST_ASSERT(VDStringSpanW(b.wc_str()) == L"hello, world!");
 	}
@@ -105,23 +110,27 @@ AT_DEFINE_TEST(System_Exception) {
 		VDException ex;
 
 		AT_TEST_ASSERT(ex.empty());
-		AT_TEST_ASSERT(ex.c_str() == nullptr);
-		AT_TEST_ASSERT(ex.wc_str() == nullptr);
-		AT_TEST_ASSERT(ex.what() != nullptr);
+		AT_TEST_ASSERT(!ex.visible());
+		AT_TEST_ASSERT(ex.c_str() != nullptr && !*ex.c_str());
+		AT_TEST_ASSERT(ex.wc_str() != nullptr && !*ex.wc_str());
+		AT_TEST_ASSERT(ex.what() != nullptr && !*ex.what());
 	}
 
 	{
 		VDUserCancelException ex;
 
 		AT_TEST_ASSERT(!ex.empty());
-		AT_TEST_ASSERT(VDStringSpanA(ex.c_str()) == "");
-		AT_TEST_ASSERT(VDStringSpanW(ex.wc_str()) == L"");
+		AT_TEST_ASSERT(!ex.visible());
+		AT_TEST_ASSERT(VDStringSpanA(ex.c_str()) != "");
+		AT_TEST_ASSERT(VDStringSpanW(ex.wc_str()) != L"");
 
 		VDException ex2(std::move(ex));
 		AT_TEST_ASSERT(ex.empty());
+		AT_TEST_ASSERT(!ex.visible());
 		AT_TEST_ASSERT(!ex2.empty());
-		AT_TEST_ASSERT(VDStringSpanA(ex2.c_str()) == "");
-		AT_TEST_ASSERT(VDStringSpanW(ex2.wc_str()) == L"");
+		AT_TEST_ASSERT(!ex2.visible());
+		AT_TEST_ASSERT(VDStringSpanA(ex2.c_str()) != "");
+		AT_TEST_ASSERT(VDStringSpanW(ex2.wc_str()) != L"");
 	}
 
 	try {

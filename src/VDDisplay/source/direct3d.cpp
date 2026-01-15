@@ -294,7 +294,7 @@ public:
 	void RequestVsyncCallback() override;
 
 private:
-	void ThreadRun();
+	void ThreadRun() override;
 
 	bool GetOutput(IDXGIFactory1 *factory, HMONITOR hmon, IDXGIOutput **ppOutput);
 

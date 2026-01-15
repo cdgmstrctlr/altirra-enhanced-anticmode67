@@ -56,7 +56,7 @@
 #include <vd2/VDDisplay/renderer.h>
 #include <vd2/VDDisplay/textrenderer.h>
 #include <vd2/VDDisplay/internal/bloom.h>
-#include <vd2/VDDisplay/internal/customshaderd3d9.h>
+#include <vd2/VDDisplay/internal/customeffectd3d9.h>
 #include <vd2/VDDisplay/internal/screenfx.h>
 
 namespace nsVDDisplay {
@@ -249,8 +249,8 @@ public:
 	VDVideoDisplayDX9Manager(VDThreadID tid, HMONITOR hmonitor, bool use9ex);
 	~VDVideoDisplayDX9Manager();
 
-	int AddRef();
-	int Release();
+	int AddRef() override;
+	int Release() override;
 
 	bool Init();
 	void Shutdown();
@@ -281,8 +281,8 @@ public:
 	bool RunEffect(const EffectContext& ctx, const nsVDDisplay::TechniqueInfo& technique, IDirect3DSurface9 *pRTOverride) override;
 
 public:
-	void OnPreDeviceReset() {}
-	void OnPostDeviceReset() {}
+	void OnPreDeviceReset() override {}
+	void OnPostDeviceReset() override {}
 
 protected:
 	bool BlitFixedFunction2(const EffectContext& ctx, IDirect3DSurface9 *pRTOverride, bool bilinear);
@@ -1390,7 +1390,7 @@ public:
 	VDVideoUploadContextD3D9();
 	~VDVideoUploadContextD3D9();
 
-	IDirect3DTexture9 *GetD3DTexture(int i = 0) {
+	IDirect3DTexture9 *GetD3DTexture(int i = 0) override {
 		return !mpD3DConversionTextures.empty() ? mpD3DConversionTextures[i] : mpD3DImageTextures[i];
 	}
 
@@ -1398,11 +1398,11 @@ public:
 		return !mpD3DConversionTextures.empty() ? mpD3DConversionTextures.data() : mpD3DImageTextures.data();
 	}
 
-	bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, int buffers, bool use16bit);
-	void Shutdown();
+	bool Init(void *hmonitor, bool use9ex, const VDPixmap& source, bool allowConversion, int buffers, bool use16bit) override;
+	void Shutdown() override;
 
 	void SetBufferCount(uint32 buffers);
-	bool Update(const VDPixmap& source);
+	bool Update(const VDPixmap& source) override;
 
 protected:
 	bool Lock(IDirect3DTexture9 *tex, IDirect3DTexture9 *upload, D3DLOCKED_RECT *lr);
@@ -2238,7 +2238,7 @@ protected:
 	void Poll() override;
 	bool Resize(int w, int h) override;
 	bool Invalidate() override;
-	void PresentQueued() { Poll(); }
+	void PresentQueued() override { Poll(); }
 	bool Update(UpdateMode) override;
 	void Refresh(UpdateMode) override;
 	bool Paint(HDC hdc, const RECT& rClient, UpdateMode mode) override;
@@ -2306,9 +2306,24 @@ protected:
 	uint32 mCachedScanlineDstH = 0;
 	float mCachedScanlineOutY = 0;
 	float mCachedScanlineOutH = 0;
-	float mCachedScanlineVScale = 0;
-	float mCachedScanlineVBase = 0;
 	float mCachedScanlineIntensity = 0;
+
+	vdrefptr<IDirect3DTexture9> mpD3DScreenMaskTexture;
+	uint32 mCachedScreenMaskSrcW = 0;
+	uint32 mCachedScreenMaskSrcH = 0;
+	float mCachedScreenMaskDstW = 0;
+	float mCachedScreenMaskDstH = 0;
+	float mCachedScreenMaskOutX = 0;
+	float mCachedScreenMaskOutY = 0;
+	float mCachedScreenMaskOutW = 0;
+	float mCachedScreenMaskOutH = 0;
+	int mScreenMaskTexW = 1;
+	int mScreenMaskTexH = 1;
+	VDDScreenMaskParams mCachedScreenMaskParams {};
+	float mCachedMaskHScale = 0;
+	float mCachedMaskHBase = 0;
+	float mCachedMaskVScale = 0;
+	float mCachedMaskVBase = 0;
 
 	vdrefptr<IDirect3DTexture9> mpD3DGammaRampTexture;
 	float mCachedGamma = 0;
@@ -2381,7 +2396,7 @@ protected:
 	VDStringA		mDebugString;
 	VDStringA		mErrorString;
 
-	vdautoptr<IVDDisplayCustomShaderPipelineD3D9> mpCustomPipeline;
+	vdrefptr<IVDDisplayCustomEffectD3D9> mpCustomPipeline;
 };
 
 IVDVideoDisplayMinidriver *VDCreateVideoDisplayMinidriverDX9(bool clipToMonitor, bool use9ex) {
@@ -2500,7 +2515,7 @@ void VDVideoDisplayMinidriverDX9::LoadCustomEffect(const wchar_t *path) {
 				mpUploadContext->SetBufferCount(1);
 		}
 	} else {
-		mpCustomPipeline.reset();
+		mpCustomPipeline = nullptr;
 
 		if (mpUploadContext)
 			mpUploadContext->SetBufferCount(1);
@@ -2965,6 +2980,7 @@ void VDVideoDisplayMinidriverDX9::ShutdownBoxlinearPS11Filters() {
 void VDVideoDisplayMinidriverDX9::Shutdown() {
 	vdsaferelease <<= mpD3DGammaRampTexture;
 	vdsaferelease <<= mpD3DScanlineMaskTexture;
+	vdsaferelease <<= mpD3DScreenMaskTexture;
 
 	vdsaferelease <<= mpD3DBloomInputRTT, mpD3DBloomConvRTT;
 	
@@ -2976,7 +2992,7 @@ void VDVideoDisplayMinidriverDX9::Shutdown() {
 
 	vdsaferelease <<= mpD3DArtifactingRTT;
 
-	mpCustomPipeline.reset();
+	mpCustomPipeline = nullptr;
 
 	mpUploadContext = NULL;
 
@@ -3084,7 +3100,7 @@ bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *
 		if (!mbBloomSupported)
 			mScreenFXInfo.mbBloomEnabled = false;
 
-		const bool useInputConversion = (mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f);
+		const bool useInputConversion = (mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f) || mScreenFXInfo.mScreenMaskParams.mType != VDDScreenMaskType::None;
 		if (!mpD3DGammaRampTexture
 			|| mCachedGamma != mScreenFXInfo.mGamma
 			|| mCachedOutputGamma != mScreenFXInfo.mOutputGamma
@@ -3114,7 +3130,7 @@ bool VDVideoDisplayMinidriverDX9::SetScreenFX(const VDVideoDisplayScreenFXInfo *
 		}
 	} else {
 		mbUseScreenFX = false;
-		vdsaferelease <<= mpD3DGammaRampTexture, mpD3DScanlineMaskTexture;
+		vdsaferelease <<= mpD3DGammaRampTexture, mpD3DScanlineMaskTexture, mpD3DScreenMaskTexture;
 	}
 
 	if (!mbUseScreenFX || !mScreenFXInfo.mbBloomEnabled) {
@@ -3405,7 +3421,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 			if (mbDestRectEnabled)
 				viewportSize = mDestRect.size();
 
-			mpCustomPipeline->Run(mpUploadContext->GetD3DTextures(), vdsize32(srcWidth, srcHeight), vdsize32(mSource.pixmap.w, mSource.pixmap.h), viewportSize);
+			mpCustomPipeline->Run(mpUploadContext->GetD3DTextures(), vdint2(srcWidth, srcHeight), vdint2(mSource.pixmap.w, mSource.pixmap.h), vdint2(viewportSize.w, viewportSize.h));
 
 			if (mpCustomPipeline->ContainsFinalBlit()) {
 				mpManager->SetSwapChainActive(mpSwapChain);
@@ -3443,7 +3459,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 								dstRect = vdrect32f((float)mDestRect.left, (float)mDestRect.top, (float)mDestRect.right, (float)mDestRect.bottom);
 
 							mpCustomPipeline->RunFinal(
-								dstRect, viewportSize
+								dstRect, vdint2(viewportSize.w, viewportSize.h)
 							);
 
 							bSuccess = true;
@@ -3739,20 +3755,59 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					}
 				}
 
+				const bool scanlinesEnabled = mScreenFXInfo.mScanlineIntensity > 0;
+				const bool maskEnabled = mScreenFXInfo.mScreenMaskParams.mType != VDDScreenMaskType::None;
+				bool maskHorizChanged = false;
+				bool maskVertChanged = false;
+
+				if (scanlinesEnabled || maskEnabled) {
+					if (   mCachedScreenMaskSrcW != ctx.mSourceW
+						|| mCachedScreenMaskDstW != mDrawRect.width()
+						|| mCachedScreenMaskOutX != ctx.mOutputX
+						|| mCachedScreenMaskOutW != ctx.mOutputW)
+					{
+						maskHorizChanged = true;
+
+						mCachedScreenMaskSrcW = ctx.mSourceW;
+						mCachedScreenMaskDstW = mDrawRect.width();
+						mCachedScreenMaskOutX = ctx.mOutputX;
+						mCachedScreenMaskOutW = ctx.mOutputW;
+					}
+
+					if (   mCachedScreenMaskSrcH != ctx.mSourceH
+						|| mCachedScreenMaskDstH != mDrawRect.height()
+						|| mCachedScreenMaskOutY != ctx.mOutputY
+						|| mCachedScreenMaskOutH != ctx.mOutputH)
+					{
+						maskVertChanged = true;
+
+						mCachedScreenMaskSrcH = ctx.mSourceH;
+						mCachedScreenMaskDstH = mDrawRect.height();
+						mCachedScreenMaskOutY = ctx.mOutputY;
+						mCachedScreenMaskOutH = ctx.mOutputH;
+					}
+
+					if (maskHorizChanged || maskVertChanged) {
+						mScreenMaskTexW = mDrawRect.width();
+						mScreenMaskTexH = mDrawRect.height();
+
+						mpManager->AdjustTextureSize(mScreenMaskTexW, mScreenMaskTexH, true);
+
+						mCachedMaskHScale = (float)ctx.mOutputW / (float)mScreenMaskTexW;
+						mCachedMaskHBase = ctx.mOutputX / (float)mScreenMaskTexW;
+						mCachedMaskVScale = (float)ctx.mOutputH / (float)mScreenMaskTexH;
+						mCachedMaskVBase = ctx.mOutputY / (float)mScreenMaskTexH;
+					}
+				}
+
 				// rebuild the scanline texture if necessary
-				if (mScreenFXInfo.mScanlineIntensity > 0 && (!mpD3DScanlineMaskTexture
-					|| mCachedScanlineSrcH != ctx.mSourceH
-					|| mCachedScanlineDstH != mDrawRect.height()
-					|| mCachedScanlineOutY != ctx.mOutputY
-					|| mCachedScanlineOutH != ctx.mOutputH
+				if (scanlinesEnabled && (!mpD3DScanlineMaskTexture
+					|| maskVertChanged
 					|| mCachedScanlineIntensity != mScreenFXInfo.mScanlineIntensity))
 				{
 					vdsaferelease <<= mpD3DScanlineMaskTexture;
 
-					int texw = 1;
-					int texh = mDrawRect.height();
-
-					mpManager->AdjustTextureSize(texw, texh, true);
+					const int texh = mScreenMaskTexH;
 
 					vdrefptr<IVDD3D9InitTexture> initTex;
 					if (mpManager->CreateInitTexture(1, texh, 1, D3DFMT_A8R8G8B8, ~initTex)) {
@@ -3765,12 +3820,6 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 							if (mpManager->CreateTexture(initTex, ~tex)) {
 								mpD3DScanlineMaskTexture = tex->GetD3DTexture();
 
-								mCachedScanlineSrcH = ctx.mSourceH;
-								mCachedScanlineDstH = mDrawRect.height();
-								mCachedScanlineOutY = ctx.mOutputY;
-								mCachedScanlineOutH = ctx.mOutputH;
-								mCachedScanlineVScale = (float)ctx.mOutputH / (float)texh;
-								mCachedScanlineVBase = ctx.mOutputY / (float)texh;
 								mCachedScanlineIntensity = mScreenFXInfo.mScanlineIntensity;
 							} else {
 								bSuccess = false;
@@ -3783,29 +3832,115 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					}
 				}
 
-				static constexpr const TechniqueInfo *kTechniques[2][2][3] = {
+				// rebuild the screen mask texture if necessary
+				if (maskEnabled) {
+					if (!mpD3DScreenMaskTexture
+						|| maskHorizChanged
+						|| maskVertChanged
+						|| mCachedScreenMaskParams != mScreenFXInfo.mScreenMaskParams)
+					{
+						int maskw = mDrawRect.width();
+						int maskh = mDrawRect.height();
+
+						int texw = mScreenMaskTexW;
+						int texh = mScreenMaskTexH;
+
+						if (mScreenFXInfo.mScreenMaskParams.mType == VDDScreenMaskType::ApertureGrille) {
+							maskh = 1;
+							texh = 1;
+						}
+
+						vdblock<uint32> imageDotMask;
+						imageDotMask.resize(texw * texh, 0xFFFFFFFF);
+
+						if (mScreenFXInfo.mScreenMaskParams.mType == VDDScreenMaskType::DotTriad) {
+							VDDisplayTriadDotMaskParams dotMaskParams(mScreenFXInfo.mScreenMaskParams, ctx.mOutputW, (float)ctx.mSourceW);
+
+							VDDisplayCreateTriadDotMaskTexture(
+								imageDotMask.data(),
+								sizeof(imageDotMask[0]) * texw,
+								maskw,
+								maskh,
+								ctx.mOutputX,
+								-ctx.mOutputY,
+								ctx.mOutputW,
+								ctx.mOutputH,
+								dotMaskParams);
+						} else if (mScreenFXInfo.mScreenMaskParams.mType == VDDScreenMaskType::SlotMask) {
+							VDDisplaySlotMaskParams slotParams(mScreenFXInfo.mScreenMaskParams, ctx.mOutputW, (float)ctx.mSourceW);
+
+							VDDisplayCreateSlotMaskTexture(
+								imageDotMask.data(),
+								sizeof(imageDotMask[0]) * texw,
+								maskw,
+								maskh,
+								ctx.mOutputX,
+								-ctx.mOutputY,
+								ctx.mOutputW,
+								ctx.mOutputH,
+								slotParams);
+						} else {
+							VDDisplayApertureGrilleParams dotMaskParams(mScreenFXInfo.mScreenMaskParams, ctx.mOutputW, (float)ctx.mSourceW);
+
+							VDDisplayCreateApertureGrilleTexture(imageDotMask.data(), maskw, ctx.mOutputX, dotMaskParams);
+						}
+
+						vdrefptr<IVDD3D9InitTexture> initTex;
+						if (mpManager->CreateInitTexture(texw, texh, 1, D3DFMT_A8R8G8B8, ~initTex)) {
+							VDD3D9LockInfo lockInfo;
+
+							if (initTex->Lock(0, lockInfo)) {
+								VDMemcpyRect(lockInfo.mpData, lockInfo.mPitch, imageDotMask.data(), texw * sizeof(imageDotMask[0]), texw * sizeof(imageDotMask[0]), texh);
+								initTex->Unlock(0);
+
+								vdrefptr<IVDD3D9Texture> tex;
+								if (mpManager->CreateTexture(initTex, ~tex)) {
+									mpD3DScreenMaskTexture = tex->GetD3DTexture();
+
+									mCachedScreenMaskParams = mScreenFXInfo.mScreenMaskParams;
+								} else {
+									bSuccess = false;
+								}
+							} else {
+								bSuccess = false;
+							}
+						} else {
+							bSuccess = false;
+						}						
+					} else {
+						bSuccess = false;
+					}
+				} else {
+					vdsaferelease <<= mpD3DScreenMaskTexture;
+				}
+
+				static constexpr const TechniqueInfo *kTechniques[2][2][4] = {
 					{
 						{
 							&g_technique_screenfx_ptlinear_noscanlines_linear,
 							&g_technique_screenfx_ptlinear_noscanlines_gamma,
-							&g_technique_screenfx_ptlinear_noscanlines_cc
+							&g_technique_screenfx_ptlinear_noscanlines_cc,
+							&g_technique_screenfx_ptlinear_noscanlines_mask_cc
 						},
 						{
 							&g_technique_screenfx_ptlinear_scanlines_linear,
 							&g_technique_screenfx_ptlinear_scanlines_gamma,
-							&g_technique_screenfx_ptlinear_scanlines_cc
+							&g_technique_screenfx_ptlinear_scanlines_cc,
+							&g_technique_screenfx_ptlinear_scanlines_mask_cc
 						},
 					},
 					{
 						{
 							&g_technique_screenfx_sharp_noscanlines_linear,
 							&g_technique_screenfx_sharp_noscanlines_gamma,
-							&g_technique_screenfx_sharp_noscanlines_cc
+							&g_technique_screenfx_sharp_noscanlines_cc,
+							&g_technique_screenfx_sharp_noscanlines_mask_cc
 						},
 						{
 							&g_technique_screenfx_sharp_scanlines_linear,
 							&g_technique_screenfx_sharp_scanlines_gamma,
-							&g_technique_screenfx_sharp_scanlines_cc
+							&g_technique_screenfx_sharp_scanlines_cc,
+							&g_technique_screenfx_sharp_scanlines_mask_cc
 						},
 					},
 				};
@@ -3813,6 +3948,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				const bool useDistortion = mScreenFXInfo.mDistortionX > 0;
 				const bool useSharpBilinear = mPixelSharpnessX > 1 || mPixelSharpnessY > 1;
 				const bool useScanlines = mScreenFXInfo.mScanlineIntensity > 0.0f;
+				const bool useScreenMask = mScreenFXInfo.mScreenMaskParams.mType != VDDScreenMaskType::None;
 				const bool useGammaCorrection = mScreenFXInfo.mGamma != 1.0f;
 				const bool useColorCorrection = mScreenFXInfo.mColorCorrectionMatrix[0][0] != 0.0f;
 
@@ -3823,8 +3959,10 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					float mImageUVSize[4];
 				} vsConstants {};
 
-				vsConstants.mScanlineInfo[0] = mCachedScanlineVScale;
-				vsConstants.mScanlineInfo[1] = mCachedScanlineVBase;
+				vsConstants.mScanlineInfo[0] = mCachedMaskHScale;
+				vsConstants.mScanlineInfo[1] = mCachedMaskVScale;
+				vsConstants.mScanlineInfo[2] = mCachedMaskVBase;
+				vsConstants.mScanlineInfo[3] = mCachedMaskHBase;
 				vsConstants.mDistortionInfo[0] = 1.0f;
 				vsConstants.mDistortionInfo[1] = useDistortion ? -0.5f : 0.0f;
 
@@ -3868,18 +4006,40 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				psConstants.mImageUVSize[0] = useSharpBilinear ? (float)ctx.mSourceW : (float)ctx.mSourceW / (float)ctx.mSourceTexW;
 				psConstants.mImageUVSize[1] = useSharpBilinear ? (float)ctx.mSourceH : (float)ctx.mSourceH / (float)ctx.mSourceTexH;
 				psConstants.mImageUVSize[2] = useScanlines ? useSharpBilinear ? 0.25f : 0.25f / (float)ctx.mSourceTexH : 0.0f;
-				psConstants.mImageUVSize[3] = mCachedScanlineVScale;
+				psConstants.mImageUVSize[3] = mCachedMaskVScale;
 				
-				// need to transpose matrix to column major storage
-				psConstants.mColorCorrectMatrix[0][0] = mScreenFXInfo.mColorCorrectionMatrix[0][0];
-				psConstants.mColorCorrectMatrix[0][1] = mScreenFXInfo.mColorCorrectionMatrix[1][0];
-				psConstants.mColorCorrectMatrix[0][2] = mScreenFXInfo.mColorCorrectionMatrix[2][0];
-				psConstants.mColorCorrectMatrix[1][0] = mScreenFXInfo.mColorCorrectionMatrix[0][1];
-				psConstants.mColorCorrectMatrix[1][1] = mScreenFXInfo.mColorCorrectionMatrix[1][1];
-				psConstants.mColorCorrectMatrix[1][2] = mScreenFXInfo.mColorCorrectionMatrix[2][1];
-				psConstants.mColorCorrectMatrix[2][0] = mScreenFXInfo.mColorCorrectionMatrix[0][2];
-				psConstants.mColorCorrectMatrix[2][1] = mScreenFXInfo.mColorCorrectionMatrix[1][2];
-				psConstants.mColorCorrectMatrix[2][2] = mScreenFXInfo.mColorCorrectionMatrix[2][2];
+				// need to transpose matrix to column major storage, and force an identity matrix if
+				// color correction wasn't requested but is being forced on by masking
+				if (!useColorCorrection) {
+					psConstants.mColorCorrectMatrix[0][0] = 1.0f;
+					psConstants.mColorCorrectMatrix[0][1] = 0.0f;
+					psConstants.mColorCorrectMatrix[0][2] = 0.0f;
+					psConstants.mColorCorrectMatrix[1][0] = 0.0f;
+					psConstants.mColorCorrectMatrix[1][1] = 1.0f;
+					psConstants.mColorCorrectMatrix[1][2] = 0.0f;
+					psConstants.mColorCorrectMatrix[2][0] = 0.0f;
+					psConstants.mColorCorrectMatrix[2][1] = 0.0f;
+					psConstants.mColorCorrectMatrix[2][2] = 1.0f;
+				} else {
+					psConstants.mColorCorrectMatrix[0][0] = mScreenFXInfo.mColorCorrectionMatrix[0][0];
+					psConstants.mColorCorrectMatrix[0][1] = mScreenFXInfo.mColorCorrectionMatrix[1][0];
+					psConstants.mColorCorrectMatrix[0][2] = mScreenFXInfo.mColorCorrectionMatrix[2][0];
+					psConstants.mColorCorrectMatrix[1][0] = mScreenFXInfo.mColorCorrectionMatrix[0][1];
+					psConstants.mColorCorrectMatrix[1][1] = mScreenFXInfo.mColorCorrectionMatrix[1][1];
+					psConstants.mColorCorrectMatrix[1][2] = mScreenFXInfo.mColorCorrectionMatrix[2][1];
+					psConstants.mColorCorrectMatrix[2][0] = mScreenFXInfo.mColorCorrectionMatrix[0][2];
+					psConstants.mColorCorrectMatrix[2][1] = mScreenFXInfo.mColorCorrectionMatrix[1][2];
+					psConstants.mColorCorrectMatrix[2][2] = mScreenFXInfo.mColorCorrectionMatrix[2][2];
+				}
+
+				if (useScreenMask && mScreenFXInfo.mScreenMaskParams.mbScreenMaskIntensityCompensation) {
+					const float scale = 1.0f / mScreenFXInfo.mScreenMaskParams.GetMaskIntensityScale();
+
+					for(int i=0; i<3; ++i) {
+						for(int j=0; j<3; ++j)
+							psConstants.mColorCorrectMatrix[i][j] *= scale;
+					}
+				}
 
 				psConstants.mColorCorrectMatrix[0][3] = 0.0f;
 				psConstants.mColorCorrectMatrix[1][3] = 1.0f;
@@ -3890,6 +4050,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 				ctx.mbAutoBilinear = (mPreferredFilter != kFilterPoint);
 				ctx.mpSourceTexture2 = mpD3DGammaRampTexture;
 				ctx.mpSourceTexture3 = mpD3DScanlineMaskTexture;
+				ctx.mpSourceTexture4 = mpD3DScreenMaskTexture;
 
 				if (useScanlines) 
 					ctx.mSourceArea.translate(0.0f, 0.25f);
@@ -3899,7 +4060,7 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 					ctx.mUV0Scale = vdfloat2{(float)ctx.mSourceTexW, (float)ctx.mSourceTexH};
 				}
 
-				const TechniqueInfo& technique = *kTechniques[useSharpBilinear][useScanlines][useColorCorrection ? 2 : useGammaCorrection ? 1 : 0];
+				const TechniqueInfo& technique = *kTechniques[useSharpBilinear][useScanlines][useScreenMask ? 3 : useColorCorrection ? 2 : useGammaCorrection ? 1 : 0];
 
 				if (useDistortion) {
 					ctx.mbOutputClear = true;
@@ -4157,6 +4318,8 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 							vdfloat4 mBlendFactors;
 							vdfloat4 mShoulderCurve;
 							vdfloat4 mThresholds;
+							vdfloat4 mBaseUVStep;
+							vdfloat4 mBaseWeights;
 						} psFinalConstants {};
 
 						psFinalConstants.mUVStep = vdfloat4 {
@@ -4170,6 +4333,15 @@ bool VDVideoDisplayMinidriverDX9::UpdateBackbuffer(const RECT& rClient0, UpdateM
 						psFinalConstants.mBlendFactors.y = bloomRenderParams.mPassBlendFactors[5].y;
 						psFinalConstants.mShoulderCurve = bloomRenderParams.mShoulder;
 						psFinalConstants.mThresholds = bloomRenderParams.mThresholds;
+
+						psFinalConstants.mBaseUVStep = vdfloat4 {
+							bloomRenderParams.mBaseUVStepScale / (float)mBloomInputTexSize.w,
+							bloomRenderParams.mBaseUVStepScale / (float)mBloomInputTexSize.h,
+							0.0f,
+							0.0f
+						};
+
+						psFinalConstants.mBaseWeights = bloomRenderParams.mBaseWeights;
 
 						mpD3DDevice->SetPixelShaderConstantF(16, (const float *)&psFinalConstants, sizeof(psFinalConstants)/16);
 
@@ -4492,23 +4664,29 @@ void VDVideoDisplayMinidriverDX9::DrawDebugInfo(FilterMode mode, const RECT& rCl
 	}
 
 	if (mpCustomPipeline && mpCustomPipeline->HasTimingInfo()) {
-		uint32 numTimings = 0;
-		const auto *passInfos = mpCustomPipeline->GetPassTimings(numTimings);
+		const auto passInfos = mpCustomPipeline->GetPassTimings();
 
-		if (passInfos) {
+		if (!passInfos.empty()) {
 			r->SetColorRGB(0xFFFF00);
 
+			const uint32 numTimings = (uint32)passInfos.size();
 			for(uint32 i=0; i<numTimings; ++i) {
 				if (i + 1 == numTimings)
 					mDebugString.sprintf("Total: %7.2fms %ux%u", passInfos[i].mTiming * 1000.0f, mbDestRectEnabled ? mDestRect.width() : rClient.right, mbDestRectEnabled ? mDestRect.height() : rClient.bottom);
-				else
-					mDebugString.sprintf("Pass #%-2u: %7.2fms %ux%u%s"
+				else {
+					const auto& passInfo = passInfos[i];
+
+					mDebugString.sprintf("Pass #%-2u: %7.2fms %ux%u %s%s%s%s"
 						, i + 1
-						, passInfos[i].mTiming * 1000.0f
-						, passInfos[i].mOutputWidth
-						, passInfos[i].mOutputHeight
-						, passInfos[i].mbOutputFloat ? passInfos[i].mbOutputHalfFloat ? " half" : " float" : ""
+						, passInfo.mTiming * 1000.0f
+						, passInfo.mOutputWidth
+						, passInfo.mOutputHeight
+						, passInfo.mbOutputLinear ? "linear" : "point"
+						, passInfo.mbOutputFloat ? passInfos[i].mbOutputHalfFloat ? " half" : " float" : ""
+						, passInfo.mbOutputSrgb ? " sRGB" : ""
+						, passInfo.mbCached ? " cached" : ""
 					);
+				}
 
 				r->DrawTextLine(10, 10 + 14*i, VDTextAToW(mDebugString).c_str());
 			}

@@ -14,6 +14,7 @@
 #include <vd2/system/int128.h>
 #include <vd2/system/math.h>
 #include <vd2/system/vdalloc.h>
+#include <vd2/system/zip.h>
 #include <vd2/Kasumi/blitter.h>
 #include <vd2/Kasumi/pixmapops.h>
 #include <vd2/Kasumi/pixmaputils.h>
@@ -53,6 +54,8 @@ public:
 
 	virtual uint32 GetEncodedLength() const = 0;
 	virtual const void *GetEncodedData() const = 0;
+
+	virtual bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) { return false; }
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -401,1037 +404,15 @@ void ATVideoEncoderRLE::CompressInter8(bool encodeAll) {
 	mEncodedLength = (uint32)(dst - dst0);
 }
 
-///////////////////////////////////////////////////////////////////////////////
-
-namespace {
-	const unsigned len_tbl[32]={
-		3,4,5,6,7,8,9,10,
-		11,13,15,17,19,23,27,31,
-		35,43,51,59,67,83,99,115,
-		131,163,195,227,258,259
-	};
-
-	const unsigned char len_bits_tbl[32]={
-		0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0
-	};
-
-	const unsigned char dist_bits_tbl[]={
-		0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13
-	};
-
-	const unsigned dist_tbl[]={
-		1,2,3,4,5,7,9,13,
-		17,25,33,49,65,97,129,193,
-		257,385,513,769,1025,1537,2049,3073,
-		4097,6145,8193,12289,16385,24577,
-		32769
-	};
-
-	const unsigned char hclen_tbl[]={
-		16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15
-	};
-
-	struct VDHuffmanHistoSorterData {
-		VDHuffmanHistoSorterData(const int pHisto[288]) {
-			for(int i=0; i<288; ++i) {
-				mHisto[i] = (pHisto[i] << 9) + 287 - i;
-			}
-		}
-
-		int mHisto[288];
-	};
-
-	struct VDHuffmanHistoSorter {
-		VDHuffmanHistoSorter(const VDHuffmanHistoSorterData& data) : mpHisto(data.mHisto) {}
-
-		// We want to sort by descending probability first, then by ascending code point.
-		bool operator()(int f1, int f2) const {
-			return mpHisto[f1] > mpHisto[f2];
-		}
-
-		const int *mpHisto;
-	};
-
-	class VDZMBVHuffmanTable {
-	public:
-		VDZMBVHuffmanTable();
-
-		void Init();
-
-		inline void Tally(int c) {
-			++mHistogram[c];
-		}
-
-		inline void Tally(int c, int count) {
-			mHistogram[c] += count;
-		}
-
-		void BuildCode(int depth_limit = 15);
-		void BuildEncodingTable(uint16 *p, int *l, int limit);
-		void BuildStaticLengthEncodingTable(uint16 *p, int *l);
-		void BuildStaticDistanceEncodingTable(uint16 *p, int *l);
-
-		uint32 GetCodeCount(int limit) const;
-		uint32 GetOutputSize() const;
-		uint32 GetStaticOutputSize() const;
-
-		const uint16 *GetDHTSegment() { return mDHT; }
-		int GetDHTSegmentLen() const { return mDHTLength; }
-
-	private:
-		int mHistogram[288];
-		int mHistogram2[288];
-		uint16 mDHT[288+16];
-		int mDHTLength;
-	};
-
-	VDZMBVHuffmanTable::VDZMBVHuffmanTable() {
-		Init();
-	}
-
-	void VDZMBVHuffmanTable::Init() {
-		std::fill(mHistogram, mHistogram+288, 0);
-	}
-
-	void VDZMBVHuffmanTable::BuildCode(int depth_limit) {
-		int i;
-		int nonzero_codes = 0;
-
-		for(i=0; i<288; ++i) {
-			mDHT[i+16] = i;
-			if (mHistogram[i])
-				++nonzero_codes;
-			mHistogram2[i] = mHistogram[i];
-		}
-
-		// Codes are stored in the second half of the DHT segment in decreasing
-		// order of frequency.
-
-		std::sort(&mDHT[16], &mDHT[16+288], VDHuffmanHistoSorter(VDHuffmanHistoSorterData(mHistogram)));
-		mDHTLength = 16 + nonzero_codes;
-
-		// Sort histogram in increasing order.
-
-		std::sort(mHistogram, mHistogram+288);
-
-		int *A = mHistogram+288 - nonzero_codes;
-
-		// Begin merging process (from "In-place calculation of minimum redundancy codes" by A. Moffat and J. Katajainen)
-		//
-		// There are three merging possibilities:
-		//
-		// 1) Leaf node with leaf node.
-		// 2) Leaf node with internal node.
-		// 3) Internal node with internal node.
-
-		int leaf = 2;					// Next, smallest unattached leaf node.
-		int internal = 0;				// Next, smallest unattached internal node.
-
-		// Merging always creates one internal node and eliminates one node from
-		// the total, so we will always be doing N-1 merges.
-
-		A[0] += A[1];		// First merge is always two leaf nodes.
-		for(int next=1; next<nonzero_codes-1; ++next) {		// 'next' is the value that receives the next unattached internal node.
-			int a, b;
-
-			// Pick first node.
-			if (leaf < nonzero_codes && A[leaf] <= A[internal]) {
-				A[next] = a=A[leaf++];			// begin new internal node with P of smallest leaf node
-			} else {
-				A[next] = a=A[internal];		// begin new internal node with P of smallest internal node
-				A[internal++] = next;					// hook smallest internal node as child of new node
-			}
-
-			// Pick second node.
-			if (internal >= next || (leaf < nonzero_codes && A[leaf] <= A[internal])) {
-				A[next] += b=A[leaf++];			// complete new internal node with P of smallest leaf node
-			} else {
-				A[next] += b=A[internal];		// complete new internal node with P of smallest internal node
-				A[internal++] = next;					// hook smallest internal node as child of new node
-			}
-		}
-
-		// At this point, we have a binary tree composed entirely of pointers to
-		// parents, partially sorted such that children are always before their
-		// parents in the array.  Traverse the array backwards, replacing each
-		// node with its depth in the tree.
-
-		A[nonzero_codes-2] = 0;		// root has height 0 (0 bits)
-		for(i = nonzero_codes-3; i>=0; --i)
-			A[i] = A[A[i]]+1;		// child height is 1+height(parent).
-
-		// Compute canonical tree bit depths for first part of DHT segment.
-		// For each internal node at depth N, add two counts at depth N+1
-		// and subtract one count at depth N.  Essentially, we are splitting
-		// as we go.  We traverse backwards to ensure that no counts will drop
-		// below zero at any time.
-
-		std::fill(mDHT, mDHT+16, 0);
-
-		int overallocation = 0;
-
-		mDHT[0] = 2;		// 2 codes at depth 1 (1 bit)
-		for(i = nonzero_codes-3; i>=0; --i) {
-			int depth = A[i];
-
-			// The optimal Huffman tree for N nodes can have a depth of N-1,
-			// but we have to constrain ourselves at depth 15.  We simply
-			// pile up counts at depth 15.  This causes us to overallocate the
-			// codespace, but we will compensate for that later.
-
-			if (depth >= depth_limit) {
-				++mDHT[depth_limit-1];
-			} else {
-				--mDHT[depth-1];
-				++mDHT[depth];
-				++mDHT[depth];
-			}
-		}
-
-		// Remove the extra code point.
-		for(i=15; i>=0; --i) {
-			if (mDHT[i])
-				overallocation += mDHT[i] * (0x8000 >> i);
-		}
-		overallocation -= 0x10000;
-
-		// We may have overallocated the codespace if we were forced to shorten
-		// some codewords.
-
-		if (overallocation > 0) {
-			// Codespace is overallocated.  Begin lengthening codes from bit depth
-			// 15 down until we are under the limit.
-
-			i = depth_limit-2;
-			while(overallocation > 0) {
-				if (mDHT[i]) {
-					--mDHT[i];
-					++mDHT[i+1];
-					overallocation -= 0x4000 >> i;
-					if (i < depth_limit-2)
-						++i;
-				} else
-					--i;
-			}
-
-			// We may be undercommitted at this point.  Raise codes from bit depth
-			// 1 up until we are at the desired limit.
-
-			int underallocation = -overallocation;
-
-			i = 1;
-			while(underallocation > 0) {
-				if (mDHT[i] && (0x8000>>i) <= underallocation) {
-					underallocation -= (0x8000>>i);
-					--mDHT[i];
-					--i;
-					++mDHT[i];
-				} else {
-					++i;
-				}
-			}
-		}
-	}
-
-	uint32 VDZMBVHuffmanTable::GetOutputSize() const {
-		const uint16 *pCodes = mDHT+16;
-
-		uint32 size = 0;
-
-		for(int len=0; len<16; ++len) {
-			int count = mDHT[len];
-
-			uint32 points = 0;
-			while(count--) {
-				int code = *pCodes++;
-
-				points += mHistogram2[code];
-			}
-
-			size += points * (len + 1);
-		}
-
-		return size;
-	}
-
-	uint32 VDZMBVHuffmanTable::GetCodeCount(int limit) const {
-		return std::accumulate(mHistogram2, mHistogram2+limit, 0);
-	}
-
-	uint32 VDZMBVHuffmanTable::GetStaticOutputSize() const {
-		uint32 sum7 = 0;
-		uint32 sum8 = 0;
-		uint32 sum9 = 0;
-		sum8 = std::accumulate(mHistogram2+  0, mHistogram2+144, sum8);
-		sum9 = std::accumulate(mHistogram2+144, mHistogram2+256, sum9);
-		sum7 = std::accumulate(mHistogram2+256, mHistogram2+280, sum7);
-		sum8 = std::accumulate(mHistogram2+280, mHistogram2+288, sum8);
-
-		return 7*sum7 + 8*sum8 + 9*sum9;
-	}
-
-	static unsigned revword15(unsigned x) {
-		unsigned y = 0;
-		for(int i=0; i<15; ++i) {
-			y = y + y + (x&1);
-			x >>= 1;
-		}
-		return y;
-	}
-
-	void VDZMBVHuffmanTable::BuildEncodingTable(uint16 *p, int *l, int limit) {
-		const uint16 *pCodes = mDHT+16;
-
-		uint16 total = 0;
-		uint16 inc = 0x4000;
-
-		for(int len=0; len<16; ++len) {
-			int count = mDHT[len];
-
-			while(count--) {
-				int code = *pCodes++;
-
-				l[code] = len+1;
-			}
-
-			for(int k=0; k<limit; ++k) {
-				if (l[k] == len+1) {
-					p[k] = revword15(total) << (16 - (len+1));
-					total += inc;
-				}
-			}
-			inc >>= 1;
-		}
-	}
-
-	void VDZMBVHuffmanTable::BuildStaticLengthEncodingTable(uint16 *p, int *l) {
-		memset(mDHT, 0, sizeof(mDHT[0])*16);
-		mDHT[6] = 24;
-		mDHT[7] = 152;
-		mDHT[8] = 112;
-
-		uint16 *dst = mDHT + 16;
-		for(int i=256; i<280; ++i)
-			*dst++ = i;
-		for(int i=0; i<144; ++i)
-			*dst++ = i;
-		for(int i=280; i<288; ++i)
-			*dst++ = i;
-		for(int i=144; i<256; ++i)
-			*dst++ = i;
-
-		BuildEncodingTable(p, l, 288);
-	}
-
-	void VDZMBVHuffmanTable::BuildStaticDistanceEncodingTable(uint16 *p, int *l) {
-		memset(mDHT, 0, sizeof(mDHT[0])*16);
-		mDHT[4] = 32;
-
-		for(int i=0; i<32; ++i)
-			mDHT[i+16] = i;
-
-		BuildEncodingTable(p, l, 32);
-	}
-
-	class VDZMBVDeflateEncoder {
-	public:
-		VDZMBVDeflateEncoder();
-		VDZMBVDeflateEncoder(const VDZMBVDeflateEncoder&);
-		~VDZMBVDeflateEncoder();
-
-		VDZMBVDeflateEncoder& operator=(const VDZMBVDeflateEncoder&);
-
-		void Init(bool quick);
-		void Write(const void *src, size_t len);
-		void ForceNewBlock();
-		void Finish();
-
-		void SyncBegin();
-		void SyncEnd();
-
-		uint32 EstimateOutputSize();
-
-		vdfastvector<uint8>& GetOutput() { return mOutput; }
-
-	protected:
-		void EndBlock(bool term);
-		void Compress(bool flush);
-		void VDFORCEINLINE PutBits(uint32 encoding, int enclen);
-		void FlushBits();
-		uint32 Flush(int n, int ndists, bool term, bool test);
-
-		uint32	mAccum;
-		int		mAccBits;
-		uint32	mHistoryPos;
-		uint32	mHistoryTail;
-		uint32	mHistoryBase;
-		uint32	mHistoryBlockStart;
-		uint32	mLenExtraBits;
-		uint32	mPendingLen;
-		uint8	*mpLen;
-		uint16	*mpCode;
-		uint16	*mpDist;
-
-		uint32	mWindowLimit;
-
-		vdfastvector<uint8> mOutput;
-
-		// Block coding tables
-		uint16	mCodeEnc[288];
-		int		mCodeLen[288];
-
-		uint16	mDistEnc[32];
-		int		mDistLen[32];
-
-		uint8	mHistoryBuffer[65536+6];
-		sint32	mHashNext[32768];
-		sint32	mHashTable[65536];
-		uint8	mLenBuf[32769];
-		uint16	mCodeBuf[32769];
-		uint16	mDistBuf[32769];
-	};
-
-	VDZMBVDeflateEncoder::VDZMBVDeflateEncoder()
-	{
-	}
-
-	VDZMBVDeflateEncoder::VDZMBVDeflateEncoder(const VDZMBVDeflateEncoder& src) {
-		*this = src;
-	}
-
-	VDZMBVDeflateEncoder::~VDZMBVDeflateEncoder() {
-	}
-
-	VDZMBVDeflateEncoder& VDZMBVDeflateEncoder::operator=(const VDZMBVDeflateEncoder& src) {
-		if (this != &src) {
-			mAccum			= src.mAccum;
-			mAccBits		= src.mAccBits;
-			mHistoryPos		= src.mHistoryPos;
-			mHistoryTail	= src.mHistoryTail;
-			mHistoryBase	= src.mHistoryBase;
-			mHistoryBlockStart = src.mHistoryBlockStart;
-			mLenExtraBits = src.mLenExtraBits;
-			mPendingLen		= src.mPendingLen;
-			mpLen			= mLenBuf + (src.mpLen - src.mLenBuf);
-			mpCode			= mCodeBuf + (src.mpCode - src.mCodeBuf);
-			mpDist			= mDistBuf + (src.mpDist - src.mDistBuf);
-			mWindowLimit	= src.mWindowLimit;
-			mOutput			= src.mOutput;
-
-			memcpy(mHistoryBuffer, src.mHistoryBuffer, mHistoryTail);
-			memcpy(mHashNext, src.mHashNext, sizeof mHashNext);
-			memcpy(mHashTable, src.mHashTable, sizeof mHashTable);
-			memcpy(mLenBuf, src.mLenBuf, sizeof(mLenBuf[0]) * (src.mpLen - src.mLenBuf));
-			memcpy(mCodeBuf, src.mCodeBuf, sizeof(mCodeBuf[0]) * (src.mpCode - src.mCodeBuf));
-			memcpy(mDistBuf, src.mDistBuf, sizeof(mDistBuf[0]) * (src.mpDist - src.mDistBuf));
-		}
-		return *this;
-	}
-
-	void VDZMBVDeflateEncoder::Init(bool quick) {
-		std::fill(mHashNext, mHashNext+32768, -0x20000);
-		std::fill(mHashTable, mHashTable+65536, -0x20000);
-
-		mWindowLimit = quick ? 1024 : 32768;
-
-		mpLen = mLenBuf;
-		mpCode = mCodeBuf;
-		mpDist = mDistBuf;
-		mHistoryPos = 0;
-		mHistoryTail = 0;
-		mHistoryBase = 0;
-		mHistoryBlockStart = 0;
-		mLenExtraBits = 0;
-		mPendingLen = 0;
-		mAccum = 0;
-		mAccBits = 0;
-
-		mOutput.push_back(0x78);	// 32K window, Deflate
-		mOutput.push_back(0xDA);	// maximum compression, no dictionary, check offset = 0x1A
-	}
-
-	void VDZMBVDeflateEncoder::Write(const void *src, size_t len) {
-		while(len > 0) {
-			uint32 tc = sizeof mHistoryBuffer - mHistoryTail;
-
-			if (!tc) {
-				Compress(false);
-				continue;
-			}
-
-			if ((size_t)tc > len)
-				tc = (uint32)len;
-
-			memcpy(mHistoryBuffer + mHistoryTail, src, tc);
-
-			mHistoryTail += tc;
-			src = (const char *)src + tc;
-			len -= tc;
-		}
-	}
-
-	void VDZMBVDeflateEncoder::ForceNewBlock() {
-		Compress(false);
-		EndBlock(false);
-	}
-
-	#define HASH3(pos) (((uint32)*(const uint8 *)(hist + (pos)) ^ ((uint32)*(const uint8 *)(hist+(pos)+1) << 4) ^ ((uint32)*(const uint8 *)(hist+(pos)+2) << 8)) & 0xffff)
-//	#define HASH6(pos) (((uint32)hist[(pos)] ^ ((uint32)hist[(pos)+1] << 2) ^ ((uint32)hist[(pos)+2] << 4) ^ ((uint32)hist[(pos)+3] << 6) ^ ((uint32)hist[(pos)+4] << 7) ^ ((uint32)hist[(pos)+5] << 8)) & 0xffff)
-	#define HASH6(pos) ((uint32)((*(const uint32 *)(hist + (pos)) + *(const uint16 *)(hist + (pos) + 4)) * 0xc17d3f45) >> 16)
-
-	const bool usehash6 = true;
-
-	void VDZMBVDeflateEncoder::EndBlock(bool term) {
-		if (mpCode > mCodeBuf) {
-			if (mPendingLen) {
-				const uint8 *hist = mHistoryBuffer - mHistoryBase;
-				int bestlen = mPendingLen - 1;
-				mPendingLen = 0;
-
-				if (usehash6) {
-					while(bestlen-- > 0) {
-						int hval = HASH6(mHistoryPos);
-						mHashNext[mHistoryPos & 0x7fff] = mHashTable[hval];
-						mHashTable[hval] = mHistoryPos;
-						++mHistoryPos;
-					}
-				} else {
-					while(bestlen-- > 0) {
-						int hval = HASH3(mHistoryPos);
-						mHashNext[mHistoryPos & 0x7fff] = mHashTable[hval];
-						mHashTable[hval] = mHistoryPos;
-						++mHistoryPos;
-					}
-				}
-			}
-
-			*mpCode++ = 256;
-			Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), term, false);
-			mpCode = mCodeBuf;
-			mpDist = mDistBuf;
-			mpLen = mLenBuf;
-			mHistoryBlockStart = mHistoryPos;
-			mLenExtraBits = 0;
-		}
-	}
-
-	void VDZMBVDeflateEncoder::Compress(bool flush) {
-		uint8	*lenptr = mpLen;
-		uint16	*codeptr = mpCode;
-		uint16	*distptr = mpDist;
-
-		const uintptr hist = (uintptr)mHistoryBuffer - mHistoryBase;
-		const int maxmatch = 100;
-
-		uint32 pos = mHistoryPos;
-		uint32 len = mHistoryBase + mHistoryTail;
-		uint32 hashlen = usehash6 ? 6 : 3;
-		uint32 maxpos = flush ? len : len > 258+hashlen ? len - (258+hashlen) : 0;		// +6 is for the 6-byte hash.
-		while(pos < maxpos) {
-			if (codeptr >= mCodeBuf + 32768) {
-				mpCode = codeptr;
-				mpDist = distptr;
-				mpLen = lenptr;
-				mHistoryPos = pos;
-				EndBlock(false);
-				pos = mHistoryPos;
-				codeptr = mpCode;
-				distptr = mpDist;
-				lenptr = mpLen;
-
-				// Note that it's possible for the EndBlock() to have flushed out a pending
-				// run and pushed us all the way to maxpos.
-				VDASSERT(pos <= mHistoryBase + mHistoryTail);
-				continue;
-			}
-
-			uint8 c = *(const uint8 *)(hist + pos);
-			uint32 hcode = usehash6 ? HASH6(pos) : HASH3(pos);
-
-			sint32 hpos = mHashTable[hcode];
-			uint32 limit = 258;
-			if (limit > len-pos)
-				limit = len-pos;
-
-			sint32 hlimit = pos - mWindowLimit;		// note that our initial hash table values are low enough to avoid colliding with this.
-			if (hlimit < 0)
-				hlimit = 0;
-
-			uint32 bestlen = hashlen - 1;
-			uint32 bestoffset = 0;
-
-			if (hpos >= hlimit && limit >= hashlen) {
-				sint32 hstart = hpos;
-				const unsigned char *VDRESTRICT s2 = (const unsigned char *)(hist + pos);
-				int matchlimit = maxmatch;
-
-				if (usehash6) {
-					uint32 matchWord1 = *(const uint32 *)s2;
-					uint16 matchWord2 = *(const uint16 *)(s2 + 4);
-					int hashoffset = 0;
-
-					do {
-						const unsigned char *VDRESTRICT s1 = (const unsigned char *)(hist + hpos - hashoffset);
-						uint32 mlen = 0;
-
-						if (s1[bestlen] == s2[bestlen] && *(const uint32 *)s1 == matchWord1 && *(const uint16 *)(s1 + 4) == matchWord2) {
-							mlen = 6;
-							while(mlen < limit && s1[mlen] == s2[mlen])
-								++mlen;
-
-							if (mlen > bestlen) {
-								if (mlen > limit)
-									mlen = limit;
-
-								bestoffset = pos - hpos + hashoffset;
-
-								// hop hash chains if we can
-								sint32 hashoffsetnew = mlen - 5;
-								uint32 hposnew = hpos - hashoffset + hashoffsetnew;
-								if (hposnew <= pos) {
-									hlimit += (hashoffsetnew - hashoffset);
-									hashoffset = hashoffsetnew;
-									hpos = hposnew;
-
-									if (hpos == pos)
-										hpos = hstart;
-									else
-										hpos = mHashNext[hpos & 0x7fff];
-								}
-
-								bestlen = mlen;
-
-								if (bestlen >= limit)
-									break;
-								continue;
-							}
-						}
-
-						if (!--matchlimit)
-							break;
-
-						hpos = mHashNext[hpos & 0x7fff];
-					} while(hpos >= hlimit);
-				} else {
-					uint8 matchByte0 = s2[0];
-					uint8 matchByte1 = s2[1];
-					uint8 matchByte2 = s2[2];
-
-					do {
-						const unsigned char *VDRESTRICT s1 = (const unsigned char *)(hist + hpos - bestlen + 2);
-						uint32 mlen = 0;
-
-						if (s1[bestlen] == s2[bestlen] && s1[0] == matchByte0 && s1[1] == matchByte1 && s1[2] == matchByte2) {
-							mlen = 3;
-							while(mlen < limit && s1[mlen] == s2[mlen])
-								++mlen;
-
-							if (mlen > bestlen) {
-								uint32 moffset = pos - hpos + bestlen - 2;
-
-								if (mlen > 5 || moffset < 4096) {
-									bestoffset = moffset;
-									// hop hash chains!
-									hpos += mlen - bestlen;
-									if (hpos > (sint32)pos)
-										hpos = mHashTable[HASH3(hpos)];
-									else if (hpos == pos)
-										hpos = hstart;
-									else
-										hpos = mHashNext[(hpos + mlen - bestlen) & 0x7fff];
-									hlimit += (mlen - bestlen);
-
-									bestlen = mlen;
-									continue;
-								}
-							}
-						}
-
-						if (!--matchlimit)
-							break;
-
-						hpos = mHashNext[hpos & 0x7fff];
-					} while(hpos >= hlimit);
-				}
-			}
-
-			// Normally, we'd accept any match of longer 3 or greater. However, the savings for this aren't
-			// enough to match the decrease in the effectiveness of the Huffman encoding, so it's usually
-			// better to keep only longer matches. We follow the lead of zlib's Z_FILTERED and only accept
-			// matches of length 6 or longer. It turns out that we can greatly speed up compression when
-			// this is the case since we can use a longer hash -- the PNG filtering often means a very
-			// skewed distribution which hinders the effectiveness of a 3-byte hash.
-			if (bestlen >= hashlen) {
-				// check for an illegal match
-				VDASSERT((uint32)(bestoffset-1) < 32768U);
-				VDASSERT(bestlen < 259);
-				VDASSERT(!memcmp((const void *)(hist+pos), (const void *)(hist+pos-bestoffset), bestlen));
-				VDASSERT(pos >= bestoffset);
-				VDASSERT(pos+bestlen <= len);
-				VDASSERT(pos-bestoffset >= mHistoryBase);
-
-				unsigned lcode = 0;
-				while(bestlen >= len_tbl[lcode+1])
-					++lcode;
-				*codeptr++ = lcode + 257;
-				*distptr++ = bestoffset;
-				*lenptr++ = bestlen - 3;
-				mLenExtraBits += len_bits_tbl[lcode];
-			} else {
-				*codeptr++ = c;
-				bestlen = 1;
-			}
-
-			// Lazy matching.
-			//
-			//	prev	current		compare		action
-			//	======================================
-			//	lit		lit						append
-			//	lit		match					stash
-			//	match	lit						retire
-			//	match	match		shorter		retire
-			//	match	match		longer		obsolete
-			VDASSERT(pos+bestlen <= mHistoryBase + mHistoryTail);
-
-			if (!mPendingLen) {
-				if (bestlen > 1) {
-					mPendingLen = bestlen;
-					bestlen = 1;
-				}
-			} else {
-				if (bestlen > mPendingLen) {
-					codeptr[-2] = *(const uint8 *)(hist + pos - 1);
-					distptr[-2] = distptr[-1];
-					--distptr;
-					lenptr[-2] = lenptr[-1];
-					--lenptr;
-					mPendingLen = bestlen;
-					bestlen = 1;
-				} else {
-					--codeptr;
-					if (bestlen > 1) {
-						--distptr;
-						--lenptr;
-					}
-
-					bestlen = mPendingLen - 1;
-					mPendingLen = 0;
-				}
-			}
-
-			VDASSERT(pos+bestlen <= mHistoryBase + mHistoryTail);
-
-			if (bestlen > 0) {
-				mHashNext[pos & 0x7fff] = mHashTable[hcode];
-				mHashTable[hcode] = pos;
-				++pos;
-
-				if (false) {
-					--bestlen;
-
-					pos += bestlen;
-				} else {
-					if (usehash6) {
-						while(--bestlen) {
-							uint32 hcode = HASH6(pos);
-							mHashNext[pos & 0x7fff] = mHashTable[hcode];
-							mHashTable[hcode] = pos;
-							++pos;
-						}
-					} else {
-						while(--bestlen) {
-							uint32 hcode = HASH3(pos);
-							mHashNext[pos & 0x7fff] = mHashTable[hcode];
-							mHashTable[hcode] = pos;
-							++pos;
-						}
-					}
-				}
-			}
-		}
-
-		// shift down by 32K
-		if (pos - mHistoryBase >= 49152) {
-			uint32 delta = (pos - 32768) - mHistoryBase;
-			memmove(mHistoryBuffer, mHistoryBuffer + delta, mHistoryTail - delta);
-			mHistoryBase += delta;
-			mHistoryTail -= delta;
-		}
-
-		mHistoryPos = pos;
-		mpLen = lenptr;
-		mpCode = codeptr;
-		mpDist = distptr;
-	}
-
-	void VDZMBVDeflateEncoder::Finish() {
-		while(mHistoryPos != mHistoryBase + mHistoryTail)
-			Compress(true);
-
-		VDASSERT(mpCode != mCodeBuf);
-		EndBlock(true);
-
-		FlushBits();
-	}
-
-	void VDZMBVDeflateEncoder::SyncBegin() {
-		while(mHistoryPos != mHistoryBase + mHistoryTail)
-			Compress(true);
-
-		VDASSERT(mpCode != mCodeBuf);
-		EndBlock(false);
-
-		// sync to byte with an empty stored block
-		PutBits(0, 1);
-		PutBits(0, 2);
-		PutBits(0, -mAccBits & 7);
-		PutBits(0x00000000, 16);
-		PutBits(0xFFFF0000, 16);
-		FlushBits();
-	}
-
-	void VDZMBVDeflateEncoder::SyncEnd() {
-		mOutput.clear();
-		std::fill(mHashNext, mHashNext+32768, -0x20000);
-		std::fill(mHashTable, mHashTable+65536, -0x20000);
-
-		mpLen = mLenBuf;
-		mpCode = mCodeBuf;
-		mpDist = mDistBuf;
-		mHistoryPos = 0;
-		mHistoryTail = 0;
-		mHistoryBase = 0;
-		mHistoryBlockStart = 0;
-		mLenExtraBits = 0;
-		mPendingLen = 0;
-		mAccum = 0;
-		mAccBits = 0;
-	}
-
-	uint32 VDZMBVDeflateEncoder::EstimateOutputSize() {
-		Compress(false);
-
-		return (uint32)mOutput.size() * 8 + mAccBits + Flush((int)(mpCode - mCodeBuf), (int)(mpDist - mDistBuf), false, true);
-	}
-
-	void VDFORCEINLINE VDZMBVDeflateEncoder::PutBits(uint32 encoding, int enclen) {
-		mAccum >>= enclen;
-		mAccum += encoding;
-		mAccBits += enclen;
-
-		if (mAccBits >= 16) {
-			mAccBits -= 16;
-	//		uint8 c[2] = { mAccum >> (16-mAccBits), mAccum >> (24-mAccBits) };
-
-	//		mOutput.insert(mOutput.end(), c, c+2);
-			mOutput.push_back(mAccum >> (16-mAccBits));
-			mOutput.push_back(mAccum >> (24-mAccBits));
-		}		
-	}
-
-	void VDZMBVDeflateEncoder::FlushBits() {
-		while(mAccBits > 0) {
-			mOutput.push_back(0xff & (mAccum >> (32-mAccBits)));
-			mAccBits -= 8;
-		}
-	}
-
-	uint32 VDZMBVDeflateEncoder::Flush(int n, int ndists, bool term, bool test) {
-		const uint16 *codes = mCodeBuf;
-		const uint8 *lens = mLenBuf;
-		const uint16 *dists = mDistBuf;
-
-		VDZMBVHuffmanTable htcodes, htdists, htlens;
-		int i;
-
-		memset(mCodeLen, 0, sizeof mCodeLen);
-		memset(mDistLen, 0, sizeof mDistLen);
-
-		for(i=0; i<n; ++i)
-			htcodes.Tally(codes[i]);
-
-		htcodes.BuildCode(15);
-
-		for(i=0; i<ndists; ++i) {
-			int c=0;
-			while(dists[i] >= dist_tbl[c+1])
-				++c;
-
-			htdists.Tally(c);
-		}
-
-		htdists.BuildCode(15);
-
-		int totalcodes = 286;
-		int totaldists = 30;
-		int totallens = totalcodes + totaldists;
-
-		htcodes.BuildEncodingTable(mCodeEnc, mCodeLen, 288);
-		htdists.BuildEncodingTable(mDistEnc, mDistLen, 32);
-
-		// RLE the length table
-		uint8 lenbuf[286+30+1];
-		uint8 *lendst = lenbuf;
-		uint8 rlebuf[286+30+1];
-		uint8 *rledst = rlebuf;
-
-		for(i=0; i<totalcodes; ++i)
-			*lendst++ = mCodeLen[i];
-
-		for(i=0; i<totaldists; ++i)
-			*lendst++ = mDistLen[i];
-
-		*lendst = 255;		// avoid match
-
-		int last = -1;
-		uint32 treeExtraBits = 0;
-		i=0;
-		while(i<totallens) {
-			if (!lenbuf[i] && !lenbuf[i+1] && !lenbuf[i+2]) {
-				int j;
-				for(j=3; j<138 && !lenbuf[i+j]; ++j)
-					;
-				if (j < 11) {
-					*rledst++ = 17;
-					*rledst++ = j-3;
-					treeExtraBits += 3;
-				} else {
-					*rledst++ = 18;
-					*rledst++ = j-11;
-					treeExtraBits += 7;
-				}
-				htlens.Tally(rledst[-2]);
-				i += j;
-				last = 0;
-			} else if (lenbuf[i] == last && lenbuf[i+1] == last && lenbuf[i+2] == last) {
-				int j;
-				for(j=3; j<6 && lenbuf[i+j] == last; ++j)
-					;
-				*rledst++ = 16;
-				htlens.Tally(16);
-				*rledst++ = j-3;
-				treeExtraBits += 2;
-				i += j;
-			} else {
-				htlens.Tally(*rledst++ = lenbuf[i++]);
-				last = lenbuf[i-1];
-			}
-		}
-
-		htlens.BuildCode(7);
-
-		// compute bits for dynamic encoding
-		uint32 blockSize = mHistoryPos - mHistoryBlockStart;
-		uint32 alignBits = -(mAccBits+3) & 7;
-		uint32 dynamicBlockBits = htcodes.GetOutputSize() + htdists.GetOutputSize() + mLenExtraBits + htlens.GetOutputSize() + 14 + 19*3 + treeExtraBits;
-		uint32 staticBlockBits = htcodes.GetStaticOutputSize() + htdists.GetCodeCount(32)*5 + mLenExtraBits;
-		uint32 storeBlockBits = blockSize*8 + 32 + alignBits;
-
-		if (storeBlockBits < dynamicBlockBits && storeBlockBits < staticBlockBits) {
-			if (test)
-				return storeBlockBits;
-
-			PutBits((term ? 0x20000000 : 0) + (0 << 30), 3);
-
-			// align to byte boundary
-			PutBits(0, alignBits);
-
-			// write block size
-			PutBits((blockSize << 16) & 0xffff0000, 16);
-			PutBits((~blockSize << 16) & 0xffff0000, 16);
-
-			// write the block.
-			FlushBits();
-
-			const uint8 *base = &mHistoryBuffer[mHistoryBlockStart - mHistoryBase];
-			mOutput.insert(mOutput.end(), base, base+blockSize);
-		} else {
-			if (dynamicBlockBits < staticBlockBits) {
-				if (test)
-					return dynamicBlockBits;
-
-				PutBits((term ? 0x20000000 : 0) + (2 << 30), 3);
-
-				PutBits((totalcodes - 257) << 27, 5);	// code count - 257
-				PutBits((totaldists - 1) << 27, 5);	// dist count - 1
-				PutBits(0xf0000000, 4);	// ltbl count - 4
-
-				uint16 hlenc[19];
-				int hllen[19]={0};
-				htlens.BuildEncodingTable(hlenc, hllen, 19);
-
-				for(i=0; i<19; ++i) {
-					int k = hclen_tbl[i];
-
-					PutBits(hllen[k] << 29, 3);
-				}
-
-				uint8 *rlesrc = rlebuf;
-				while(rlesrc < rledst) {
-					uint8 c = *rlesrc++;
-					PutBits((uint32)hlenc[c] << 16, hllen[c]);
-
-					if (c == 16)
-						PutBits((uint32)*rlesrc++ << 30, 2);
-					else if (c == 17)
-						PutBits((uint32)*rlesrc++ << 29, 3);
-					else if (c == 18)
-						PutBits((uint32)*rlesrc++ << 25, 7);
-				}
-			} else {
-				if (test)
-					return staticBlockBits;
-
-				PutBits((term ? 0x20000000 : 0) + (1 << 30), 3);
-
-				memset(mCodeLen, 0, sizeof(mCodeLen));
-				memset(mDistLen, 0, sizeof(mDistLen));
-				htcodes.BuildStaticLengthEncodingTable(mCodeEnc, mCodeLen);
-				htdists.BuildStaticDistanceEncodingTable(mDistEnc, mDistLen);
-			}
-
-			for(i=0; i<n; ++i) {
-				unsigned code = *codes++;
-				unsigned clen = mCodeLen[code];
-
-				PutBits((uint32)mCodeEnc[code] << 16, clen);
-
-				if (code >= 257) {
-					unsigned extralenbits = len_bits_tbl[code-257];
-					unsigned len = *lens++ + 3;
-
-					VDASSERT(len >= len_tbl[code-257]);
-					VDASSERT(len < len_tbl[code-256]);
-
-					if (extralenbits)
-						PutBits((len - len_tbl[code-257]) << (32 - extralenbits), extralenbits);
-
-					unsigned dist = *dists++;
-					int dcode=0;
-					while(dist >= dist_tbl[dcode+1])
-						++dcode;
-
-					PutBits((uint32)mDistEnc[dcode] << 16, mDistLen[dcode]);
-
-					unsigned extradistbits = dist_bits_tbl[dcode];
-
-					if (extradistbits)
-						PutBits((dist - dist_tbl[dcode]) << (32 - extradistbits), extradistbits);
-				}
-			}
-		}
-
-		return 0;
-	}
-}
-
 class ATVideoEncoderZMBV : public IATVideoEncoder {
 public:
 	ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32);
-	void Compress(const VDPixmap& px, bool intra, bool encodeAll);
+	void Compress(const VDPixmap& px, bool intra, bool encodeAll) override;
 
-	uint32 GetEncodedLength() const { return mEncodedLength; }
-	const void *GetEncodedData() const { return mPackBuffer.data() + mEncodedOffset; }
+	uint32 GetEncodedLength() const override { return mEncodedLength; }
+	const void *GetEncodedData() const override { return mPackBuffer.data() + mEncodedOffset; }
+
+	bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) override;
 
 protected:
 	void CompressIntra8(const VDPixmap& px);
@@ -1469,10 +450,13 @@ protected:
 
 	VDPixmapLayout	mLayout;
 
-	VDZMBVDeflateEncoder mEncoder;
+	VDMemoryBufferStream mDeflateOutputBuffer;
+	VDDeflateStream mDeflateStream;
 };
 
-ATVideoEncoderZMBV::ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32) {
+ATVideoEncoderZMBV::ATVideoEncoderZMBV(uint32 w, uint32 h, bool rgb32)
+	: mDeflateStream(mDeflateOutputBuffer, VDDeflateChecksumMode::None, VDDeflateCompressionLevel::Quick)
+{
 	mWidth = w;
 	mHeight = h;
 	mbRgb32 = rgb32;
@@ -1535,6 +519,32 @@ void ATVideoEncoderZMBV::Compress(const VDPixmap& px, bool intra, bool encodeAll
 		CompressInter8(encodeAll);
 }
 
+bool ATVideoEncoderZMBV::GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) {
+	debugInfo.mImageWidth = mWidth;
+	debugInfo.mImageHeight = mHeight;
+	debugInfo.mBlockWidth = 16;
+	debugInfo.mBlockHeight = 16;
+	debugInfo.mNumBlocksX = (mWidth + 15) >> 4;
+	debugInfo.mNumBlocksY = (mHeight + 15) >> 4;
+
+	// The regular motion vector buffer is padded slightly, which we must skip.
+	debugInfo.mMotionVectors.resize(debugInfo.mNumBlocksX * debugInfo.mNumBlocksY);
+
+	ATVideoRecordingDebugInfo::MotionVector *mvdst = debugInfo.mMotionVectors.data();
+	const MotionVector *mvsrc = &mVecBuffer[debugInfo.mNumBlocksX + 1];
+
+	for(uint32 y = 0; y < debugInfo.mNumBlocksY; ++y) {
+		for(uint32 x = 0; x < debugInfo.mNumBlocksX; ++x) {
+			mvdst->mX = mvsrc->x;
+			mvdst->mY = mvsrc->y;
+			++mvdst;
+			++mvsrc;
+		}
+	}
+
+	return true;
+}
+
 void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
 	// header is 7 bytes, so add 1 byte to align everything nicely
 	mEncodedOffset = 1;
@@ -1573,16 +583,30 @@ void ATVideoEncoderZMBV::CompressIntra8(const VDPixmap& px) {
 	}
 
 	// zlib compress frame
-	mEncoder.Init(true);
-	mEncoder.Write(base, dst - base);
-	mEncoder.SyncBegin();
-	const vdfastvector<uint8>& zdata = mEncoder.GetOutput();
-	memcpy(base, zdata.data(), zdata.size());
-	dst = base + zdata.size();
-	mEncoder.SyncEnd();
+	static constexpr uint8 kZlibHeader[2] {
+		0x78,	// 32K window, Deflate
+		0xDA,	// maximum compression, no dictionary, check offset = 0x1A
+	};
+	
+	mDeflateOutputBuffer.Clear();
+	mDeflateOutputBuffer.Write(kZlibHeader, 2);
+
+	mDeflateStream.Reset(VDDeflateCompressionLevel::Quick);
+	mDeflateStream.Write(base, dst-base);
+	mDeflateStream.FlushToByteBoundary();
+
+	const auto zdata = mDeflateOutputBuffer.GetBuffer();
+	size_t zdataLen = zdata.size();
+	if (mPackBuffer.size() < zdataLen + 8) {
+		mPackBuffer.resize(zdataLen + 8);
+
+		base = mPackBuffer.data() + 8;
+	}
+
+	memcpy(base, zdata.data(), zdataLen);
 
 	// write frame
-	mEncodedLength = (uint32)(dst - dst0);
+	mEncodedLength = zdataLen + 7;
 }
 
 namespace {
@@ -1681,6 +705,73 @@ namespace {
 		err = _mm_add_epi32(err, _mm_srli_si128(err, 8));
 
 		return _mm_cvtsi128_si32(err);
+	}
+#endif
+
+#if defined(VD_CPU_ARM64)
+	int BlockDiff16_8_NEON(const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+
+		if (h == 16) {
+			uint16x8_t err1;
+			uint16x8_t err2;
+
+			const ptrdiff_t pitch2 = pitch + pitch;
+
+			err1 = vpaddlq_u8(vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpaddlq_u8(vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+			err1 = vpadalq_u8(err1, vcntq_u8(veorq_u8(vld1q_u8(src        ), vld1q_u8(ref        ))));
+			err2 = vpadalq_u8(err2, vcntq_u8(veorq_u8(vld1q_u8(src + pitch), vld1q_u8(ref + pitch)))); src += pitch2; ref += pitch2;
+
+			return vaddvq_u16(vaddq_u16(err1, err2));
+		} else {
+			uint16x8_t err = vmovq_n_u16(0);
+
+			for(uint32 y=0; y<h; ++y) {
+				uint8x16_t a = vld1q_u8(src);
+				uint8x16_t b = vld1q_u8(ref);
+				uint8x16_t e = vcntq_u8(veorq_u8(a, b));
+
+				err = vpadalq_u8(err, e);
+
+				ref += pitch;
+				src += pitch;
+			}
+
+			return vaddvq_u16(err);
+		}
+	}
+
+	int BlockDiff16_32_NEON(const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+		uint16x8_t err = vmovq_n_u16(0);
+
+		for(uint32 y=0; y<h; ++y) {
+			uint8x16x4_t a = vld4q_u8(src);
+			uint8x16x4_t b = vld4q_u8(ref);
+			uint8x16_t e0 = vcntq_u8(veorq_u8(a.val[0], b.val[0]));
+			uint8x16_t e1 = vcntq_u8(veorq_u8(a.val[1], b.val[1]));
+			uint8x16_t e2 = vcntq_u8(veorq_u8(a.val[2], b.val[2]));
+
+			err = vpadalq_u8(err, e0);
+			err = vpadalq_u8(err, e1);
+			err = vpadalq_u8(err, e2);
+
+			ref += pitch;
+			src += pitch;
+		}
+
+		return vaddvq_u16(err);
 	}
 #endif
 
@@ -1824,6 +915,30 @@ namespace {
 		}
 	}
 
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	void ComputeXor16_8_SSE2(uint8 *dst, const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+		for(uint32 y=0; y<h; ++y) {
+			_mm_storeu_si128((__m128i *)(dst +  0), _mm_xor_si128(_mm_loadu_si128((const __m128i *)(src +  0)), _mm_loadu_si128((const __m128i *)(ref +  0))));
+
+			dst += 16;
+			src += pitch;
+			ref += pitch;
+		}
+	}
+#endif
+
+#ifdef VD_CPU_ARM64
+	void ComputeXor16_8_NEON(uint8 *dst, const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+		for(uint32 y=0; y<h; ++y) {
+			vst1q_u32(dst, veorq_u32(vld1q_u32(src), vld1q_u32(ref)));
+
+			dst += 16;
+			src += pitch;
+			ref += pitch;
+		}
+	}
+#endif
+
 	void ComputeXor16_32(uint8 *dst, const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
 		for(uint32 y=0; y<h; ++y) {
 			*(uint32 *)&dst[ 0] = (*(const uint32 *)&src[ 0] ^ *(const uint32 *)&ref[ 0]) & 0x00ffffff;
@@ -1848,6 +963,40 @@ namespace {
 			ref += pitch;
 		}
 	}
+
+#if defined(VD_CPU_X86) || defined(VD_CPU_X64)
+	void ComputeXor16_32_SSE2(uint8 *dst, const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+		__m128i xorMask = _mm_set1_epi32(0x00FFFFFF);
+
+		for(uint32 y=0; y<h; ++y) {
+			_mm_storeu_si128((__m128i *)(dst +  0), _mm_and_si128(_mm_xor_si128(_mm_loadu_si128((const __m128i *)(src +  0)), _mm_loadu_si128((const __m128i *)(ref +  0))), xorMask));
+			_mm_storeu_si128((__m128i *)(dst + 16), _mm_and_si128(_mm_xor_si128(_mm_loadu_si128((const __m128i *)(src + 16)), _mm_loadu_si128((const __m128i *)(ref + 16))), xorMask));
+			_mm_storeu_si128((__m128i *)(dst + 32), _mm_and_si128(_mm_xor_si128(_mm_loadu_si128((const __m128i *)(src + 32)), _mm_loadu_si128((const __m128i *)(ref + 32))), xorMask));
+			_mm_storeu_si128((__m128i *)(dst + 48), _mm_and_si128(_mm_xor_si128(_mm_loadu_si128((const __m128i *)(src + 48)), _mm_loadu_si128((const __m128i *)(ref + 48))), xorMask));
+
+			dst += 64;
+			src += pitch;
+			ref += pitch;
+		}
+	}
+#endif
+
+#ifdef VD_CPU_ARM64
+	void ComputeXor16_32_NEON(uint8 *dst, const uint8 *src, const uint8 *ref, ptrdiff_t pitch, uint32 w, uint32 h) {
+		uint8x16_t xorMask = vdupq_n_u32(0x00FFFFFF);
+
+		for(uint32 y=0; y<h; ++y) {
+			vst1q_u32(dst +  0, vandq_u32(xorMask, veorq_u32(vld1q_u32(src +  0), vld1q_u32(ref +  0))));
+			vst1q_u32(dst + 16, vandq_u32(xorMask, veorq_u32(vld1q_u32(src + 16), vld1q_u32(ref + 16))));
+			vst1q_u32(dst + 32, vandq_u32(xorMask, veorq_u32(vld1q_u32(src + 32), vld1q_u32(ref + 32))));
+			vst1q_u32(dst + 48, vandq_u32(xorMask, veorq_u32(vld1q_u32(src + 48), vld1q_u32(ref + 48))));
+
+			dst += 64;
+			src += pitch;
+			ref += pitch;
+		}
+	}
+#endif
 }
 
 void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
@@ -1897,8 +1046,13 @@ void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 	void (*computeXor16)(uint8 *, const uint8 *, const uint8 *, ptrdiff_t, uint32, uint32) = rgb32 ? ComputeXor16_32 : ComputeXor16_8;
 
 #if defined(VD_CPU_X86) || defined(VD_CPU_AMD64)
-	if (SSE2_enabled)
+	if (SSE2_enabled) {
 		blockDiff16 = rgb32 ? BlockDiff16_32_SSE2 : BlockDiff16_8_SSE2;
+		computeXor16 = rgb32 ? ComputeXor16_32_SSE2 : ComputeXor16_8_SSE2;
+	}
+#elif defined(VD_CPU_ARM64)
+	blockDiff16 = rgb32 ? BlockDiff16_32_NEON : BlockDiff16_8_NEON;
+	computeXor16 = rgb32 ? ComputeXor16_32_NEON : ComputeXor16_8_NEON;
 #endif
 
 	for(uint32 by = 0; by < bh; ++by) {
@@ -2017,14 +1171,22 @@ void ATVideoEncoderZMBV::CompressInter8(bool encodeAll) {
 	}
 
 	// zlib compress frame
-	mEncoder.Write(base, dst - base);
-	mEncoder.SyncBegin();
-	const vdfastvector<uint8>& zdata = mEncoder.GetOutput();
-	memcpy(base, zdata.data(), zdata.size());
-	dst = base + zdata.size();
-	mEncoder.SyncEnd();
+	mDeflateOutputBuffer.Clear();
+	mDeflateStream.Write(base, dst - base);
+	mDeflateStream.FlushToByteBoundary();
 
-	mEncodedLength = (uint32)(dst - dst0);
+	const auto zdata = mDeflateOutputBuffer.GetBuffer();
+	size_t zdataLen = zdata.size();
+	if (mPackBuffer.size() - (mEncodedOffset + 1) < zdataLen) {
+		mPackBuffer.resize(zdataLen + mEncodedOffset + 1);
+
+		base = mPackBuffer.data() + mEncodedOffset + 1;
+	}
+
+	memcpy(base, zdata.data(), zdataLen);
+
+	// write frame
+	mEncodedLength = zdataLen + 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2034,6 +1196,7 @@ public:
 	virtual ~IATMediaEncoder() = default;
 
 	virtual sint64 GetCurrentSize() = 0;
+	virtual bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) { return false; }
 
 	virtual void WriteVideo(const VDPixmap& px) = 0;
 	virtual void BeginAudioFrame(uint32 bytes, uint32 samples) = 0;
@@ -2047,6 +1210,7 @@ public:
 	ATAVIEncoder(const wchar_t *filename, ATVideoEncoding venc, uint32 w, uint32 h, const VDFraction& frameRate, const uint32 *palette, double samplingRate, bool stereo, bool encodeAllFrames);
 
 	sint64 GetCurrentSize() override;
+	bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) override;
 
 	void WriteVideo(const VDPixmap& px) override;
 	void BeginAudioFrame(uint32 bytes, uint32 samples) override;
@@ -2206,6 +1370,10 @@ sint64 ATAVIEncoder::GetCurrentSize() {
 	return mFile->GetCurrentSize();
 }
 
+bool ATAVIEncoder::GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) {
+	return mpVideoEncoder && mpVideoEncoder->GetDebugInfo(debugInfo);
+}
+
 void ATAVIEncoder::WriteVideo(const VDPixmap& px) {
 	bool intra = false;
 
@@ -2238,9 +1406,9 @@ bool ATAVIEncoder::Finalize(MyError& error) {
 	if (mVideoStream) {
 		try {
 			mVideoStream->finish();
-		} catch(MyError e) {
-			if (e.empty())
-				error.TransferFrom(e);
+		} catch(VDException& e) {
+			if (error.empty())
+				error = std::move(e);
 		}
 
 		mVideoStream = nullptr;
@@ -2249,9 +1417,9 @@ bool ATAVIEncoder::Finalize(MyError& error) {
 	if (mFile) {
 		try {
 			mFile->finalize();
-		} catch(MyError e) {
-			if (e.empty())
-				error.TransferFrom(e);
+		} catch(VDException& e) {
+			if (error.empty())
+				error = std::move(e);
 		}
 
 		mFile.reset();
@@ -2295,8 +1463,6 @@ private:
 };
 
 LPVOID ATMFSampleAllocatorW32::AddSample(IMFSample *sampleAdoptRef) {
-	sampleAdoptRef->AddRef();
-
 	IMFSample *sampleToDrop = nullptr;
 	uint32 fenceId = 0;
 	vdsynchronized(mMutex) {
@@ -3096,6 +2262,9 @@ void ATMediaFoundationEncoderW32::Shutdown() {
 			mpVideoSampleAllocator->WaitForFinalize();
 
 		mpSinkWriter.clear();
+
+		mpVideoSampleAllocator->Shutdown();
+		mpVideoSampleAllocator = nullptr;
 	}
 
 	mpAudioBuffer.clear();
@@ -3127,8 +2296,8 @@ bool ATMediaFoundationEncoderW32::Finalize(MyError& e) {
 			if (mpVideoSampleAllocator)
 				verify += mpVideoSampleAllocator->WaitForFinalize();
 
-		} catch(MyError error) {
-			e.TransferFrom(error);
+		} catch(VDException& error) {
+			e = std::move(error);
 		}
 
 		mpSinkWriter.clear();
@@ -3699,8 +2868,15 @@ public:
 		const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) override;
 	void Shutdown() override;
 
+	bool IsPaused() const override { return mbPaused; }
+	void Pause() override;
+	void Resume() override;
+
+	bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) override;
+
+public:
 	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) override;
-	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp);
+	void WriteRawAudio(const float *left, const float *right, uint32 count, uint32 timestamp) override;
 
 protected:
 	void RaiseError(MyError&& e);
@@ -3708,17 +2884,32 @@ protected:
 	bool mbStereo;
 	bool mbHalfRate;
 	bool mbErrorState;
+	bool mbPaused = false;
 
-	bool	mbVideoTimestampSet;
-	bool	mbAudioPreskipSet;
-	uint64	mFirstVideoTimestamp;
-	sint32	mAudioPreskip;
-	uint32	mVideoPreskip;
+	bool	mbFirstVideoTimestampSet = false;
+	bool	mbVideoPreskipTimestampSet = false;
+	bool	mbAudioPreskipSet = false;
+
+	// Timestamp of first video frame recorded. Used for recording length reporting purposes.
+	uint64	mFirstVideoTimestamp = 0;
+
+	// Timestamp of first video frame received when attempting to resync.
+	uint64	mSyncVideoTimestamp = 0;
+
+	// Number of audio samples and video frames remaining to skip to resync.
+	sint32	mSyncAudioPreskip = 0;
+	uint32	mSyncVideoPreskip = 0;
+
 	double	mFrameRate;
 	double	mSamplingRate;
 	double	mTimestampRate;
 
-	IATUIRenderer	*mpUIRenderer;
+	uint64	mVideoFramesWritten = 0;
+	uint64	mAudioSamplesWritten = 0;
+
+	vdrect32f mVideoDestRect;
+
+	IATUIRenderer	*mpUIRenderer = nullptr;
 
 	vdautoptr<IATMediaEncoder> mpMediaEncoder;
 
@@ -3750,9 +2941,8 @@ void ATVideoWriter::CheckExceptions() {
 		return;
 
 	if (!mError.empty()) {
-		MyError e;
+		VDException e(std::move(mError));
 
-		e.TransferFrom(mError);
 		throw e;
 	}
 }
@@ -3768,13 +2958,13 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc,
 	mbStereo = stereo;
 	mbHalfRate = halfRate;
 	mbErrorState = false;
-	mbVideoTimestampSet = false;
+	mbVideoPreskipTimestampSet = false;
 	mbAudioPreskipSet = false;
 	mFrameRate = frameRate.asDouble();
 	mSamplingRate = samplingRate;
 	mTimestampRate = timestampRate;
-	mAudioPreskip = 0;
-	mVideoPreskip = 0;
+	mSyncAudioPreskip = 0;
+	mSyncVideoPreskip = 0;
 
 	mResampleLevel = 0;
 	mResampleAccum = 0;
@@ -3890,6 +3080,8 @@ void ATVideoWriter::Init(const wchar_t *filename, ATVideoEncoding venc,
 				break;
 		}
 
+		mVideoDestRect = dstrect;
+
 		mpVideoResampler->SetFilters(filterMode, filterMode, false);
 		VDVERIFY(mpVideoResampler->Init(dstrect, framew, frameh, mVideoResampleBuffer.format, vdrect32f(0, 0, (float)w, (float)h), w, h, mVideoResampleBuffer.format));
 
@@ -3938,23 +3130,64 @@ void ATVideoWriter::Shutdown() {
 	}
 }
 
+void ATVideoWriter::Pause() {
+	if (mbPaused)
+		return;
+
+	mbPaused = true;
+
+	if (mpUIRenderer)
+		mpUIRenderer->SetRecordingPositionPaused();
+}
+
+void ATVideoWriter::Resume() {
+	if (!mbPaused)
+		return;
+
+	mbPaused = false;
+
+	// Reset sync state so the recorder attempts to resync.
+	mbAudioPreskipSet = false;
+	mbVideoPreskipTimestampSet = false;
+	mSyncAudioPreskip = 0;
+	mSyncVideoPreskip = 0;
+}
+
+bool ATVideoWriter::GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) {
+	if (!mpMediaEncoder || !mpMediaEncoder->GetDebugInfo(debugInfo))
+		return false;
+
+	debugInfo.mVideoDestRect = mVideoDestRect;
+	return true;
+}
+
 void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 timestampEnd, float par) {
 	if (mbErrorState)
 		return;
 
+	if (mbPaused)
+		return;
+
 	if (!mbAudioPreskipSet) {
-		mbVideoTimestampSet = true;
-		mFirstVideoTimestamp = timestamp;
+		mbVideoPreskipTimestampSet = true;
+		mSyncVideoTimestamp = timestamp;
 		return;
 	}
 
-	if (mVideoPreskip) {
-		--mVideoPreskip;
+	if (mSyncVideoPreskip) {
+		--mSyncVideoPreskip;
 		return;
 	}
+
+	if (!mbFirstVideoTimestampSet) {
+		mbFirstVideoTimestampSet = true;
+		mFirstVideoTimestamp = timestamp;
+	}
+
+	++mVideoFramesWritten;
 
 	if (mpUIRenderer)
-		mpUIRenderer->SetRecordingPosition((float)((double)(timestamp - mFirstVideoTimestamp) / mTimestampRate), mpMediaEncoder->GetCurrentSize());
+		mpUIRenderer->SetRecordingPosition((float)((double)(timestamp - mFirstVideoTimestamp) / mTimestampRate), mpMediaEncoder->GetCurrentSize(), false);
 
 	const VDPixmap *pxlast = &px;
 
@@ -3980,7 +3213,7 @@ void ATVideoWriter::WriteFrame(const VDPixmap& px, uint64 timestamp, uint64 time
 		mpMediaEncoder->WriteVideo(*pxlast);
 
 		if (mbHalfRate)
-			mVideoPreskip = 1;
+			mSyncVideoPreskip = 1;
 	} catch(MyError& e) {
 		RaiseError(std::move(e));
 	}
@@ -3990,8 +3223,11 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 	if (mbErrorState)
 		return;
 
+	if (mbPaused)
+		return;
+
 	if (!mbAudioPreskipSet) {
-		if (!mbVideoTimestampSet)
+		if (!mbVideoPreskipTimestampSet)
 			return;
 
 		mbAudioPreskipSet = true;
@@ -4000,27 +3236,30 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 		// error between the next video frame time and the current audio timestamp. If this is negative,
 		// we increase the video frame skip and try again (to be safe wrt. roundoff). Note that we are
 		// doing this at input sampling rate, not at output sampling rate.
-		double offset = (double)(sint32)(mFirstVideoTimestamp - timestamp) / mTimestampRate + 1.0f / mFrameRate;
-		for(;;) {
-			mAudioPreskip = VDRoundToInt32(offset * mSamplingRate);
+		double offset = (double)(sint32)(mSyncVideoTimestamp - timestamp) / mTimestampRate + 1.0f / mFrameRate
+			+ (double)mVideoFramesWritten / (double)mFrameRate
+			- (double)mAudioSamplesWritten / (double)mSamplingRate;
 
-			if (mAudioPreskip >= 0)
+		for(;;) {
+			mSyncAudioPreskip = VDRoundToInt32(offset * mSamplingRate);
+
+			if (mSyncAudioPreskip >= 0)
 				break;
 
-			++mVideoPreskip;
+			++mSyncVideoPreskip;
 			offset += 1.0f / mFrameRate;
 		}
 	}
 
-	if (mAudioPreskip) {
-		uint32 toSkip = mAudioPreskip;
+	if (mSyncAudioPreskip) {
+		uint32 toSkip = mSyncAudioPreskip;
 
 		if (toSkip >= count) {
-			mAudioPreskip -= count;
+			mSyncAudioPreskip -= count;
 			return;
 		}
 
-		mAudioPreskip = 0;
+		mSyncAudioPreskip = 0;
 
 		left += toSkip;
 		if (right)
@@ -4028,6 +3267,8 @@ void ATVideoWriter::WriteRawAudio(const float *left, const float *right, uint32 
 
 		count -= toSkip;
 	}
+
+	mAudioSamplesWritten += count;
 
 	uint32 outputSamples = 0;
 	uint32 newLevel = mResampleLevel + count;

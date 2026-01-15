@@ -79,6 +79,7 @@
 	</Type>
 	
 	<Type Name="VDStringSpanA">
+		<DisplayString IncludeView="plain">{mpBegin,[mpEnd-mpBegin]sb}</DisplayString>
 		<DisplayString Condition="mpEnd&gt;=mpBegin">len={mpEnd-mpBegin,i} "{mpBegin,[mpEnd-mpBegin]sb}"</DisplayString>
 		<DisplayString Condition="mpEnd&lt;mpBegin">invalid!</DisplayString>
 		<StringView>mpBegin,s</StringView>
@@ -515,5 +516,102 @@
   
   <Type Name="__m256">
     <DisplayString>{m256_f32[0],g}, {m256_f32[1],g}, {m256_f32[2],g}, {m256_f32[3],g}, {m256_f32[4],g}, {m256_f32[5],g}, {m256_f32[6],g}, {m256_f32[7],g}</DisplayString>
+  </Type>
+  
+  <Type Name="VDDCsPropKey">
+    <DisplayString Condition="mCounter==0xFFFFFFFF">"{mBaseName,view(plain)}"</DisplayString>
+    <DisplayString>"{mBaseName,view(plain)}{mCounter,i}"</DisplayString>
+  </Type>
+
+  <Type Name="VDDCsPropKeyView">
+    <DisplayString Condition="mCounter==0xFFFFFFFF">"{mBaseName,view(plain)}"</DisplayString>
+    <DisplayString>"{mBaseName,view(plain)}{mCounter,i}"</DisplayString>
+  </Type>
+  
+  <Type Name="ATVIA6522Emulator" ExcludeView="default">
+    <Expand>
+      <Item Name="Port A">*this,view(porta)</Item>
+      <Item Name="Port B">*this,view(portb)</Item>
+      <Item Name="CA1 mode" Condition="mPCR &amp; 1">"Positive edge",sb</Item>
+      <Item Name="CA1 mode" Condition="!(mPCR &amp; 1)">"Negative edge",sb</Item>
+      <Item Name="CB1 mode" Condition="mPCR &amp; 16">"Positive edge",sb</Item>
+      <Item Name="CB1 mode" Condition="!(mPCR &amp; 16)">"Negative edge",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==0">"Input mode (negative edge)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==2">"Independent interrupt input mode (negative edge)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==4">"Input mode (positive edge)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==6">"Independent interrupt input mode (positive edge)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==8">"Handshake output mode (CA2 low on access and high on CA1 transition)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==10">"Pulse output mode (CA2 low on ORA access)",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==12">"Manual output low",sb</Item>
+      <Item Name="CA2 mode" Condition="(mPCR &amp; 14)==14">"Manual output high",sb</Item>
+      
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==0">"Input mode (negative edge)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==32">"Independent interrupt input mode (negative edge)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==64">"Input mode (positive edge)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==96">"Independent interrupt input mode (positive edge)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==128">"Handshake output mode (CB2 low on access and high on CB1 transition)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==160">"Pulse output mode (CB2 low on ORB access)",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==192">"Manual output low",sb</Item>
+      <Item Name="CB2 mode" Condition="(mPCR &amp; 224)==224">"Manual output high",sb</Item>
+      
+      <Item Name="PA Latch">(mACR &amp; 1) != 0</Item>
+      <Item Name="PB Latch">(mACR &amp; 2) != 0</Item>
+      
+      <Item Name="T1 Control" Condition="(mACR &amp; 192)==0">"One-shot mode",sb</Item>
+      <Item Name="T1 Control" Condition="(mACR &amp; 192)==64">"Free-running mode",sb</Item>
+      <Item Name="T1 Control" Condition="(mACR &amp; 192)==128">"One-shot mode + PB7 output",sb</Item>
+      <Item Name="T1 Control" Condition="(mACR &amp; 192)==192">"Free-running mode + PB7 output",sb</Item>
+      
+      <Item Name="T2 Control" Condition="!(mACR &amp; 32)">"One-shot interval timer",sb</Item>
+      <Item Name="T2 Control" Condition="mACR &amp; 32">"PB6 pulse counter",sb</Item>
+      
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==0">"Disabled",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==4">"Shift in T2",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==8">"Shift in system clock",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==12">"Shift in external clock",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==16">"Free-running T2",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==20">"Shift out T2",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==24">"Shift out system clock",sb</Item>
+      <Item Name="Shift Control" Condition="(mACR &amp; 28)==28">"Shift out external clock",sb</Item>
+      
+      <Item Name="Interrupt flags">*this,view(ifr)</Item>
+      <Item Name="Interrupt enables">*this,view(ier)</Item>
+    </Expand>
+  </Type>
+  
+  <Type Name="ATVIA6522Emulator" IncludeView="porta">
+    <DisplayString>In {mIRA,nvobb} ({mIRA,nvoXb}) | Dir {mDDRA,nvobb} ({mDDRA,nvoXb}) | Out {mORA,nvobb} ({mORA,nvoXb})</DisplayString>
+  </Type>
+  
+  <Type Name="ATVIA6522Emulator" IncludeView="portb">
+    <DisplayString>In {mIRB,nvobb} ({mIRB,nvoXb}) | Dir {mDDRB,nvobb} ({mDDRB,nvoXb}) | Out {mORB,nvobb} ({mORB,nvoXb})</DisplayString>
+  </Type>
+
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr">
+    <DisplayString>{mIFR,nvoXb} | {(mIFR&amp;128)!=0} |{*this,view(ifr0)}{*this,view(ifr1)}{*this,view(ifr2)}{*this,view(ifr3)}{*this,view(ifr4)}{*this,view(ifr5)}{*this,view(ifr6)}</DisplayString>
+  </Type>
+  
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr0"><DisplayString Condition="mIFR&amp;1"> CA2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr1"><DisplayString Condition="mIFR&amp;2"> CA1</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr2"><DisplayString Condition="mIFR&amp;4"> Shift</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr3"><DisplayString Condition="mIFR&amp;8"> CB2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr4"><DisplayString Condition="mIFR&amp;16"> CB1</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr5"><DisplayString Condition="mIFR&amp;32"> T2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ifr6"><DisplayString Condition="mIFR&amp;64"> T1</DisplayString><DisplayString></DisplayString></Type>
+
+  <Type Name="ATVIA6522Emulator" IncludeView="ier">
+    <DisplayString>{mIER,nvoXb} | {(mIER&amp;128)!=0} |{*this,view(ier0)}{*this,view(ier1)}{*this,view(ier2)}{*this,view(ier3)}{*this,view(ier4)}{*this,view(ier5)}{*this,view(ier6)}</DisplayString>
+  </Type>
+  
+  <Type Name="ATVIA6522Emulator" IncludeView="ier0"><DisplayString Condition="mIER&amp;1"> CA2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier1"><DisplayString Condition="mIER&amp;2"> CA1</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier2"><DisplayString Condition="mIER&amp;4"> Shift</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier3"><DisplayString Condition="mIER&amp;8"> CB2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier4"><DisplayString Condition="mIER&amp;16"> CB1</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier5"><DisplayString Condition="mIER&amp;32"> T2</DisplayString><DisplayString></DisplayString></Type>
+  <Type Name="ATVIA6522Emulator" IncludeView="ier6"><DisplayString Condition="mIER&amp;64"> T1</DisplayString><DisplayString></DisplayString></Type>
+  
+  <Type Name="ATPrinterGraphicalOutput::RenderVector">
+    <DisplayString>{(unsigned char)(mLinearColor&gt;&gt;16),nvoXb}{(unsigned short)mLinearColor,Xb} ({mX1},{mY1})-({mX2},{mY2})</DisplayString>
   </Type>
 </AutoVisualizer>

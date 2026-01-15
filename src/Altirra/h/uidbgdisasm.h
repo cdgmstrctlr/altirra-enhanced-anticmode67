@@ -37,14 +37,14 @@ public:
 
 	void *AsInterface(uint32 iid) override;
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId);
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override;
 
 	void OnTextEditorUpdated() override;
 	void OnTextEditorScrolled(int firstVisiblePara, int lastVisiblePara, int visibleParaCount, int totalParaCount) override;
 	void OnLinkSelected(uint32 selectionCode, int para, int offset) override;
 
-	void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization);
+	void RecolorLine(int line, const wchar_t *text, int length, IVDTextEditorColorization *colorization) override;
 
 	void SetPosition(uint32 addr) override;
 
@@ -64,16 +64,16 @@ private:
 		kSelCode_Expand = 2
 	};
 
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
-	bool OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result);
+	bool OnMessage(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam, VDZLRESULT& result) override;
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnSetFocus();
-	void OnFontsUpdated();
-	bool OnCommand(UINT cmd, UINT code);
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnSetFocus() override;
+	void OnFontsUpdated() override;
+	bool OnCommand(UINT cmd, UINT code) override;
 	void PushAndJump(uint32 fromXAddr, uint32 toXAddr);
 	void GoPrev();
 	void GoNext();

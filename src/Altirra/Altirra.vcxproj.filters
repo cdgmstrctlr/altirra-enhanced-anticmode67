@@ -397,9 +397,6 @@
     <ClCompile Include="source\uionscreenkeyboard.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="source\uioptions.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="source\uipclink.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -1042,6 +1039,66 @@
     <ClCompile Include="source\printer1020.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="source\inputdefs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\inputmap.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\850full.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\ostracing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\tracenative.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\thepill.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\customdevicevmtypes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\audiostocksamples.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uifullscreenmode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\blackboxfloppy.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevblackboxfloppy.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\diskdrivespeedyxf.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vgmwriter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\vgmplayer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdev1020.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\artifacting_pal_neon.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\multiplexer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevmultiplexer.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\pipeserial_win32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\uiconfdevpipeserial.cpp">
+      <Filter>Source Files - Device Configuration UI</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="h\antic.h">
@@ -1644,9 +1701,6 @@
     <ClInclude Include="h\uifrontend.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="h\inputtypes.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="h\1400xl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -1717,6 +1771,45 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="h\printer1020.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\inputdefs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\inputmap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\850full.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\ostracing.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\tracenative.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\thepill.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\customdevicevmtypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\uifullscreenmode.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\blackboxfloppy.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\diskdrivespeedyxf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vgmwriter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\vgmplayer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="h\multiplexer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -1939,6 +2032,9 @@
     <PackResource Include="..\..\obj\Release\Kernel\playsap-d-pal.xex">
       <Filter>Autogen Intermediate Files</Filter>
     </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playvgm.xex">
+      <Filter>Autogen Intermediate Files</Filter>
+    </PackResource>
   </ItemGroup>
   <ItemGroup>
     <Image Include="res\traceViewerToolbar.png">
@@ -1948,6 +2044,12 @@
       <Filter>Resource Files</Filter>
     </Image>
     <Image Include="res\warning.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="firmware.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="res\firmware.png">
       <Filter>Resource Files</Filter>
     </Image>
   </ItemGroup>

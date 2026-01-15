@@ -1,7 +1,24 @@
+//	Altirra - Atari 800/800XL/5200 emulator
+//	Copyright (C) 2025 Avery Lee
+//
+//	This program is free software; you can redistribute it and/or modify
+//	it under the terms of the GNU General Public License as published by
+//	the Free Software Foundation; either version 2 of the License, or
+//	(at your option) any later version.
+//
+//	This program is distributed in the hope that it will be useful,
+//	but WITHOUT ANY WARRANTY; without even the implied warranty of
+//	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//	GNU General Public License for more details.
+//
+//	You should have received a copy of the GNU General Public License along
+//	with this program. If not, see <http://www.gnu.org/licenses/>.
+
 #ifndef f_VD2_VDDISPLAY_DISPLAYDRV3D_H
 #define f_VD2_VDDISPLAY_DISPLAYDRV3D_H
 
 #include <vd2/system/refcount.h>
+#include <vd2/system/vdalloc.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/VDDisplay/display.h>
 #include <vd2/VDDisplay/displaydrv.h>
@@ -13,6 +30,7 @@
 struct VDPixmap;
 class IVDTContext;
 class IVDTTexture2D;
+class IVDDisplayCustomEffectD3D11;
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -52,7 +70,7 @@ public:
 	IVDDisplayCompositionEngine *GetDisplayCompositionEngine() override { return this; }
 
 public:
-	void LoadCustomEffect(const wchar_t *path) override {}
+	void LoadCustomEffect(const wchar_t *path) override;
 
 public:
 	virtual void QueuePresent(bool restarted) override;
@@ -62,6 +80,8 @@ private:
 	bool CreateSwapChain();
 	bool CreateImageNode();
 	void DestroyImageNode();
+	bool BufferQueuedNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplayQueuedSourceNode3D **ppNode);
+	bool BufferQueuedNode(VDDisplayNode3D *srcNode, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplayQueuedSourceNode3D **ppNode);
 	bool BufferNode(VDDisplayNode3D *srcNode, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode);
 	bool BufferNode(VDDisplayNode3D *srcNode, float outx, float outy, float outw, float outh, uint32 w, uint32 h, bool hdr, VDDisplaySourceNode3D **ppNode);
 	bool RebuildTree();
@@ -74,7 +94,8 @@ private:
 	IVDTSwapChain *mpSwapChain;
 	VDDisplayImageNode3D *mpImageNode;
 	VDDisplayImageSourceNode3D *mpImageSourceNode;
-	VDDisplayNode3D *mpRootNode;
+	vdrefptr<VDDisplayNode3D> mpRootNode;
+	vdrefptr<VDDisplayCustomEffectPipelineNode3D> mpCustomEffectPipelineNode;
 
 	FilterMode mFilterMode;
 	bool mbCompositionTreeDirty = false;
@@ -102,6 +123,10 @@ private:
 	VDDisplayRenderer3D mRenderer;
 	IVDDisplayFont *mpDebugFont = nullptr;
 	bool mbTraceRendering = false;
+
+	vdrefptr<IVDDisplayCustomEffectD3D11> mpCustomEffect;
+	VDStringW mErrorString;
+	VDStringW mDebugString;
 
 	VDDVSyncStatus mVSyncStatus;
 

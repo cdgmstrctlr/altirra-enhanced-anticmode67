@@ -5,16 +5,18 @@
 		<link>https://www.virtualdub.org/altirra.html</link>
 		<description>Automatic update notifications for release versions of the Altirra emulator.</description>
 		<item>
-			<title>Altirra 4.20 (4.20.200.16272; win7; sse2)</title>
+			<title>Altirra 4.31 (4.31.200.16684; win7; sse2)</title>
 			<description>
 				<ul>
-<li>New cartridge types: Williams 16K, JRC RAMBOX, MDDOS, COS 32K, Pronto, and CAR types 76/78-93/160.</li>
-<li>New device support: 1400XL/1450XLD modem and disk drive, 835/1030 full emulation, SIDE 3.1, SuperSALT Test Assembly, MIDIMATE/serial over TCP/IP,
-Chalk Board PowerPad, Stack Lightpen.</li>
-<li>UI: Display pan/zoom, new command line switches, improved pad input, improved save state support in many devices, screen reader support.</li>
-<li>Debugger: Write-only register readback, improved source debugging support, improved memory window, trace save/load in the performance analyzer.</li>
-<li>Accuracy improvements to cartridge cassette tape, CPU, device, disk, video, POKEY, network, and VBXE emulation.</li>
-<li>AltirraOS updated to 3.41 with fixes for type 4 polling, keyboard handling, interrupt support, math pack, screen device, and SIO.</li>
+<li>Cassette: Fixed a crash if decoding errors occurred while loading a raw tape.</li>
+<li>Devices: Fixed a crash when adding a device with certain nodes selected. </li>
+<li>Display: Fixed D3D9 gamma correction bugs in specific display configurations with bloom enabled.</li>
+<li>Display: Fixed crash when enabling frame blending at extended PAL height and artifacting enabled.</li>
+<li>Display: Fixed regression in NTSC high artifacting on ARM64 only.</li>
+<li>Input: Fixed console controller inputs being blocked in full-screen mode.</li>
+<li>Printer: Fixed rendering artifacts at edges when scrolling 1020 plotter output at high zoom.</li>
+<li>Printer: Fixed a crash when zooming in on 1020 plotter output on ARM64 only.</li>
+<li>UI: Fixed some cases of empty error dialogs when long operations are cancelled.</li>
 				</ul>
 			</description>
    			<link>https://www.virtualdub.org/altirra.html</link>

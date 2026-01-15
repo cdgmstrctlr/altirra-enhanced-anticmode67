@@ -10,7 +10,6 @@ class IVDTTexture;
 
 class IVDTResource : public IVDRefUnknown {
 public:
-	virtual bool Restore() = 0;
 };
 
 class IVDTUnorderedAccessView : public IVDRefCount {
@@ -22,9 +21,13 @@ public:
 	virtual void Unlock() = 0;
 };
 
+class IVDTConstantBuffer : public IVDTResource {
+public:
+	virtual void Load(const void *newData) = 0;
+};
+
 class IVDTSurface : public IVDTResource {
 public:
-	virtual bool Restore() = 0;
 	virtual bool Readback(IVDTReadbackBuffer *target) = 0;
 	virtual void Copy(uint32 dx, uint32 dy, IVDTSurface *src, uint32 sx, uint32 sy, uint32 w, uint32 h) = 0;
 	virtual void GetDesc(VDTSurfaceDesc& desc) = 0;
@@ -34,7 +37,6 @@ public:
 
 class IVDTTexture : public IVDTResource {
 public:
-	virtual bool Restore() = 0;
 	virtual void GetDesc(VDTTextureDesc& desc) = 0;
 };
 
@@ -62,13 +64,11 @@ class IVDTVertexFormat : public IVDTResource {
 
 class IVDTVertexBuffer : public IVDTResource {
 public:
-	virtual bool Restore() = 0;
 	virtual bool Load(uint32 offset, uint32 size, const void *data) = 0;
 };
 
 class IVDTIndexBuffer : public IVDTResource {
 public:
-	virtual bool Restore() = 0;
 	virtual bool Load(uint32 offset, uint32 size, const void *data) = 0;
 };
 
@@ -79,6 +79,26 @@ class IVDTRasterizerState: public IVDTResource {
 };
 
 class IVDTSamplerState: public IVDTResource {
+};
+
+class IVDTQuery : public IVDTResource {
+public:
+	virtual bool IsPending() const = 0;
+};
+
+class IVDTTimestampQuery : public IVDTQuery {
+public:
+	virtual void Issue() = 0;
+
+	virtual uint64 GetTimestamp() const = 0;
+};
+
+class IVDTTimestampFrequencyQuery : public IVDTQuery {
+public:
+	virtual void Begin() = 0;
+	virtual void End() = 0;
+
+	virtual double GetTimestampFrequency() const = 0;
 };
 
 struct VDTAsyncPresentStatus {
@@ -121,6 +141,12 @@ struct VDTAsyncPresentStatus {
 
 	// Refresh rate in Hz if available (>0). Can vary slightly due to real-time estimation.
 	float mRefreshRate = 0;
+
+	// If available, the last two vsync markers as (qpc, refresh) pairs. Not guaranteed to
+	// be contiguous refreshes even if presenting at refresh rate.
+	bool mbHaveVSyncInfo = false;
+	uint64 mVSyncQpcCounts[2] {}; 
+	uint32 mVSyncRefreshCounts[2] {};
 };
 
 class IVDTAsyncPresent {
@@ -150,7 +176,7 @@ public:
 	virtual VDTSwapChainCompositionStatus GetLastCompositionStatus() const = 0;
 
 	virtual void Present() = 0;
-	virtual void PresentVSync(void *monitor, bool adaptive) = 0;
+	virtual void PresentVSync(void *monitor) = 0;
 	virtual void PresentVSyncRestart() = 0;
 	virtual bool PresentVSyncComplete() = 0;
 	virtual void PresentVSyncAbort() = 0;
@@ -171,6 +197,7 @@ public:
 	virtual bool CreateVertexFormat(const VDTVertexElement *elements, uint32 count, IVDTVertexProgram *vp, IVDTVertexFormat **format) = 0;
 	virtual bool CreateVertexBuffer(uint32 size, bool dynamic, const void *initData, IVDTVertexBuffer **buffer) = 0;
 	virtual bool CreateIndexBuffer(uint32 count, bool index32, bool dynamic, const void *initData, IVDTIndexBuffer **buffer) = 0;
+	virtual vdrefptr<IVDTConstantBuffer> CreateConstantBuffer(uint32 size, const void *initDataOpt) = 0;
 
 	virtual bool CreateBlendState(const VDTBlendStateDesc& desc, IVDTBlendState **state) = 0;
 	virtual bool CreateRasterizerState(const VDTRasterizerStateDesc& desc, IVDTRasterizerState **state) = 0;
@@ -201,18 +228,18 @@ public:
 	virtual vdrect32 GetScissorRect() = 0;
 	virtual void SetScissorRect(const vdrect32& r) = 0;
 
-	virtual void SetVertexProgramConstCount(uint32 count) = 0;
-	virtual void SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
-	virtual void SetFragmentProgramConstCount(uint32 count) = 0;
-	virtual void SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
+	virtual void VsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) = 0;
+	virtual void VsClearConstantBuffersStartingAt(uint32 index) = 0;
+
+	virtual void PsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) = 0;
+	virtual void PsClearConstantBuffersStartingAt(uint32 index) = 0;
 
 	virtual void Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) = 0;
 	virtual void DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, uint32 primitiveCount) = 0;
 	virtual void DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVertexIndex, uint32 minVertex, uint32 vertexCount, uint32 startIndex, uint32 primitiveCount) = 0;
 
 	virtual void CsSetProgram(IVDTComputeProgram *program) = 0;
-	virtual void CsSetConstCount(uint32 count) = 0;
-	virtual void CsSetConstF(uint32 baseIndex, uint32 count, const float *data) = 0;
+	virtual void CsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) = 0;
 	virtual void CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) = 0;
 	virtual void CsSetTextures(uint32 baseIndex, uint32 count, IVDTTexture *const *textures) = 0;
 	virtual void CsClearTexturesStartingAt(uint32 baseIndex) = 0;
@@ -222,6 +249,9 @@ public:
 
 	virtual uint32 InsertFence() = 0;
 	virtual bool CheckFence(uint32 id) = 0;
+
+	virtual vdrefptr<IVDTTimestampQuery> CreateTimestampQuery() = 0;
+	virtual vdrefptr<IVDTTimestampFrequencyQuery> CreateTimestampFrequencyQuery() = 0;
 
 	virtual bool RecoverDevice() = 0;
 	virtual bool OpenScene() = 0;

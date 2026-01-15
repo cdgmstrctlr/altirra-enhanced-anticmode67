@@ -42,6 +42,29 @@ enum class ATVideoRecordingScalingMode : uint8 {
 	Count
 };
 
+struct ATVideoRecordingDebugInfo {
+	// Output video resolution, in pixels.
+	uint32 mImageWidth;
+	uint32 mImageHeight;
+
+	// Destination rectangle for original video image, in output coordinates.
+	// This provides the mapping for any letterboxing that is occurring.
+	vdrect32f mVideoDestRect;
+
+	// Number of blocks across/down and the block size for ZMBV encoding.
+	uint32 mNumBlocksX;
+	uint32 mNumBlocksY;
+	uint32 mBlockWidth;
+	uint32 mBlockHeight;
+
+	struct MotionVector {
+		sint8 mX;
+		sint8 mY;
+	};
+
+	vdfastvector<MotionVector> mMotionVectors;
+};
+
 class IATVideoWriter {
 public:
 	virtual ~IATVideoWriter() = default;
@@ -58,6 +81,12 @@ public:
 		ATVideoRecordingScalingMode scalingMode,
 		const uint32 *palette, double samplingRate, bool stereo, double timestampRate, bool halfRate, bool encodeAllFrames, IATUIRenderer *r) = 0;
 	virtual void Shutdown() = 0;
+
+	virtual bool IsPaused() const = 0;
+	virtual void Pause() = 0;
+	virtual void Resume() = 0;
+
+	virtual bool GetDebugInfo(ATVideoRecordingDebugInfo& debugInfo) = 0;
 };
 
 void ATCreateVideoWriter(IATVideoWriter **w);

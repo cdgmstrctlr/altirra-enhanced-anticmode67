@@ -262,7 +262,8 @@ bool VDDisplayRenderer3D::Init(IVDTContext& ctx) {
 		!ctx.CreateBlendState(bsdesc, &mpBS) ||
 		!ctx.CreateBlendState(bssdesc, &mpBSStencil) ||
 		!ctx.CreateBlendState(bscdesc, &mpBSColor) ||
-		!ctx.CreateRasterizerState(rsdesc, &mpRS)
+		!ctx.CreateRasterizerState(rsdesc, &mpRS) ||
+		!(mpConstantBuffer = ctx.CreateConstantBuffer(sizeof(RenderConstantBuffer), nullptr))
 		)
 	{
 		Shutdown();
@@ -327,6 +328,28 @@ void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx, bool
 
 	mCaps.mbSupportsHDR = renderLinear;
 
+	mSDRIntensity = dctx.mSDRBrightness / 80.0f;
+
+	if (mLastSDRIntensity != mSDRIntensity || mLastWidth != mWidth || mLastHeight != mHeight) {
+		mLastSDRIntensity = mSDRIntensity;
+		mLastWidth = mWidth;
+		mLastHeight = mHeight;
+
+		float iw = 1.0f / (float)mWidth;
+		float ih = 1.0f / (float)mHeight;
+
+		RenderConstantBuffer cbuf {
+			2.0f * iw,
+			-2.0f * ih,
+			-1.0f,
+			1.0f,
+			mSDRIntensity,
+			{}
+		};
+
+		mpConstantBuffer->Load(&cbuf);
+	}
+
 	ApplyBaselineState();
 
 	VDTViewport vp;
@@ -342,19 +365,6 @@ void VDDisplayRenderer3D::Begin(int w, int h, VDDisplayNodeContext3D& dctx, bool
 	mClipRect.set(0, 0, w, h);
 	mOffsetX = 0;
 	mOffsetY = 0;
-	mSDRIntensity = dctx.mSDRBrightness / 80.0f;
-
-	const float cbuf[4] {
-		mSDRIntensity,
-		0.0f,
-		0.0f,
-		0.0f
-	};
-
-	if (mbRenderLinear) {
-		mpContext->SetFragmentProgramConstCount(1);
-		mpContext->SetFragmentProgramConstF(0, 1, cbuf);
-	}
 }
 
 void VDDisplayRenderer3D::End() {
@@ -1055,22 +1065,8 @@ VDDisplayCachedImage3D *VDDisplayRenderer3D::GetCachedImage(VDDisplayImageView& 
 }
 
 void VDDisplayRenderer3D::ApplyBaselineState() {
-	float iw = 1.0f / (float)mWidth;
-	float ih = 1.0f / (float)mHeight;
-
-	const float vsconst[8]={
-		2.0f * iw,
-		-2.0f * ih,
-		-1.0f,
-		1.0f,
-		mSDRIntensity,
-		0.0f,
-		0.0f,
-		0.0f
-	};
-
-	mpContext->SetVertexProgramConstCount(2);
-	mpContext->SetVertexProgramConstF(0, 2, vsconst);
+	mpContext->VsSetConstantBuffer(0, mpConstantBuffer);
+	mpContext->PsSetConstantBuffer(0, mpConstantBuffer);
 	mpContext->SetIndexStream(mpIB);
 	mpContext->SetBlendState(mpBS);
 	mpContext->SetSamplerStates(0, 1, &mpSS);

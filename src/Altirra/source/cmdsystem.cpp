@@ -265,7 +265,6 @@ void OnCommandVideoToggleEnhancedMode67() { // CMC
 	}
 }
 
-
 void OnCommandVideoToggleFrameBlending() {
 	ATGTIAEmulator& gtia = g_sim.GetGTIA();
 

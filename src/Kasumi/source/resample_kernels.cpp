@@ -326,8 +326,108 @@ void VDResamplerLanczos3Filter::GenerateFilter(float *dst, double offset) const 
 }
 
 void VDResamplerLanczos3Filter::GenerateFilterBank(float *dst) const {
-	for(int offset=0; offset<256; ++offset) {
-		GenerateFilter(dst, offset * (1.0f / 256.0f));
-		dst += mTaps;
+	float *VDRESTRICT dst2 = dst;
+
+	// We need to generate 256 filters at offsets of [0..255]/256. However, calling
+	// GenerateFilter() in a loop is pretty slow due to all of the sinc() calls. The
+	// angles are evenly spaced, so we can iterate them much more quickly. To aid
+	// this, the loops are transposed so we evaluate one tap of the filter at a time
+	// across all 256 phases.
+	//
+	// In the unscaled domain, taps are 1.0 apart and filters are 1/256 apart. The
+	// scaling factor (mScale) changes this to mScale and mScale/256 instead.
+	// GenerateFilter() negates the offset so we actually step by -mScale/256 instead.
+
+	const int numTaps = mTaps;
+
+	static const double pi  = 3.1415926535897932384626433832795;	// pi
+	static const double pi3 = 1.0471975511965977461542144610932;	// pi/3
+
+	struct vec2d {
+		double x, y;
+	};
+
+	double t0 = -(double)((numTaps>>1)-1) * mScale;
+	for(int i=0; i<numTaps; ++i) {
+		double tinc1 = -pi * mScale / 256.0;
+		double tinc3 = -pi3 * mScale / 256.0;
+
+		double csinc1 = cos(tinc1);
+		double sninc1 = sin(tinc1);
+		double csinc3 = cos(tinc3);
+		double sninc3 = sin(tinc3);
+
+		double cs1a = cos(pi*t0);
+		double cs3a = cos(pi3*t0);
+		double sn1a = sin(pi*t0);
+		double sn3a = sin(pi3*t0);
+
+		double cs1b = cs1a*csinc1 - sn1a*sninc1;
+		double sn1b = sn1a*csinc1 + cs1a*sninc1;
+		double cs3b = cs3a*csinc3 - sn3a*sninc3;
+		double sn3b = sn3a*csinc3 + cs3a*sninc3;
+
+		vec2d cs1 { cs1a, cs1b };
+		vec2d cs3 { cs3a, cs3b };
+		vec2d sn1 { sn1a, sn1b };
+		vec2d sn3 { sn3a, sn3b };
+
+		double csinc1b = cos(tinc1 * 2.0f);
+		double sninc1b = sin(tinc1 * 2.0f);
+		double csinc3b = cos(tinc3 * 2.0f);
+		double sninc3b = sin(tinc3 * 2.0f);
+
+		double tinc = -mScale / 256.0f;
+		double tinc2 = tinc*2;
+		vec2d t { t0, t0 + tinc };
+		for(int offset = 0; offset < 128; ++offset) {
+			double v1 = 0;
+			double v2 = 0;
+
+			if (fabs(t.x) < 3.0) {
+				if (fabs(t.x) < 1e-9)
+					v1 = 1.0;
+				else
+					v1 = sn1.x * sn3.x / ((pi*pi3) * (t.x*t.x));
+			}
+
+			if (fabs(t.y) < 3.0) {
+				if (fabs(t.y) < 1e-9)
+					v2 = 1.0;
+				else
+					v2 = sn1.y * sn3.y / ((pi*pi3) * (t.y*t.y));
+			}
+
+			dst2[i + offset*numTaps*2] = (float)v1;
+			dst2[i + offset*numTaps*2 + numTaps] = (float)v2;
+
+			vec2d cnext1 = { cs1.x*csinc1b - sn1.x*sninc1b, cs1.y*csinc1b - sn1.y*sninc1b };
+			vec2d snext1 = { sn1.x*csinc1b + cs1.x*sninc1b, sn1.y*csinc1b + cs1.y*sninc1b };
+			cs1 = cnext1;
+			sn1 = snext1;
+
+			vec2d cnext3 = { cs3.x*csinc3b - sn3.x*sninc3b, cs3.y*csinc3b - sn3.y*sninc3b };
+			vec2d snext3 = { sn3.x*csinc3b + cs3.x*sninc3b, sn3.y*csinc3b + cs3.y*sninc3b };
+			cs3 = cnext3;
+			sn3 = snext3;
+
+			t.x += tinc2;
+			t.y += tinc2;
+		}
+
+		t0 += mScale;
 	}
+
+#if 0
+	// check against reference
+	vdblock<float> tmp(256 * numTaps);
+	for(int offset=0; offset<256; ++offset) {
+		GenerateFilter(&tmp[offset * numTaps], offset * (1.0f / 256.0f));
+	}
+
+	for(int i=0, n = 256*numTaps; i < n; ++i) {
+		if (fabsf(tmp[i] - dst[i]) > 0.75f / 16384.0f)
+			__debugbreak();
+	}
+#endif
 }

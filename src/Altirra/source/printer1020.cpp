@@ -15,9 +15,15 @@
 //	with this program. If not, see <http://www.gnu.org/licenses/>.
 
 #include <stdafx.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/propertyset.h>
 #include "printer1020.h"
 #include "printer1020font.h"
+
+ATConfigVarRGBColor g_ATCVDevice1020Pen0("devices.1020.pen0", 0x000000);	// black
+ATConfigVarRGBColor g_ATCVDevice1020Pen1("devices.1020.pen1", 0x181FF0);	// blue
+ATConfigVarRGBColor g_ATCVDevice1020Pen2("devices.1020.pen2", 0x0B9C2F);	// green
+ATConfigVarRGBColor g_ATCVDevice1020Pen3("devices.1020.pen3", 0xC91B12);	// red
 
 void ATCreateDevicePrinter1020(const ATPropertySet& pset, IATDevice **dev) {
 	vdrefptr<ATDevicePrinter1020> p(new ATDevicePrinter1020);
@@ -25,12 +31,15 @@ void ATCreateDevicePrinter1020(const ATPropertySet& pset, IATDevice **dev) {
 	*dev = p.release();
 }
 
-extern const ATDeviceDefinition g_ATDeviceDefPrinter1020 = { "1020", nullptr, L"1020 Color Printer", ATCreateDevicePrinter1020 };
+extern const ATDeviceDefinition g_ATDeviceDefPrinter1020 = { "1020", "1020", L"1020 Color Printer", ATCreateDevicePrinter1020 };
 
 ATDevicePrinter1020::ATDevicePrinter1020()
 	: ATDevicePrinterBase(true, false, false, true)
 {
 	SetSaveStateAgnostic();
+
+	for(auto& v : mPenColors)
+		v = -1;
 }
 
 ATDevicePrinter1020::~ATDevicePrinter1020() {
@@ -38,6 +47,36 @@ ATDevicePrinter1020::~ATDevicePrinter1020() {
 
 void ATDevicePrinter1020::GetDeviceInfo(ATDeviceInfo& info) {
 	info.mpDef = &g_ATDeviceDefPrinter1020;
+}
+
+void ATDevicePrinter1020::GetSettings(ATPropertySet& settings) {
+	settings.Clear();
+
+	VDStringA name;
+	for(int i=0; i<4; ++i) {
+		if (mPenColors[i] >= 0) {
+			name.sprintf("pencolor%d", i);
+
+			settings.SetUint32(name.c_str(), mPenColors[i]);
+		}
+	}
+}
+
+bool ATDevicePrinter1020::SetSettings(const ATPropertySet& settings) {
+	VDStringA name;
+	for(int i=0; i<4; ++i) {
+		name.sprintf("pencolor%d", i);
+
+		uint32 c = 0;
+		if (settings.TryGetUint32(name.c_str(), c))
+			mPenColors[i] = c & 0xFFFFFF;
+		else
+			mPenColors[i] = -1;
+	}
+
+	ReconvertPens();
+
+	return true;
 }
 
 void ATDevicePrinter1020::ColdReset() {
@@ -55,6 +94,8 @@ void ATDevicePrinter1020::OnCreatedGraphicalOutput() {
 			mY = 0;
 		}
 	);
+
+	ReconvertPens();
 }
 
 ATPrinterGraphicsSpec ATDevicePrinter1020::GetGraphicsSpec() const {
@@ -86,7 +127,7 @@ void ATDevicePrinter1020::GetStatusFrameInternal(uint8 frame[4]) {
 	ResetState();
 }
 
-void ATDevicePrinter1020::HandleFrameInternal(IATPrinterOutput& output, uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
+void ATDevicePrinter1020::HandleFrameInternal(uint8 orientation, uint8 *buf, uint32 len, bool graphics) {
 	// Commands:
 	//	ESC CTRL G		Switch to graphics mode
 	//	ESC CTRL P		20 character text mode
@@ -595,14 +636,14 @@ bool ATDevicePrinter1020::DrawToAbsolute(sint32 x, sint32 y) {
 					pt1 += step * dashLen;
 					pt2 = pt1 + step * drawSteps;
 
-					mpPrinterGraphicalOutput->AddVector(pt1, pt2, mPenIndex);
+					mpPrinterGraphicalOutput->AddVector(pt1, pt2, mPrintPenColors[mPenIndex]);
 
 					pt1 = pt2;
 					stepsLeft -= dashLen;
 				}
 			}
 		} else {
-			mpPrinterGraphicalOutput->AddVector(pt1, pt2, mPenIndex);
+			mpPrinterGraphicalOutput->AddVector(pt1, pt2, mPrintPenColors[mPenIndex]);
 		}
 	}
 
@@ -618,4 +659,19 @@ vdfloat2 ATDevicePrinter1020::ConvertPointToMM(sint32 x, sint32 y) const {
 
 vdfloat2 ATDevicePrinter1020::ConvertVectorToMM(sint32 x, sint32 y) const {
 	return vdfloat2 { (float)x * kUnitsToMM, (float)y * -kUnitsToMM };
+}
+
+void ATDevicePrinter1020::ReconvertPens() {
+	if (mpPrinterGraphicalOutput) {
+		const uint32 defaultColors[] {
+			g_ATCVDevice1020Pen0,
+			g_ATCVDevice1020Pen1,
+			g_ATCVDevice1020Pen2,
+			g_ATCVDevice1020Pen3,
+		};
+
+		for(int i=0; i<4; ++i) {
+			mPrintPenColors[i] = mpPrinterGraphicalOutput->ConvertColor(mPenColors[i] >= 0 ? mPenColors[i] : defaultColors[i]);
+		}
+	}
 }

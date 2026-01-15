@@ -92,10 +92,8 @@ void ATDeviceExeLoader::Init() {
 void ATDeviceExeLoader::Shutdown() {
 	Load(nullptr);
 
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATDeviceExeLoader::Load(const wchar_t *path) {
@@ -196,8 +194,7 @@ void ATDeviceExeLoader::Load(const wchar_t *path) {
 
 void ATDeviceExeLoader::InitSIO(IATDeviceSIOManager *mgr) {
 	mpSIOMgr = mgr;
-
-	mgr->AddDevice(this);
+	mpSIOInterface = mgr->AddDevice(this);
 
 	if (!mExeData.empty())
 		RecreatePreloadSegments();
@@ -221,22 +218,22 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialBeginCommand(const ATDevice
 					if (cmd.mAUX[0] > 0 && cmd.mAUX[0] < 3 && !cmd.mAUX[1]) {
 						mSegmentIndex = 0;
 
-						mpSIOMgr->BeginCommand();
+						mpSIOInterface->BeginCommand();
 						SetupHighSpeed(cmd);
-						mpSIOMgr->SendACK();
-						mpSIOMgr->SendComplete();
-						mpSIOMgr->SendData(g_ATFirmwareExeLoader0700, 128, true);
-						mpSIOMgr->EndCommand();
+						mpSIOInterface->SendACK();
+						mpSIOInterface->SendComplete();
+						mpSIOInterface->SendData(g_ATFirmwareExeLoader0700, 128, true);
+						mpSIOInterface->EndCommand();
 						return kCmdResponse_Start;
 					}
 				} else {
 					if (cmd.mAUX[0] > 0 && cmd.mAUX[0] < 5 && !cmd.mAUX[1]) {
 						mSegmentIndex = 0;
 
-						mpSIOMgr->BeginCommand();
+						mpSIOInterface->BeginCommand();
 						SetupHighSpeed(cmd);
-						mpSIOMgr->SendACK();
-						mpSIOMgr->SendComplete();
+						mpSIOInterface->SendACK();
+						mpSIOInterface->SendComplete();
 
 						char buf[128];
 						memcpy(buf, g_ATFirmwareExeLoaderHiSpeed0700 + 128 * (cmd.mAUX[0] - 1), 128);
@@ -245,8 +242,8 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialBeginCommand(const ATDevice
 						if (cmd.mAUX[0] == 4)
 							buf[127] = (uint8)mpSIOMgr->GetHighSpeedIndex();
 
-						mpSIOMgr->SendData(buf, 128, true);
-						mpSIOMgr->EndCommand();
+						mpSIOInterface->SendData(buf, 128, true);
+						mpSIOInterface->EndCommand();
 						return kCmdResponse_Start;
 					}
 				}
@@ -261,12 +258,12 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialBeginCommand(const ATDevice
 						0x00
 					};
 
-					mpSIOMgr->BeginCommand();
-						SetupHighSpeed(cmd);
-					mpSIOMgr->SendACK();
-					mpSIOMgr->SendComplete();
-					mpSIOMgr->SendData(status, 4, true);
-					mpSIOMgr->EndCommand();
+					mpSIOInterface->BeginCommand();
+					SetupHighSpeed(cmd);
+					mpSIOInterface->SendACK();
+					mpSIOInterface->SendComplete();
+					mpSIOInterface->SendData(status, 4, true);
+					mpSIOInterface->EndCommand();
 				}
 				return kCmdResponse_Start;
 		}
@@ -278,10 +275,10 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnSerialBeginCommand(const ATDevice
 }
 
 IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnCmdReadSegment(const ATDeviceSIOCommand& cmd) {
-	mpSIOMgr->BeginCommand();
+	mpSIOInterface->BeginCommand();
 	SetupHighSpeed(cmd);
-	mpSIOMgr->SendACK();
-	mpSIOMgr->SendComplete();
+	mpSIOInterface->SendACK();
+	mpSIOInterface->SendComplete();
 
 	if ((mSegmentIndex ^ cmd.mAUX[0]) & 1)
 		++mSegmentIndex;
@@ -289,7 +286,7 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnCmdReadSegment(const ATDeviceSIOC
 	if (mSegmentIndex >= (mPreloadSegments.size() + mSegments.size()) * 2) {
 		uint8 termData[8] = {0};
 		
-		mpSIOMgr->SendData(termData, 8, true);
+		mpSIOInterface->SendData(termData, 8, true);
 	} else {
 		const uint32 idx = mSegmentIndex >> 1;
 		const Segment& seg = idx < mPreloadSegments.size()
@@ -298,9 +295,9 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnCmdReadSegment(const ATDeviceSIOC
 
 		if (mSegmentIndex & 1) {
 			if (idx < mPreloadSegments.size())
-				mpSIOMgr->SendData(mPreloadData.data() + seg.mOffset, seg.mLen, true);
+				mpSIOInterface->SendData(mPreloadData.data() + seg.mOffset, seg.mLen, true);
 			else
-				mpSIOMgr->SendData(mExeData.data() + seg.mOffset, seg.mLen, true);
+				mpSIOInterface->SendData(mExeData.data() + seg.mOffset, seg.mLen, true);
 		} else {
 			uint8 stepData[8];
 
@@ -315,17 +312,17 @@ IATDeviceSIO::CmdResponse ATDeviceExeLoader::OnCmdReadSegment(const ATDeviceSIOC
 
 			VDWriteUnalignedLEU16(stepData + 6, mSegmentIndex + 1);
 
-			mpSIOMgr->SendData(stepData, 8, true);
+			mpSIOInterface->SendData(stepData, 8, true);
 		}
 	}
 
-	mpSIOMgr->EndCommand();
+	mpSIOInterface->EndCommand();
 	return kCmdResponse_Start;
 }
 
 void ATDeviceExeLoader::SetupHighSpeed(const ATDeviceSIOCommand& cmd) {
 	if (!cmd.mbStandardRate)
-		mpSIOMgr->SetTransferRate(cmd.mCyclesPerBit, cmd.mCyclesPerBit * 10);
+		mpSIOInterface->SetTransferRate(cmd.mCyclesPerBit, cmd.mCyclesPerBit * 10);
 }
 
 void ATDeviceExeLoader::RecreatePreloadSegments() {

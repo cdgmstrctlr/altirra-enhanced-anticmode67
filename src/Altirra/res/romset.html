@@ -218,12 +218,12 @@
     <ul>
       <li>XL/XE/XEGS: Fixed a bug in the peripheral handler loader where handlers loaded through a CIO type 4 poll were improperly raising MEMLO. This is only supposed to happen for startup (type 3) polls.</li>
     </ul>
-    <li>Version 3.34</li>
+    <li>Version 3.34 (Altirra 4.10)</li>
     <ul>
       <li>Adjusted TIMFLG usage in SIO routines to match the official description.</li>
       <li>Improved compatibility with tape loaders that rely on the initial register values when invoking the run address.</li>
     </ul>
-    <li>Version 3.33</li>
+    <li>Version 3.33 (Altirra 4.01)</li>
     <ul>
       <li>Improved compatibility with programs that use the KEYDEL counter to detect held keys (fixes menu cursor movement in BrushupV40).</li>
     </ul>
@@ -246,18 +246,18 @@
     <ul>
       <li>Implemented support for XL/XE NOCLIK variable.</li>
     </ul>
-	  <li>Version 3.28</li>
+	  <li>Version 3.28 (Altirra 4.00-test3)</li>
     <ul>
       <li>Fixed a memory overlap bug in FDIV that occasionally introduced small errors into results.</li>
       <li>Fixed E: put byte routine returning Y&lt;&gt;1 with cursor inhibited.</li>
     </ul>
-	  <li>Version 3.27</li>
+	  <li>Version 3.27 (Altirra 4.00-test1)</li>
     <ul>
       <li>800 build: Modified internal variable usage to accommodate direct calls into the E: and P: handlers from Monkey Wrench II.</li>
       <li>Improved compatibility of P: handler with OS-B and XL/XE OS behavior -- EOLs and inverse characters are handled more similarly, and the 800 build now pads on close with $20 while the XL/XE build uses $9B.</li>
     </ul>
 
-	  <li>Version 3.26</li>
+	  <li>Version 3.26 (Altirra 3.90)</li>
     <ul>
       <li>Line draws in GR.0 no longer restore the cursor, which was causing screen corruption in Worms of Bemer.</li>
     </ul>

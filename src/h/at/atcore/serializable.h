@@ -121,9 +121,9 @@ concept ATExchanger = requires(T& rw) {
 };
 
 template<typename T>
-concept ATExchangeable = requires(T& obj, ATSerializer& ser, ATDeserializer& deser) {
-	obj.Exchange(deser);
-	obj.Exchange(ser);
+concept ATExchangeable = requires(T& v, const T& cv, ATSerializer& ser, ATDeserializer& deser) {
+	v.Exchange(deser);
+	cv.Exchange(ser);
 };
 
 #endif

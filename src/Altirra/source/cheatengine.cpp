@@ -64,7 +64,7 @@ void ATCheatEngine::Load(const wchar_t *filename) {
 	Clear();
 
 	VDFileStream fs(filename);
-	VDBufferedStream bs(&fs, 4096);
+	VDBufferedRandomAccessStream bs(&fs, 4096);
 
 	static const uint8 kSignatureA8T[4]={ 'A', '8', 'T', 1 };
 	uint8 buf[kATCheatFileSignatureLen];
@@ -88,8 +88,8 @@ void ATCheatEngine::Load(const wchar_t *filename) {
 				if (address < mMemorySize)
 					mValidFlags[address] = 1;
 			}
-		} catch(const MyError& e) {
-			throw MyError("Unable to read .A8T format file: %s", e.gets());
+		} catch(const VDException& e) {
+			throw VDException(L"Unable to read .A8T format file: %ls", e.wc_str());
 		}
 	} else if (headerAvail >= kATCheatFileSignatureLen && !memcmp(buf, kATCheatFileSignature, kATCheatFileSignatureLen)) {
 		bs.Seek(0);

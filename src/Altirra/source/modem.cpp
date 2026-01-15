@@ -17,6 +17,7 @@
 #include <stdafx.h>
 #include <at/atcore/asyncdispatcher.h>
 #include <at/atcore/propertyset.h>
+#include <at/atcore/consoleoutput.h>
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/enumparseimpl.h>
 #include <at/atcore/scheduler.h>
@@ -143,6 +144,9 @@ void *ATModemEmulator::AsInterface(uint32 iid) {
 
 		case IATDeviceAudioOutput::kTypeID:
 			return static_cast<IATDeviceAudioOutput *>(mpModemSound);
+
+		case IATDeviceDiagnostics::kTypeID:
+			return static_cast<IATDeviceDiagnostics *>(this);
 
 		default:
 			return ATDevice::AsInterface(iid);
@@ -439,6 +443,32 @@ void ATModemEmulator::SetTerminalState(const ATDeviceSerialTerminalState& state)
 
 ATDeviceSerialStatus ATModemEmulator::GetStatus() {
 	return mControlState;
+}
+
+void ATModemEmulator::DumpStatus(ATConsoleOutput& output) {
+	const char *connectionStateStr = "?";
+	switch(mConnectionState) {
+		case kConnectionState_NotConnected:		connectionStateStr = "not connected"; break;
+		case kConnectionState_Connecting:		connectionStateStr = "connecting"; break;
+		case kConnectionState_Connected:		connectionStateStr = "connected"; break;
+		case kConnectionState_LostCarrier:		connectionStateStr = "lost carrier"; break;
+		case kConnectionState_Dialing:			connectionStateStr = "dialing"; break;
+		case kConnectionState_Ringing:			connectionStateStr = "ringing"; break;
+		case kConnectionState_Handshaking:		connectionStateStr = "handshaking"; break;
+	}
+
+	const char *commandStateStr = "?";
+	switch(mCommandState) {
+		case kCommandState_Idle:		commandStateStr = "idle"; break;
+		case kCommandState_A:			commandStateStr = "A"; break;
+		case kCommandState_AT:			commandStateStr = "AT"; break;
+		case kCommandState_Dialing:		commandStateStr = "dialing"; break;
+	}
+
+	output("Connection state: %s", connectionStateStr);
+	output("Command state:    %s", commandStateStr);
+	output("Command mode:     %s", mbCommandMode ? "yes" : "no");
+	output("Terminal state:   %cDTR, %cRTS", mTerminalState.mbDataTerminalReady ? '+' : '-', mTerminalState.mbRequestToSend ? '+' : '-');
 }
 
 void ATModemEmulator::SetConfig(const ATRS232Config& config) {
@@ -828,6 +858,13 @@ void ATModemEmulator::OffHook() {
 
 	if (mpToneDialDetector)
 		mpToneDialDetector->SetEnabled(mbAudioToPhoneEnabled);
+}
+
+void ATModemEmulator::SetAutoAnswer(bool enabled) {
+	if (mbOffHook)
+		return;
+
+	mRegisters.mAutoAnswerRings = enabled ? 1 : 0;
 }
 
 void ATModemEmulator::SetAudioToPhoneEnabled(bool enabled) {

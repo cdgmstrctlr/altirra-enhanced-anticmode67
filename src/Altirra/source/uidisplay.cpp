@@ -42,6 +42,7 @@
 #include <at/atnativeui/uipanewindow.h>
 #include "console.h"
 #include "devicemanager.h"
+#include "inputdefs.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "simulator.h"
@@ -179,10 +180,10 @@ namespace {
 
 class ATDisplayImageDecoder final : public IVDDisplayImageDecoder {
 public:
-	bool DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) override;
+	bool DecodeImage(VDPixmapBuffer& buf, VDBufferedRandomAccessStream& stream) override;
 } gATDisplayImageDecoder;
 
-bool ATDisplayImageDecoder::DecodeImage(VDPixmapBuffer& buf, VDBufferedStream& stream) {
+bool ATDisplayImageDecoder::DecodeImage(VDPixmapBuffer& buf, VDBufferedRandomAccessStream& stream) {
 	vdautoptr<IVDImageDecoderPNG> dec { VDCreateImageDecoderPNG() };
 
 	sint64 len = stream.Length();
@@ -234,7 +235,7 @@ public:
 			::KillTimer(nullptr, mTimerId);
 	}
 
-	virtual void Invalidate() {
+	void Invalidate() override {
 		if (!g_pDisplay)
 			return;
 
@@ -242,11 +243,11 @@ public:
 			g_pDisplay->Invalidate();
 	}
 
-	virtual void ConstrainCursor(bool constrain) {
+	void ConstrainCursor(bool constrain) override {
 		UpdateCursorConstraint(mbMouseConstrainedByUI, constrain);
 	}
 
-	virtual void CaptureCursor(bool motionMode) {
+	void CaptureCursor(bool motionMode) override {
 		if (!mbMouseCaptured) {
 			if (mhwnd)
 				::SetCapture(mhwnd);
@@ -269,7 +270,7 @@ public:
 		}
 	}
 
-	virtual void ReleaseCursor() {
+	void ReleaseCursor() override {
 		mbMouseCaptured = false;
 		mbMouseConstrainedByUI = false;
 
@@ -281,7 +282,7 @@ public:
 			::ReleaseCapture();
 	}
 
-	virtual vdpoint32 GetCursorPosition() {
+	vdpoint32 GetCursorPosition() override {
 		if (!mhwnd)
 			return vdpoint32(0, 0);
 
@@ -293,12 +294,12 @@ public:
 		return vdpoint32(pt.x, pt.y);
 	}
 
-	virtual void SetCursorImage(uint32 id) {
+	void SetCursorImage(uint32 id) override {
 		if (mbCursorImageChangesEnabled)
 			SetCursorImageDirect(id);
 	}
 
-	virtual void *BeginModal() {
+	void *BeginModal() override {
 		ATActivateUIPane(kATUIPaneId_Display, true);
 
 		ATUIStepDoModalWindow *step = new ATUIStepDoModalWindow;
@@ -319,7 +320,7 @@ public:
 		return step;
 	}
 
-	virtual void EndModal(void *cookie) {
+	void EndModal(void *cookie) override {
 		VDASSERT(mModalCount);
 
 		if (!--mModalCount) {
@@ -334,11 +335,11 @@ public:
 		step->Release();
 	}
 
-	virtual bool IsKeyDown(uint32 vk) {
+	bool IsKeyDown(uint32 vk) override {
 		return GetKeyState(vk) < 0;
 	}
 
-	virtual IATUIClipboard *GetClipboard() {
+	IATUIClipboard *GetClipboard() override {
 		return this;
 	}
 
@@ -350,7 +351,7 @@ public:
 	}
 
 public:
-	virtual void CopyText(const wchar_t *s) {
+	void CopyText(const wchar_t *s) override {
 		if (mhwnd)
 			ATCopyTextToClipboard(mhwnd, s);
 	}
@@ -716,37 +717,38 @@ public:
 	ATDisplayPane();
 	~ATDisplayPane();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	void ReleaseMouse();
-	void ToggleCaptureMouse();
-	void ResetDisplay();
+	void ReleaseMouse() override;
+	void ToggleCaptureMouse() override;
+	void ResetDisplay() override;
 
-	bool IsTextSelected() const { return g_pATVideoDisplayWindow->IsTextSelected(); }
-	void SelectAll();
-	void Deselect();
-	void Copy(ATTextCopyMode copyMode);
-	void CopyFrame(bool trueAspect);
-	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf);
-	void SaveFrame(bool trueAspect, const wchar_t *path = nullptr);
+	bool IsTextSelected() const override { return g_pATVideoDisplayWindow->IsTextSelected(); }
+	void SelectAll() override;
+	void Deselect() override;
+	void Copy(ATTextCopyMode copyMode) override;
+	void CopyFrame(bool trueAspect) override;
+	bool CopyFrameImage(bool trueAspect, VDPixmapBuffer& buf) override;
+	void SaveFrame(bool trueAspect, const wchar_t *path = nullptr) override;
 	void Paste();
-	void Paste(const wchar_t *s, size_t len);
+	void Paste(const wchar_t *s, size_t len) override;
 
-	void OnSize();
-	void UpdateFilterMode();
-	void UpdateCustomRefreshRate();
+	void OnSize() override;
+	void UpdateFilterMode() override;
+	void UpdateCustomRefreshRate() override;
 	void RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) override;
+	void SetVideoWriter(IATVideoWriter *writer) override;
 
 public:		// IATUIDisplayAccessibilityCallbacksW32
 	vdpoint32 GetNearestBeamPositionForScreenPoint(sint32 x, sint32 y) const override;
 	vdrect32 GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const override;
 
 protected:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
-	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const;
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
+	virtual ATUITouchMode GetTouchModeAtPoint(const vdpoint32& pt) const override;
 
-	bool OnCreate();
-	void OnDestroy();
+	bool OnCreate() override;
+	void OnDestroy() override;
 	void OnMouseMove(WPARAM wParam, LPARAM lParam);
 	void OnMouseHover(WPARAM wParam);
 
@@ -754,8 +756,8 @@ protected:
 
 	void SetHaveMouse();
 	void WarpCapturedMouse();
-	void UpdateTextDisplay(bool enabled);
-	void UpdateTextModeFont();
+	void UpdateTextDisplay(bool enabled) override;
+	void UpdateTextModeFont() override;
 	void UpdateAccessibilityProvider();
 
 	void OnMenuActivating(ATUIMenuList *);
@@ -1458,7 +1460,7 @@ bool ATDisplayPane::OnCreate() {
 
 	g_ATLCHostUI("Creating display window");
 
-	mhwndDisplay = (HWND)VDCreateDisplayWindowW32(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE, 0, 0, 0, 0, (VDGUIHandle)mhwnd);
+	mhwndDisplay = (HWND)VDCreateDisplayWindowW32(WS_EX_NOPARENTNOTIFY, WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN, 0, 0, 0, 0, (VDGUIHandle)mhwnd);
 	if (!mhwndDisplay)
 		return false;
 
@@ -1484,7 +1486,7 @@ bool ATDisplayPane::OnCreate() {
 	mpDisplay->SetSourceSolidColor(0);
 
 	mpDisplay->SetProfileHook(
-		[](IVDVideoDisplay::ProfileEvent event) {
+		[](IVDVideoDisplay::ProfileEvent event, uintptr arg) {
 			switch(event) {
 				case IVDVideoDisplay::kProfileEvent_BeginTick:
 					ATProfileBeginRegion(kATProfileRegion_DisplayTick);
@@ -1492,6 +1494,20 @@ bool ATDisplayPane::OnCreate() {
 
 				case IVDVideoDisplay::kProfileEvent_EndTick:
 					ATProfileEndRegion(kATProfileRegion_DisplayTick);
+					break;
+
+				case IVDVideoDisplay::kProfileEvent_BeginPresent:
+				case IVDVideoDisplay::kProfileEvent_BeginRePresent:
+					ATProfileBeginRegionWithArg(kATProfileRegion_DisplayPresent, arg);
+					break;
+
+				case IVDVideoDisplay::kProfileEvent_EndPresent:
+				case IVDVideoDisplay::kProfileEvent_EndRePresent:
+					ATProfileEndRegion(kATProfileRegion_DisplayPresent);
+					break;
+
+				case IVDVideoDisplay::kProfileEvent_VSyncInfo:
+					ATProfileMarkEventWithArg(kATProfileEvent_DisplayVSync, arg);
 					break;
 			}
 		}
@@ -1852,6 +1868,11 @@ void ATDisplayPane::RequestRenderedFrame(vdfunction<void(const VDPixmap *)> fn) 
 		mpDisplay->RequestCapture(std::move(fn));
 		mpDisplay->Invalidate();
 	}
+}
+
+void ATDisplayPane::SetVideoWriter(IATVideoWriter *writer) {
+	if (g_pATVideoDisplayWindow)
+		g_pATVideoDisplayWindow->SetVideoWriter(writer);
 }
 
 void ATDisplayPane::SetHaveMouse() {

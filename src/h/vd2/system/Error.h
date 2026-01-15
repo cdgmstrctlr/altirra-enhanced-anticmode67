@@ -95,18 +95,18 @@ public:
 	void vsetf(const char *f, va_list val);
 	void vwsetf(const wchar_t *f, va_list val);
 	void post(VDExceptionPostContext context, const char *title) const noexcept;
-	const char *c_str() const noexcept { return mpMessage; }
-	const wchar_t *wc_str() const noexcept { return mpMessageW; }
+	const char *c_str() const noexcept;
+	const wchar_t *wc_str() const noexcept;
 
 	// Return true if the object contains an exception. Note that an empty
 	// string isn't the same (it corresponds to a user cancel).
 	bool empty() const { return !mpMessage; }
 
-	// deprecated
-	const char *gets() const noexcept { return mpMessage; }
-	void TransferFrom(VDException& err) noexcept {
-		operator=(std::move(err));
-	}
+	// An exception is visible if it is meant to be displayed. Control flow
+	// forcing exceptions like VDUserCancelException aren't. An empty
+	// exception object is not visible.
+	void set_hidden();
+	bool visible() const noexcept;
 
 	const char *what() const noexcept override;
 

@@ -225,7 +225,7 @@ bool ATTraceChannelCPUHistory::GetNextEvent(ATTraceEvent& ev) {
 	return false;
 }
 
-void ATTraceChannelCPUHistory::StartHistoryIteration(double startTime, sint32 eventOffset) {
+ATTraceChannelCPUHistoryCursor ATTraceChannelCPUHistory::StartHistoryIteration(double startTime, sint32 eventOffset) {
 	sint64 pos = 0;
 
 	if (startTime > 0 && mEventCount) {
@@ -242,8 +242,7 @@ void ATTraceChannelCPUHistory::StartHistoryIteration(double startTime, sint32 ev
 
 		if (!blockId) {
 			// time is before first block
-			mIterPos = 0;
-			return;
+			return ATTraceChannelCPUHistoryCursor { 0 };
 		}
 
 		--blockId;
@@ -270,13 +269,13 @@ void ATTraceChannelCPUHistory::StartHistoryIteration(double startTime, sint32 ev
 	pos += eventOffset;
 
 	if (pos < 0)
-		mIterPos = 0;
+		return ATTraceChannelCPUHistoryCursor { 0 };
 	else
-		mIterPos = (uint32)std::min<uint64>(mEventCount, pos);
+		return ATTraceChannelCPUHistoryCursor { (uint32)std::min<uint64>(mEventCount, pos) };
 }
 
-uint32 ATTraceChannelCPUHistory::ReadHistoryEvents(const ATCPUHistoryEntry **ppEvents, uint32 offset, uint32 n) {
-	uint32 fetchPos = VDClampToUint32((sint64)mIterPos + offset);
+uint32 ATTraceChannelCPUHistory::ReadHistoryEvents(const HistoryCursor& cursor, const ATCPUHistoryEntry **ppEvents, uint32 offset, uint32 n) {
+	uint32 fetchPos = VDClampToUint32((sint64)cursor.mIterPos + offset);
 
 	if (fetchPos >= mEventCount)
 		return 0;
@@ -301,7 +300,7 @@ uint32 ATTraceChannelCPUHistory::ReadHistoryEvents(const ATCPUHistoryEntry **ppE
 	return n;
 }
 
-uint32 ATTraceChannelCPUHistory::FindEvent(double t) {
+uint32 ATTraceChannelCPUHistory::FindEvent(const HistoryCursor& cursor, double t) {
 	if (!mEventCount)
 		return 0;
 
@@ -310,7 +309,7 @@ uint32 ATTraceChannelCPUHistory::FindEvent(double t) {
 	size_t numEvents;
 	uint32 blockId;
 
-	const uint32 startBlockId = mIterPos >> kBlockSizeBits;
+	const uint32 startBlockId = cursor.mIterPos >> kBlockSizeBits;
 
 	auto itBlockStart = mEventBlocks.begin() + startBlockId;
 	auto itBlock = std::upper_bound(itBlockStart, mEventBlocks.end(), t,
@@ -341,14 +340,14 @@ uint32 ATTraceChannelCPUHistory::FindEvent(double t) {
 
 	if (pos) --pos;
 
-	return pos < mIterPos ? 0 : pos - mIterPos;
+	return pos < cursor.mIterPos ? 0 : pos - cursor.mIterPos;
 }
 
-double ATTraceChannelCPUHistory::GetEventTime(uint32 index) {
-	if (index >= mEventCount - mIterPos)
+double ATTraceChannelCPUHistory::GetEventTime(const HistoryCursor& cursor, uint32 index) {
+	if (index >= mEventCount - cursor.mIterPos)
 		return GetDuration();
 
-	index += mIterPos;
+	index += cursor.mIterPos;
 
 	const uint32 blockId = index >> kBlockSizeBits;
 	const double blockTime = mEventBlocks[blockId].mTime;

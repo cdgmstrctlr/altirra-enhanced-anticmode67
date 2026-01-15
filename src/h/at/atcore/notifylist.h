@@ -66,6 +66,7 @@ template<class T>
 class ATNotifyList : public ATNotifyListBase {
 public:
 	bool IsEmpty() const;
+	bool Contains(T v) const;
 
 	void Clear();
 
@@ -73,12 +74,22 @@ public:
 	/// Complexity: Amortized O(1)
 	void Add(T v);
 
+	// Adds a new item to the list, only if it doesn't already exist in the
+	// list.
+	void AddUnique(T v);
+
 	/// Removes the first item from the list that matches the supplied value,
 	/// if any. Silently exits if not found.
 	/// Complexity: O(N)
 	void Remove(T v);
 
 	void NotifyAll(const vdfunction<void(T)>& fn);
+
+	template<typename Fn>
+	void NotifyWhileDirect(Fn&& fn);
+
+	template<typename Fn>
+	void NotifyAllDirect(Fn&& fn);
 
 	/// Process each element through a callback. If the callback returns
 	/// true, stop and return true; otherwise, return false once all
@@ -108,6 +119,11 @@ bool ATNotifyList<T>::IsEmpty() const {
 }
 
 template<class T>
+bool ATNotifyList<T>::Contains(T v) const {
+	return std::find(mList.begin(), mList.end(), v) != mList.end();
+}
+
+template<class T>
 void ATNotifyList<T>::Clear() {
 	mList.clear();
 	
@@ -117,6 +133,12 @@ void ATNotifyList<T>::Clear() {
 template<class T>
 void ATNotifyList<T>::Add(T v) {
 	mList.push_back(v);
+}
+
+template<class T>
+void ATNotifyList<T>::AddUnique(T v) {
+	if (std::find(mList.begin(), mList.end(), v) == mList.end())
+		mList.push_back(v);
 }
 
 template<class T>
@@ -134,6 +156,38 @@ void ATNotifyList<T>::Remove(T v) {
 
 template<class T>
 void ATNotifyList<T>::NotifyAll(const vdfunction<void(T)>& fn) {
+	NotifyAllDirect(fn);
+}
+
+template<class T>
+template<typename Fn>
+void ATNotifyList<T>::NotifyWhileDirect(Fn&& fn) {
+	if (mList.empty())
+		return;
+
+	Iterator it = { mpIteratorList, mFirstValid, mList.size() };
+	mpIteratorList = &it;
+
+	try {
+		while(it.mIndex < it.mLength) {
+			auto v = mList[it.mIndex++];
+
+			if (!fn(v))
+				break;
+		}
+	} catch(...) {
+		VDASSERT(mpIteratorList == &it);
+		mpIteratorList = it.mpNext;
+		throw;
+	}
+
+	VDASSERT(mpIteratorList == &it);
+	mpIteratorList = it.mpNext;
+}
+
+template<class T>
+template<typename Fn>
+void ATNotifyList<T>::NotifyAllDirect(Fn&& fn) {
 	if (mList.empty())
 		return;
 

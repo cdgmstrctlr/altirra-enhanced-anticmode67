@@ -27,6 +27,26 @@
 #define f_VD2_SYSTEM_VDSTL_ALGORITHM_H
 
 #include <algorithm>
+#include <vd2/system/Error.h>
+
+////////////////////////////////////////////////////////////////////////////////
+
+template<typename T, size_t N> struct VDCxArray;
+
+template<typename T>
+constexpr void VDIsFixedSizeType();
+
+template<typename T, size_t N>
+constexpr bool VDIsFixedSizeType(const T(&)[N]) { return true; }
+
+template<typename T, size_t N>
+constexpr bool VDIsFixedSizeType(const VDCxArray<T, N>&) { return true; }
+
+
+template<typename T>
+concept VDFixedSize = requires(const T& t) { !VDIsFixedSizeType(t); };
+
+////////////////////////////////////////////////////////////////////////////////
 
 template<class Iterator, class T>
 typename std::iterator_traits<Iterator>::difference_type vdfind_index(Iterator it1, Iterator it2, const T& value) {
@@ -50,6 +70,19 @@ auto vdfind_index_r(const Range& r, const T& value) -> typename std::iterator_tr
 template<class Range, class Pred>
 auto vdfind_index_if_r(const Range& r, Pred p) -> typename std::iterator_traits<decltype(std::begin(r))>::difference_type {
 	return vdfind_index_if(std::begin(r), std::end(r), p);
+}
+
+template<typename DstRange, typename SrcRange>
+void vdcopy_checked_r(DstRange&& dst, SrcRange&& src) {
+	if constexpr (VDFixedSize<DstRange> && VDFixedSize<SrcRange>) {
+		static_assert(!VDFixedSize<DstRange> || sizeof(DstRange) == sizeof(SrcRange),
+			"Source and destination have mismatched sizes");
+	} else {
+		if (std::size(dst) != std::size(src))
+			VDRaiseInternalFailure();
+	}
+
+	std::copy(std::begin(src), std::end(src), std::begin(dst));
 }
 
 #endif

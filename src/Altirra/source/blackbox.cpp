@@ -24,6 +24,7 @@
 #include <at/atcore/deviceserial.h>
 #include <at/atcore/snapshotimpl.h>
 #include "blackbox.h"
+#include "blackboxfloppy.h"
 #include "debuggerlog.h"
 #include "memorymanager.h"
 #include "firmwaremanager.h"
@@ -109,6 +110,7 @@ void *ATBlackBoxEmulator::AsInterface(uint32 iid) {
 		case IATDeviceParent::kTypeID: return static_cast<IATDeviceParent *>(this);
 		case IATDeviceIndicators::kTypeID: return static_cast<IATDeviceIndicators *>(this);
 		case IATDeviceSnapshot::kTypeID: return static_cast<IATDeviceSnapshot *>(this);
+		case ATVIA6522Emulator::kTypeID: return &mVIA;
 	}
 
 	return ATDevice::AsInterface(iid);
@@ -161,6 +163,7 @@ bool ATBlackBoxEmulator::SetSettings(const ATPropertySet& settings) {
 void ATBlackBoxEmulator::Init() {
 	mSerialBus.Init(this, 0, IATDeviceSerial::kTypeID, "serial", L"Serial Port", "serport");
 	mParallelBus.Init(this, 2, IATPrinterOutput::kTypeID, "parallel", L"Parallel Printer Port", "parport");
+	mFloppyBus.Init(this, 3, ATBlackBoxFloppyEmulator::kTypeID, "blackboxfloppy", L"Floppy Port", "blackboxfloppy");
 
 	mSerialBus.SetOnAttach(
 		[this] {
@@ -204,6 +207,7 @@ void ATBlackBoxEmulator::Init() {
 void ATBlackBoxEmulator::Shutdown() {
 	mSerialBus.Shutdown();
 	mParallelBus.Shutdown();
+	mFloppyBus.Shutdown();
 
 	mpPrinterOutput = nullptr;
 
@@ -517,6 +521,9 @@ IATDeviceBus *ATBlackBoxEmulator::GetDeviceBus(uint32 index) {
 		case 2:
 			return &mParallelBus;
 
+		case 3:
+			return &mFloppyBus;
+
 		default:
 			return nullptr;
 	}
@@ -661,6 +668,15 @@ sint32 ATBlackBoxEmulator::OnDebugRead(void *thisptr0, uint32 addr) {
 	if ((addr & 0xd0) == 0x50)
 		return thisptr->mVIA.DebugReadByte(addr);
 
+	if ((addr & 0xd0) == 0x40) {
+		auto *floppy = thisptr->mFloppyBus.GetChild<ATBlackBoxFloppyEmulator>();
+
+		if (floppy)
+			return floppy->DebugReadByteVIA(addr);
+
+		return -1;
+	}
+
 	if ((addr - 0xD180) < 0x40)
 		return thisptr->mPIA.DebugReadByte(kPIAAddressSwap[addr & 3]);
 	
@@ -675,6 +691,15 @@ sint32 ATBlackBoxEmulator::OnRead(void *thisptr0, uint32 addr) {
 
 	if ((addr & 0xd0) == 0x50)
 		return thisptr->mVIA.ReadByte(addr);
+
+	if ((addr & 0xd0) == 0x40) {
+		auto *floppy = thisptr->mFloppyBus.GetChild<ATBlackBoxFloppyEmulator>();
+
+		if (floppy)
+			return floppy->ReadByteVIA(addr);
+
+		return -1;
+	}
 
 	if ((addr - 0xD180) < 0x40)
 		return thisptr->mPIA.ReadByte(kPIAAddressSwap[addr & 3]);
@@ -695,6 +720,15 @@ bool ATBlackBoxEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 
 	if ((addr & 0xd0) == 0x50) {
 		thisptr->mVIA.WriteByte(addr, value);
+		return false;
+	}
+
+	if ((addr & 0xd0) == 0x40) {
+		auto *floppy = thisptr->mFloppyBus.GetChild<ATBlackBoxFloppyEmulator>();
+
+		if (floppy)
+			floppy->WriteByteVIA(addr, value);
+
 		return false;
 	}
 
@@ -754,7 +788,7 @@ void ATBlackBoxEmulator::OnVIAOutputChanged(void *thisptr0, uint32 val) {
 				printer->WriteRaw(&c, 1);
 			else {
 				if (!thisptr->mpPrinterOutput)
-					thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+					thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput(g_ATDeviceDefBlackBox.mpName);
 
 				thisptr->mpPrinterOutput->WriteRaw(&c, 1);
 			}

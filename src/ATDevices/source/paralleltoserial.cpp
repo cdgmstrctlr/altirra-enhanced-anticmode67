@@ -39,7 +39,7 @@ public:		// IATDeviceParent
 	IATDeviceBus *GetDeviceBus(uint32 index) override;
 
 public:		// IATPrinterOutput
-	bool WantUnicode() const { return false; }
+	bool WantUnicode() const override { return false; }
 	void WriteRaw(const uint8 *buf, size_t len) override;
 
 private:

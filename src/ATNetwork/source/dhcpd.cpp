@@ -84,7 +84,7 @@ void ATNetDhcpDaemon::OnUdpDatagram(const ATEthernetAddr& srcHwAddr, uint32 srcI
 	// Parse options.
 	uint32 reqIpAddr = 0;
 	uint32 serverId = 0;
-	uint32 leaseTime = 0;
+	[[maybe_unused]] uint32 leaseTime = 0;	// parsed but not currently used
 	int messageType = -1;
 
 	if (dataLen > sizeof(ATNetDhcpPacket)) {

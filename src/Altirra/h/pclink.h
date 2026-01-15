@@ -205,6 +205,7 @@ protected:
 	void OnWriteActivity();
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
 
 	VDStringW	mBasePathNative;

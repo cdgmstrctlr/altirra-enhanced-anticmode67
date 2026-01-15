@@ -94,6 +94,8 @@ void ATUIDialogDeviceSX212::OnDataExchange(bool write) {
 
 		if (IsButtonChecked(IDC_CONNECT_1200))
 			mPropSet.SetUint32("connect_rate", 1200);
+		else
+			mPropSet.SetUint32("connect_rate", 300);
 
 		int sioLevel = mComboSioModes.GetSelection() > 0 ? kAT850SIOEmulationLevel_Full : kAT850SIOEmulationLevel_None;
 		mPropSet.SetUint32("emulevel", sioLevel);
@@ -118,7 +120,7 @@ void ATUIDialogDeviceSX212::OnDataExchange(bool write) {
 		CheckButton(IDC_ALLOW_OUTBOUND, mbOutbound);
 		CheckButton(IDC_ACCEPT_IPV6, mPropSet.GetBool("ipv6", true));
 		CheckButton(IDC_DISABLE_THROTTLING, mPropSet.GetBool("unthrottled", false));
-		CheckButton(IDC_CONNECT_1200, mPropSet.GetUint32("connect_rate", 300) > 300);
+		CheckButton(IDC_CONNECT_1200, mPropSet.GetUint32("connect_rate", 1200) > 300);
 
 		mComboSioModes.SetSelection(mPropSet.GetUint32("emulevel", 0) > 0);
 

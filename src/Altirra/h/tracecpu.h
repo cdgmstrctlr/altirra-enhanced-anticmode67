@@ -26,6 +26,10 @@
 #include <at/atdebugger/target.h>
 #include "trace.h"
 
+struct ATTraceChannelCPUHistoryCursor {
+	uint32 mIterPos = 0;
+};
+
 class ATTraceChannelCPUHistory final : public vdrefcounted<IATTraceChannel> {
 public:
 	static const uint32 kTypeID = 'tcch';
@@ -48,12 +52,15 @@ public:
 	bool GetNextEvent(ATTraceEvent& ev) override final;
 
 	double GetSecondsPerTick() const { return mTickScale; }
-	void StartHistoryIteration(double startTime, sint32 eventOffset);
-	uint32 ReadHistoryEvents(const ATCPUHistoryEntry **ppEvents, uint32 offset, uint32 n);
-	uint32 FindEvent(double t);
-	double GetEventTime(uint32 index);
-	uint64 GetTraceSize() const { return mTraceSize; }
-	uint32 GetEventCount() const { return mEventCount; }
+
+	using HistoryCursor = ATTraceChannelCPUHistoryCursor;
+
+	[[nodiscard]] HistoryCursor StartHistoryIteration(double startTime, sint32 eventOffset);
+	uint32 ReadHistoryEvents(const HistoryCursor& cursor, const ATCPUHistoryEntry **ppEvents, uint32 offset, uint32 n);
+	uint32 FindEvent(const HistoryCursor& cursor, double t);
+	double GetEventTime(const HistoryCursor& cursor, uint32 index);
+	uint64 GetTraceSize() const override { return mTraceSize; }
+	uint32 GetEventCount() const override { return mEventCount; }
 
 	// Return the start time of the trace, in history cycle counter time. This is used
 	// to rebias the mCycle value of history entries to compute trace time offset. It is
@@ -131,7 +138,6 @@ private:
 	uint32 mEventCount = 0;
 	uint64 mTraceSize = 0;
 
-	uint32 mIterPos = 0;
 	double mTickScale = 0;
 	uint64 mTickOffset = 0;
 	ATDebugDisasmMode mDisasmMode = {};

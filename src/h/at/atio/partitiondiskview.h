@@ -30,7 +30,7 @@ public:
 	ATPartitionDiskView(IATBlockDevice& dev, const ATPartitionInfo& partitionInfo);
 	~ATPartitionDiskView();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
 	ATImageType GetImageType() const override;
 	std::optional<uint32> GetImageFileCRC() const override;

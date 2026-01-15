@@ -31,19 +31,27 @@ void VDDSetBloomV2Settings(const VDDBloomV2Settings& settings) {
 VDDBloomV2RenderParams VDDComputeBloomV2Parameters(const VDDBloomV2ControlParams& controlParams) {
 	VDDBloomV2RenderParams renderParams {};
 
-	float wid = g_VDDispBloomV2Settings.mCoeffWidthBase
-		+ g_VDDispBloomV2Settings.mCoeffWidthBaseSlope * controlParams.mBaseRadius
-		+ g_VDDispBloomV2Settings.mCoeffWidthAdjustSlope * controlParams.mAdjustRadius
-		;
+	// The reference filter has a standard deviation of 2.2 pixels in the narrowest,
+	// most dominant gaussian, and 2.572 host pixels per hires pixel. We normalize this
+	// as a filter width of 0.855 hires pixels. We then convert to log base 2 to determine
+	// how many pyramid levels to slide the reference filter.
 
-	float pyramidWeights[6] {
-		powf( 2.0f, 0*wid),
-		powf( 2.0f, 1*wid),
-		powf( 2.0f, 2*wid),
-		powf( 2.0f, 3*wid),
-		powf( 2.0f, 4*wid),
-		powf( 2.0f, 5*wid),
+	const float radius = std::max<float>(0.001f, controlParams.mAdjustRadius * controlParams.mBaseRadius / 2.2f);
+	const float filterBias = logf(radius) / logf(2.0f);
+
+	const auto filter = [](float x) {
+		if (x >= 2.0f)
+			return powf(2.0f, -1.5f * (x - 2.0f));
+		else if (x >= 1.0f)
+			return x - 1.0f;
+		else
+			return 0.0f;
 	};
+
+	float pyramidWeights[8] {};
+
+	for(int i=0; i<8; ++i)
+		pyramidWeights[i] = filter((float)i - filterBias);
 
 	// normalize weights
 	float pyramidWeightScale = controlParams.mIndirectIntensity / std::accumulate(std::begin(pyramidWeights), std::end(pyramidWeights), 0.0f);
@@ -55,8 +63,8 @@ VDDBloomV2RenderParams VDDComputeBloomV2Parameters(const VDDBloomV2ControlParams
 
 	for(int i=4; i>=0; --i) {
 		vdfloat2 blendFactors {
-			(i == 4 ? pyramidWeights[i + 1] : 1.0f) * runningScale,
-			pyramidWeights[i]
+			(i == 4 ? pyramidWeights[i + 3] : 1.0f) * runningScale,
+			pyramidWeights[i + 2]
 		};
 
 		float blendFactorSum = blendFactors.x + blendFactors.y;
@@ -70,7 +78,7 @@ VDDBloomV2RenderParams VDDComputeBloomV2Parameters(const VDDBloomV2ControlParams
 
 	renderParams.mPassBlendFactors[5] = vdfloat2 {
 		runningScale,
-		controlParams.mDirectIntensity
+		0.0f
 	};
 
 	const auto cubic =
@@ -146,6 +154,44 @@ VDDBloomV2RenderParams VDDComputeBloomV2Parameters(const VDDBloomV2ControlParams
 		renderParams.mShoulder = cubic(shoulderX, midSlope, shoulderY, limitX, limitSlope, 1.0f);
 		renderParams.mThresholds = vdfloat4 { midSlope, shoulderX, limitX, 0.0f };
 	}
+	
+	// The direct filtered portion of the pyramid is computed using a 9-tap filter
+	// bilinearly filtering over a 5x5 region. The UV step used to space apart the
+	// 3x3 tap grid interpolates between a 3x3 filter:
+	//
+	// |  0  0 |  0 |  0  0 |
+	// |  0  1 |  2 |  1  0 |
+	// +-------+----+-------+
+	// |  0  2 |  4 |  2  0 | / 16
+	// +-------+----+-------+
+	// |  0  1 |  2 |  1  0 |
+	// |  0  0 |  0 |  0  0 |
+	//
+	// ...and a 5x5 filter:
+	//
+	// |  1  4 |  6 |  4  1 |
+	// |  4 16 | 24 | 16  4 |
+	// +-------+----+-------+
+	// |  6 24 | 36 | 24  6 | / 256
+	// +-------+----+-------+
+	// |  4 16 | 24 | 16  4 |
+	// |  1  4 |  6 |  4  1 |
+	//
+	// Thus, by controlling the weights on the corners/sides/center and the
+	// scale of the UV step, we can compute any weighted sum of radius-1,
+	// radius-2, and radius-3 filters.
+
+	float w12sum = pyramidWeights[0] + pyramidWeights[1];
+	float w12ratio = pyramidWeights[1] / std::max<float>(w12sum, 1e-5f);
+
+	renderParams.mBaseUVStepScale = 1.0f + 0.2f * w12ratio;
+
+	renderParams.mBaseWeights = vdfloat4 {
+		w12sum * 25.0f / 256.0f,		// corners (x4 = 100/256)
+		w12sum * 30.0f / 256.0f,		// sides (x4 = 120/256)
+		w12sum * 36.0f / 256.0f + controlParams.mDirectIntensity,		// center tap (36/256)
+		0.0f
+	};
 
 	return renderParams;
 }

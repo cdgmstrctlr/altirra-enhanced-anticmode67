@@ -38,6 +38,7 @@ public:
 	virtual sint32 GetFrameBufferIndexForFrame(sint32 frameIdx) = 0;
 	virtual double GetTimeForFrame(uint32 frameIdx) = 0;
 	virtual const VDPixmap& GetFrameBufferByIndex(uint32 fbIdx) = 0;
+	virtual vdsize32 GetFrameSizeByIndex(uint32 fbIdx) const = 0;
 
 	virtual void AddRawFrameBuffer(const VDPixmap& px) = 0;
 	virtual void AddFrame(double timestamp, uint32 frameBufferIndex) = 0;
@@ -47,7 +48,7 @@ class IATVideoTracer : public IVDRefCount {
 public:
 	virtual IATGTIAVideoTap *AsVideoTap() = 0;
 
-	virtual void Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor) = 0;
+	virtual void Init(IATTraceChannelVideo *dst, uint64 timeOffset, double timeScale, uint32 divisor, uint32 frameHeight) = 0;
 	virtual void Shutdown() = 0;
 };
 

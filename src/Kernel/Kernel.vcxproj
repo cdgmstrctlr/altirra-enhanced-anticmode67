@@ -29,10 +29,10 @@
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\out\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">..\..\obj\$(Configuration)\$(ProjectName)\</IntDir>
     <NMakeBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">if not exist "$(IntDir)\" md "$(IntDir)\"
-nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeBuildCommandLine>
+nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)" "ATCOMPILER=$(ATATCompilerPath)"</NMakeBuildCommandLine>
     <NMakeReBuildCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">if not exist "$(IntDir)\" md "$(IntDir)\"
-nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" clean</NMakeCleanCommandLine>
+nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)" "ATCOMPILER=$(ATATCompilerPath)"</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">nmake /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "ATCOMPILER=$(ATATCompilerPath)" clean</NMakeCleanCommandLine>
     <NMakeOutput Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(OutDir)kernel.rom</NMakeOutput>
     <NMakePreprocessorDefinitions Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <NMakeIncludeSearchPath Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
@@ -134,6 +134,7 @@ nmake /a /nologo "OUT=$(OutDir)\" "INT=$(IntDir)\" "MADS=$(ATMadsPath)"</NMakeRe
     <None Include="source\Additions\xep80.s" />
     <None Include="source\Additions\xep80handler.s" />
     <None Include="Makefile" />
+    <None Include="source\VGMPlayer\playvgm.s" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\Placeholders\noblackbox.s" />

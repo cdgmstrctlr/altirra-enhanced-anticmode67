@@ -89,10 +89,13 @@
 #include "savestate.h"
 #include "resource.h"
 #include "oshelper.h"
+#include "ostracing.h"
 #include "audiowriter.h"
 #include "sapwriter.h"
-#include "inputmanager.h"
 #include "inputcontroller.h"
+#include "inputdefs.h"
+#include "inputmanager.h"
+#include "inputmap.h"
 #include "cartridge.h"
 #include "version.h"
 #include "videowriter.h"
@@ -130,6 +133,7 @@
 #include "mediamanager.h"
 #include "savestateio.h"
 #include "versioninfo.h"
+#include "vgmwriter.h"
 #include "directorywatcher.h"
 
 #include "firmwaremanager.h"
@@ -189,9 +193,8 @@ int ATUIShowDialogCartridgeMapper(VDGUIHandle h, uint32 cartSize, const void *da
 void ATUIShowDialogLightPen(VDGUIHandle h, ATLightPenPort *lpp);
 void ATUIShowDialogCheater(VDGUIHandle hParent, ATCheatEngine *engine);
 void ATUIShowDialogDiskExplorer(VDGUIHandle h);
-void ATUIShowDialogOptions(VDGUIHandle h);
 void ATUIShowDialogAbout(VDGUIHandle h);
-bool ATUIShowDialogKeyboardOptions(VDGUIHandle hParent, ATUIKeyboardOptions& opts);
+void ATUIShowDialogKeyboardOptions(VDGUIHandle hParent);
 void ATUIShowDialogSetFileAssociations(VDGUIHandle parent, bool allowElevation, bool userOnly);
 void ATRegisterFileAssociations(bool allowElevation, bool userOnly);
 void ATRemoveAllFileAssociations(bool allowElevation);
@@ -333,6 +336,13 @@ ATConfigVarBool g_ATCVDisplayD3D11Force10_0("display.d3d11.force_10_0", false,
 	}
 );
 
+ATConfigVarBool g_ATCVDisplayShowCustomShaderStats("display.customeffect.show_stats", false,
+	[] {
+		VDVideoDisplaySetShowCustomShaderStats(g_ATCVDisplayShowCustomShaderStats);
+		ATUIResetDisplay();
+	}
+);
+
 ATConfigVarFloat g_ATCVDisplayVSyncAdaptivePScale("display.vsync_adaptive.p_scale", 0.04f);
 ATConfigVarFloat g_ATCVDisplayVSyncAdaptiveTargetOffset("display.vsync_adaptive.target_offset", 8.0f);
 ATConfigVarFloat g_ATCVDisplayVSyncAdaptivePAdapt("display.vsync_adaptive.p_adapt", 0.15f);
@@ -401,6 +411,7 @@ uint32 g_ATUIBootUnloadStorageMask = 0;
 vdautoptr<ATAudioWriter> g_pAudioWriter;
 vdautoptr<IATVideoWriter> g_pVideoWriter;
 vdautoptr<IATSAPWriter> g_pSapWriter;
+vdrefptr<IATVgmWriter> g_pATVgmWriter;
 
 ATDisplayStretchMode g_displayStretchMode = kATDisplayStretchMode_PreserveAspectRatio;
 float g_displayZoom = 1.0f;
@@ -415,6 +426,20 @@ ATUICommandManager g_ATUICommandMgr;
 
 ATUICommandManager& ATUIGetCommandManager() {
 	return g_ATUICommandMgr;
+}
+
+void ATUIExecuteCommandStringAndShowErrors(const char *cmd, const ATUICommandOptions *opts) noexcept {
+	if (!cmd)
+		return;
+
+	ATUICommandOptions nullOpts;
+
+	try {
+		if (!g_ATUICommandMgr.ExecuteCommand(cmd, opts ? *opts : nullOpts))
+			throw VDException(L"Unknown command: %hs", cmd);
+	} catch(const VDException& ex) {
+		ATUIShowError(ex);
+	}
 }
 
 VDGUIHandle ATUIGetMainWindow() {
@@ -683,6 +708,9 @@ ATUIRecordingStatus ATUIGetRecordingStatus() {
 
 	if (g_pSapWriter)
 		return kATUIRecordingStatus_Sap;
+
+	if (g_pATVgmWriter)
+		return kATUIRecordingStatus_Vgm;
 
 	return kATUIRecordingStatus_None;
 }
@@ -1473,7 +1501,7 @@ public:
 					mpFileDialogResult->mPath = path;
 				} else {
 					mpFileDialogResult = ATUIShowOpenFileDialog('load', L"Load disk, cassette, cartridge, or program image",
-						L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.ogg;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap\0"
+						L"All supported types\0*.atr;*.xfd;*.dcm;*.pro;*.atx;*.xex;*.obx;*.com;*.car;*.rom;*.a52;*.bin;*.cas;*.wav;*.flac;*.ogg;*.zip;*.atz;*.gz;*.bas;*.arc;*.sap;*.vgm;*.vgz\0"
 						L"Atari program (*.xex,*.obx,*.com)\0*.xex;*.obx;*.com\0"
 						L"BASIC program (*.bas)\0*.bas\0"
 						L"Atari disk image (*.atr,*.xfd,*.dcm)\0*.atr;*.xfd;*.dcm;*.arc\0"
@@ -1485,6 +1513,7 @@ public:
 						L"gzip archive (*.gz;*.atz)\0*.gz;*.atz\0"
 						L".ARC archive (*.arc)\0*.arc\0"
 						L"SAP file (*.sap)\0*.sap\0"
+						L"VGM POKEY file (*.vgm,*.vgz)\0*.vgm;*.vgz\0"
 						L"All files\0*.*\0");
 
 					Wait(mpFileDialogResult);
@@ -1576,7 +1605,7 @@ void ATSetFullscreen(bool fs) {
 	bool displayFS = fs && !g_ATOptions.mbFullScreenBorderless;
 
 	ATUISetNativeDialogMode(!displayFS);
-	ATUIShowModelessDialogs(!displayFS, g_hwnd);
+	ATUIShowModelessWindows(!displayFS, g_hwnd);
 
 	if (frame)
 		frame->SetFullScreen(fs);
@@ -2010,15 +2039,19 @@ void Paste(const wchar_t *s, size_t len, bool useCooldown) {
 	}
 }
 
+IATDisplayPane *ATUIGetDisplayPane() {
+	return vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+}
+
 void ATUIResizeDisplay() {
-	IATDisplayPane *pane = vdpoly_cast<IATDisplayPane *>(ATGetUIPane(kATUIPaneId_Display));
+	IATDisplayPane *pane = ATUIGetDisplayPane();
 	if (pane)
 		pane->OnSize();
 }
 
 void StopAudioRecording() {
 	if (g_pAudioWriter) {
-		g_sim.GetAudioOutput()->SetAudioTap(NULL);
+		g_sim.GetAudioOutput()->SetAudioTap(nullptr);
 		g_pAudioWriter->Finalize();
 		g_pAudioWriter = NULL;
 	}
@@ -2026,10 +2059,32 @@ void StopAudioRecording() {
 
 void StopVideoRecording() {
 	if (g_pVideoWriter) {
+		if (IATDisplayPane *dp = ATUIGetDisplayPane())
+			dp->SetVideoWriter(nullptr);
+
 		g_sim.GetGTIA().RemoveVideoTap(g_pVideoWriter->AsVideoTap());
 		g_pVideoWriter->Shutdown();
-		g_sim.GetAudioOutput()->SetAudioTap(NULL);
-		g_pVideoWriter = NULL;
+		g_sim.GetAudioOutput()->SetAudioTap(nullptr);
+		g_pVideoWriter = nullptr;
+	}
+}
+
+void OnCommandRecordPause() {
+	if (g_pVideoWriter)
+		g_pVideoWriter->Pause();
+}
+
+void OnCommandRecordResume() {
+	if (g_pVideoWriter)
+		g_pVideoWriter->Resume();
+}
+
+void OnCommandRecordPauseResume() {
+	if (g_pVideoWriter) {
+		if (g_pVideoWriter->IsPaused())
+			g_pVideoWriter->Resume();
+		else
+			g_pVideoWriter->Pause();
 	}
 }
 
@@ -2040,18 +2095,27 @@ void StopSapRecording() {
 	}
 }
 
+void ATStopVgmRecording() {
+	if (g_pATVgmWriter) {
+		g_pATVgmWriter->Shutdown();
+		g_pATVgmWriter = nullptr;
+	}
+}
+
 void StopRecording() {
 	StopAudioRecording();
 	StopVideoRecording();
 	StopSapRecording();
+	ATStopVgmRecording();
 }
 
 void CheckRecordingExceptions() {
 	try {
 		if (g_pVideoWriter)
 			g_pVideoWriter->CheckExceptions();
-	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Video recording stopped with an error");
+	} catch(const VDException& e) {
+		if (e.visible())
+			ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Video recording stopped with an error");
 
 		StopVideoRecording();
 	}
@@ -2059,8 +2123,9 @@ void CheckRecordingExceptions() {
 	try {
 		if (g_pAudioWriter)
 			g_pAudioWriter->CheckExceptions();
-	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Audio recording stopped with an error");
+	} catch(const VDException& e) {
+		if (e.visible())
+			ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"Audio recording stopped with an error");
 
 		StopAudioRecording();
 	}
@@ -2068,10 +2133,21 @@ void CheckRecordingExceptions() {
 	try {
 		if (g_pSapWriter)
 			g_pSapWriter->CheckExceptions();
-	} catch(const MyError& e) {
-		ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"SAP recording stopped with an error");
+	} catch(const VDException& e) {
+		if (e.visible())
+			ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"SAP recording stopped with an error");
 
 		StopSapRecording();
+	}
+
+	try {
+		if (g_pATVgmWriter)
+			g_pATVgmWriter->CheckExceptions();
+	} catch(const VDException& e) {
+		if (e.visible())
+			ATUIShowError2((VDGUIHandle)g_hwnd, e.wc_str(), L"SAP recording stopped with an error");
+
+		ATStopVgmRecording();
 	}
 }
 
@@ -2751,8 +2827,7 @@ void OnCommandInputInputSetupDialog() {
 }
 
 void OnCommandInputKeyboardDialog() {
-	if (ATUIShowDialogKeyboardOptions((VDGUIHandle)g_hwnd, g_kbdOpts))
-		ATUIInitVirtualKeyMap(g_kbdOpts);
+	ATUIShowDialogKeyboardOptions((VDGUIHandle)g_hwnd);
 }
 
 void OnCommandInputLightPenDialog() {
@@ -2784,7 +2859,7 @@ void OnCommandRecordStop() {
 }
 
 void OnCommandRecordRawAudio() {
-	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter && !g_pATVgmWriter) {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record raw audio", L"Raw 32-bit float data\0*.pcm\0", L"pcm"));
 
 		if (!s.empty()) {
@@ -2796,7 +2871,7 @@ void OnCommandRecordRawAudio() {
 }
 
 void OnCommandRecordAudio() {
-	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter && !g_pATVgmWriter) {
 		VDStringW s(VDGetSaveFileName('raud', (VDGUIHandle)g_hwnd, L"Record audio", L"Wave audio (*.wav)\0*.wav\0", L"wav"));
 
 		if (!s.empty()) {
@@ -2808,7 +2883,7 @@ void OnCommandRecordAudio() {
 }
 
 void OnCommandRecordVideo() {
-	if (g_pAudioWriter || g_pVideoWriter || g_pSapWriter)
+	if (g_pAudioWriter || g_pVideoWriter || g_pSapWriter || g_pATVgmWriter)
 		return;
 
 	const bool hz50 = g_sim.GetVideoStandard() != kATVideoStandard_NTSC && g_sim.GetVideoStandard() != kATVideoStandard_PAL60;
@@ -2904,14 +2979,33 @@ void OnCommandRecordVideo() {
 
 		g_sim.GetAudioOutput()->SetAudioTap(g_pVideoWriter->AsAudioTap());
 		gtia.AddVideoTap(g_pVideoWriter->AsVideoTap());
+
+		if (IATDisplayPane *dp = ATUIGetDisplayPane())
+			dp->SetVideoWriter(g_pVideoWriter);
+
 	} catch(const MyError& e) {
 		StopRecording();
-		ATUIShowError2(ATUIGetNewPopupOwner(), e.wc_str(), L"Video recording failed");
+
+		if (e.visible())
+			ATUIShowError2(ATUIGetNewPopupOwner(), e.wc_str(), L"Video recording failed");
+	}
+}
+
+void OnCommandRecordVgm() {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter && !g_pATVgmWriter) {
+		VDStringW s(VDGetSaveFileName("VGMAudio"_vdtypeid, (VDGUIHandle)g_hwnd, L"Record VGM audio file", L"VGM POKEY recording (*.vgm)\0*.vgm\0", L"vgm"));
+
+		if (!s.empty()) {
+			auto p = ATCreateVgmWriter();
+			p->Init(s.c_str(), g_sim);
+
+			g_pATVgmWriter = std::move(p);
+		}
 	}
 }
 
 void OnCommandRecordSapTypeR() {
-	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter) {
+	if (!g_pAudioWriter && !g_pVideoWriter && !g_pSapWriter && !g_pATVgmWriter) {
 		VDStringW s(VDGetSaveFileName('rsap', (VDGUIHandle)g_hwnd, L"Record SAP type R music file", L"SAP Type R\0*.sap\0", L"sap"));
 
 		if (!s.empty()) {
@@ -2991,10 +3085,6 @@ void OnCommandCheatCheatDialog() {
 
 void OnCommandToolsDiskExplorer() {
 	ATUIShowDialogDiskExplorer((VDGUIHandle)g_hwnd);
-}
-
-void OnCommandToolsOptionsDialog() {
-	ATUIShowDialogOptions((VDGUIHandle)g_hwnd);
 }
 
 void ATUIShowDialogEditAccelerators(const char *preSelectedCommand) {
@@ -3869,7 +3959,7 @@ void ReadCommandLine(HWND hwnd, VDCommandLine& cmdLine) {
 				g_sim.UnloadAll();
 			}
 
-			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_None, &suppressColdReset, -1, autoProfile);
+			DoLoad((VDGUIHandle)hwnd, arg, bootWriteMode, cartmapper, kATImageType_None, &suppressColdReset, ATImageLoadContext::kLoadIndexNextFree, autoProfile);
 
 			VDSetLastLoadSavePath('load', VDGetFullPath(arg).c_str());
 
@@ -4260,13 +4350,14 @@ int RunMainLoop2(HWND hwnd) {
 					nextFrameTime = curTime - error;
 
 					if (hTimer) {
-						int timerTicks = -(sint64)(-error * 10000000 / secondTime);
+						int timerTicks = -(sint64)((-error * 10000000 + secondTime / 2) / secondTime);
 
-						if (timerTicks >= 0)
-							timerTicks = -1;
-
-						LARGE_INTEGER deadline { .QuadPart = timerTicks };
-						SetWaitableTimerEx(hTimer, &deadline, 0, nullptr, nullptr, nullptr, 0);
+						if (timerTicks >= 0) {
+							nextFrameTimeValid = false;
+						} else {
+							LARGE_INTEGER deadline { .QuadPart = timerTicks };
+							SetWaitableTimerEx(hTimer, &deadline, 0, nullptr, nullptr, nullptr, 0);
+						}
 					}
 				}
 			}
@@ -4315,7 +4406,9 @@ int RunMainLoop2(HWND hwnd) {
 				ATProfileMarkEvent(kATProfileEvent_BeginFrame);
 
 			ATProfileBeginRegion(kATProfileRegion_Simulation);
+			ATOSTraceSimulateBegin();
 			ATSimulator::AdvanceResult ar = g_sim.Advance(dropFrame);
+			ATOSTraceSimulateEnd();
 			ATProfileEndRegion(kATProfileRegion_Simulation);
 
 			if (ar == ATSimulator::kAdvanceResult_Stopped) {
@@ -4443,7 +4536,7 @@ bool ATInitRegistry(ATSettingsCategory& categoriesToIgnore) {
 			} catch(const MyError& err) {
 				VDStringW message;
 
-				message.sprintf(L"There was an error loading the settings file:\n\n%s\n\nDo you want to continue? If so, settings will be reset to defaults and may not be saved.", VDTextAToW(err.c_str()).c_str());
+				message.sprintf(L"There was an error loading the settings file:\n\n%ls\n\nDo you want to continue? If so, settings will be reset to defaults and may not be saved.", err.wc_str());
 				if (IDYES != MessageBox(NULL, message.c_str(), _T("Altirra Warning"), MB_YESNO | MB_ICONWARNING))
 					return false;
 			}
@@ -4922,6 +5015,11 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 			: nullptr
 	);
 
+#ifdef ATNRELEASE
+	if (g_ATCmdLine.FindAndRemoveSwitch(L"etw"))
+		ATInitOSTracing();
+#endif
+
 	ATStartupLog("Initializing native UI");
 	ATInitProfilerUI();
 	ATUIRegisterDisplayPane();
@@ -5109,7 +5207,7 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 	}
 
 	ATStartupLog("Destroying remaining UI");
-	ATUIDestroyModelessDialogs(nullptr);
+	ATUIDestroyModelessWindows(nullptr);
 
 	ATStartupLog("Saving settings");
 	ATSaveSettings(ATSettingsCategory(kATSettingsCategory_All & ~kATSettingsCategory_FullScreen));
@@ -5167,6 +5265,11 @@ int RunInstance(int nCmdShow, ATSettingsCategory categoriesToIgnore) {
 
 	ATStartupLog("Shutting down UI accessibility");
 	ATUIAccShutdown();
+
+#ifdef ATNRELEASE
+	ATStartupLog("Shutting down logging");
+	ATShutdownOSTracing();
+#endif
 
 	ATStartupLog("Shutting down WinSock");
 	ATSocketShutdown();

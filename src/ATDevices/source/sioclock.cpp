@@ -36,7 +36,8 @@ public:	// IATDeviceSIO
 	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
 
 private:
-	IATDeviceSIOManager *mpSIOMgr;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 };
 
 void ATCreateDeviceSIOClock(const ATPropertySet& pset, IATDevice **dev) {
@@ -68,15 +69,13 @@ void ATDeviceSIOClock::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATDeviceSIOClock::Shutdown() {
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATDeviceSIOClock::InitSIO(IATDeviceSIOManager *siomgr) {
 	mpSIOMgr = siomgr;
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 IATDeviceSIO::CmdResponse ATDeviceSIOClock::OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) {
@@ -99,11 +98,11 @@ IATDeviceSIO::CmdResponse ATDeviceSIOClock::OnSerialBeginCommand(const ATDeviceS
 		buf[4] = (uint8)date.mMinute;
 		buf[5] = (uint8)date.mSecond;
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->SendData(buf, 6, true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->SendData(buf, 6, true);
+		mpSIOInterface->EndCommand();
 
 		return kCmdResponse_Start;
 	}
@@ -130,11 +129,11 @@ IATDeviceSIO::CmdResponse ATDeviceSIOClock::OnSerialBeginCommand(const ATDeviceS
 			buf[i] = (uint8)(((c / 10) << 4) + (c % 10));
 		}
 
-		mpSIOMgr->BeginCommand();
-		mpSIOMgr->SendACK();
-		mpSIOMgr->SendComplete();
-		mpSIOMgr->SendData(buf, 128, true);
-		mpSIOMgr->EndCommand();
+		mpSIOInterface->BeginCommand();
+		mpSIOInterface->SendACK();
+		mpSIOInterface->SendComplete();
+		mpSIOInterface->SendData(buf, 128, true);
+		mpSIOInterface->EndCommand();
 
 		return kCmdResponse_Start;
 	}

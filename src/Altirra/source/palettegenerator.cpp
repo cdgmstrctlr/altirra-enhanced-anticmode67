@@ -139,7 +139,7 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 	const float nativeGamma = 2.2f;
 
 	uint32 *dst = mPalette;
-	uint32 *dst2 = mSignedPalette;
+	uint32 *dsts = mSignedPalette;
 
 	const bool useColorTint = monitorMode != ATMonitorMode::Color;
 	vdfloat32x3 tintColor = vdfloat32x3::zero();
@@ -187,26 +187,28 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 
 			vdfloat3 c2 = c * 127.0f / 255.0f + 64.0f / 255.0f;
 
-			dst2[0] = dst2[1]
+			dsts[0] = dsts[1]
 				= (VDClampedRoundFixedToUint8Fast((float)c2.x) << 16)
 				+ (VDClampedRoundFixedToUint8Fast((float)c2.y) <<  8)
 				+ (VDClampedRoundFixedToUint8Fast((float)c2.z)      );
 
 			dst += 2;
-			dst2 += 2;
+			dsts += 2;
 		}
 
 		for(int i=0; i<15; ++i) {
 			memcpy(dst, dst - 16, sizeof(*dst)*16);
 			dst += 16;
 
-			memcpy(dst2, dst2 - 16, sizeof(*dst2)*16);
-			dst2 += 16;
+			memcpy(dsts, dsts - 16, sizeof(*dsts)*16);
+			dsts += 16;
 		}
 
 		memcpy(mUncorrectedPalette, mPalette, sizeof mUncorrectedPalette);
+		memcpy(mUncorrectedSignedPalette, mSignedPalette, sizeof mUncorrectedSignedPalette);
 	} else {
 		uint32 *dstu = mUncorrectedPalette;
+		uint32 *dstus = mUncorrectedSignedPalette;
 
 		for(int hue=0; hue<16; ++hue) {
 			float i = 0;
@@ -305,10 +307,9 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 				}
 
 				*dst++	= packus8(permute<2,1,0>(rgb) * 255.0f) & 0xFFFFFF;
-
-				*dst2++	= packus8(permute<2,1,0>(rgb * 127.0f + 64.0f)) & 0xFFFFFF;
-
+				*dsts++	= packus8(permute<2,1,0>(rgb * 127.0f + 64.0f)) & 0xFFFFFF;
 				*dstu++ = packus8(permute<2,1,0>(rgb0) * 255.0f) & 0xFFFFFF;
+				*dstus++ = packus8(permute<2,1,0>(rgb0) * 127.0f + 64.0f) & 0xFFFFFF;
 			}
 
 			// For monochrome modes, hues 2-15 will be the same as hue 1.
@@ -317,10 +318,13 @@ void ATColorPaletteGenerator::Generate(const ATColorParams& params, ATMonitorMod
 					memcpy(dst + i*16, dst - 16, sizeof(*dst) * 16);
 
 				for(int i=0; i<14; ++i)
-					memcpy(dst2 + i*16, dst2 - 16, sizeof(*dst2) * 16);
+					memcpy(dsts + i*16, dsts - 16, sizeof(*dsts) * 16);
 
 				for(int i=0; i<14; ++i)
 					memcpy(dstu + i*16, dstu - 16, sizeof(*dstu) * 16);
+
+				for(int i=0; i<14; ++i)
+					memcpy(dstus + i*16, dstus - 16, sizeof(*dstus) * 16);
 				break;
 			}
 		}

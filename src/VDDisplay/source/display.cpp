@@ -151,13 +151,13 @@ protected:
 	bool MapNormSourcePtToDest(vdfloat2& pt) const override;
 	bool MapNormDestPtToSource(vdfloat2& pt) const override;
 
-	void SetProfileHook(const vdfunction<void(ProfileEvent)>& profileHook) override {
+	void SetProfileHook(const vdfunction<void(ProfileEvent, uintptr)>& profileHook) override {
 		mpProfileHook = profileHook;
 
 		g_pVDVideoDisplayManager->SetProfileHook(profileHook);
 	}
 	
-	void RequestCapture(vdfunction<void(const VDPixmap *)> fn);
+	void RequestCapture(vdfunction<void(const VDPixmap *)> fn) override;
 
 public:
 	void OnTick() override {
@@ -170,6 +170,9 @@ private:
 	void RequestNextFrame() override;
 	void QueuePresent() override;
 	void OnFrameCaptured(const VDPixmap *px) override;
+	void OnBeginPresent(uint32 frameNumber, bool rePresent) override;
+	void OnEndPresent(uint32 frameNumber, bool rePresent) override;
+	void OnVsyncInfo(const VDDVSyncProfileInfo& vsyncInfo) override;
 
 	void DispatchNextFrame();
 	bool DispatchActiveFrame();
@@ -288,7 +291,7 @@ private:
 	float		mCustomRefreshRateMin = 0;
 	float		mCustomRefreshRateMax = 0;
 
-	vdfunction<void(ProfileEvent)> mpProfileHook;
+	vdfunction<void(ProfileEvent, uintptr)> mpProfileHook;
 	vdfunction<void(const VDPixmap *)> mpCaptureFn;
 
 	VDPixmapBuffer		mCachedImage;
@@ -702,8 +705,10 @@ void VDVideoDisplayWindow::PostBuffer(VDVideoDisplayFrame *p) {
 		mPendingFrames.push_back(p);
 	}
 
-	if (wasIdle)
-		RequestNextFrame();
+	if (wasIdle) {
+		WndProc(MYWM_PROCESSNEXTFRAME, 0, 0);
+		//RequestNextFrame();
+	}
 }
 
 bool VDVideoDisplayWindow::RevokeBuffer(bool allowFrameSkip, VDVideoDisplayFrame **ppFrame) {
@@ -902,6 +907,21 @@ void VDVideoDisplayWindow::OnFrameCaptured(const VDPixmap *px) {
 	PostMessage(mhwnd, MYWM_FRAMECAPTURED, 0, 0);
 }
 
+void VDVideoDisplayWindow::OnBeginPresent(uint32 frameNumber, bool rePresent) {
+	if (mpProfileHook)
+		mpProfileHook(rePresent ? kProfileEvent_BeginRePresent : kProfileEvent_BeginPresent, frameNumber);
+}
+
+void VDVideoDisplayWindow::OnEndPresent(uint32 frameNumber, bool rePresent) {
+	if (mpProfileHook)
+		mpProfileHook(rePresent ? kProfileEvent_EndRePresent : kProfileEvent_EndPresent, frameNumber);
+}
+
+void VDVideoDisplayWindow::OnVsyncInfo(const VDDVSyncProfileInfo& vsyncInfo) {
+	if (mpProfileHook)
+		mpProfileHook(kProfileEvent_VSyncInfo, (uintptr)&vsyncInfo);
+}
+
 void VDVideoDisplayWindow::RequestNextFrame() {
 	PostMessage(mhwnd, MYWM_PROCESSNEXTFRAME, 0, 0);
 }
@@ -938,6 +958,8 @@ bool VDVideoDisplayWindow::DispatchActiveFrame() {
 		params.mpCB				= this;
 		params.mpScreenFX = mpActiveFrame->mpScreenFX;
 		params.mpScreenFXEngine = mpActiveFrame->mpScreenFXEngine;
+
+		params.mFrameNumber		= mpActiveFrame->mFrameNumber;
 
 		if (!SyncSetSource(false, params)) {
 			ReleaseActiveFrame();
@@ -1008,12 +1030,12 @@ LRESULT VDVideoDisplayWindow::ChildWndProc(UINT msg, WPARAM wParam, LPARAM lPara
 	case WM_TIMER:
 		if (mpMiniDriver) {
 			if (mpProfileHook)
-				mpProfileHook(kProfileEvent_BeginTick);
+				mpProfileHook(kProfileEvent_BeginTick, 0);
 
 			VerifyDriverResult(mpMiniDriver->Tick((int)wParam));
 
 			if (mpProfileHook)
-				mpProfileHook(kProfileEvent_EndTick);
+				mpProfileHook(kProfileEvent_EndTick, 0);
 		}
 		break;
 
@@ -1195,12 +1217,12 @@ LRESULT VDVideoDisplayWindow::WndProc(UINT msg, WPARAM wParam, LPARAM lParam) {
 	case MYWM_QUEUEPRESENT:
 		if (mpMiniDriver) {
 			if (mpProfileHook)
-				mpProfileHook(kProfileEvent_BeginTick);
+				mpProfileHook(kProfileEvent_BeginTick, 0);
 
 			mpMiniDriver->PresentQueued();
 
 			if (mpProfileHook)
-				mpProfileHook(kProfileEvent_EndTick);
+				mpProfileHook(kProfileEvent_EndTick, 0);
 		}
 
 		SendMessage(mhwnd, MYWM_PROCESSNEXTFRAME, 0, 0);

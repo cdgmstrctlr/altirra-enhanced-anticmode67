@@ -19,6 +19,8 @@
 #define f_AT_MMU_H
 
 #include <vd2/system/function.h>
+#include <vd2/system/unknown.h>
+#include <at/atcore/notifylist.h>
 
 class ATMemoryLayer;
 class ATMemoryManager;
@@ -40,6 +42,8 @@ class ATMMUEmulator {
 	ATMMUEmulator(const ATMMUEmulator&) = delete;
 	ATMMUEmulator& operator=(const ATMMUEmulator&) = delete;
 public:
+	static constexpr auto kTypeID = "ATMMUEmulator"_vdtypeid;
+
 	ATMMUEmulator();
 	~ATMMUEmulator();
 
@@ -63,7 +67,8 @@ public:
 	bool IsBASICROMEnabled() const { return (mCurrentBankInfo & kMapInfo_BASIC) != 0; }
 	bool IsBASICOrGameROMEnabled() const { return (mCurrentBankInfo & (kMapInfo_BASIC | kMapInfo_Game)) != 0; }
 
-	void SetROMMappingHook(const vdfunction<void()>& fn);
+	void AddROMMappingHook(const vdfunction<void()> *fn);
+	void RemoveROMMappingHook(const vdfunction<void()> *fn);
 
 	void SetHighMemory(uint32 numBanks, void *mem);
 	void SetAxlonMemory(uint8 bankbits, bool enableAliasing, void *mem);
@@ -115,11 +120,11 @@ protected:
 	bool		mbAxlonAliasing;
 	void		*mpAxlonMemory = nullptr;
 
-	uint32		mCPUBase;
-	uint32		mAnticBase;
-	uint32		mCurrentBankInfo;
+	uint32		mCPUBase {};
+	uint32		mAnticBase {};
+	uint32		mCurrentBankInfo {};
 
-	vdfunction<void()> mpROMMappingChangeFn;
+	ATNotifyList<const vdfunction<void()> *> mROMMappingChangeFns;
 
 	// bits 0-8: bank number (shr 14) (8MB)
 	// bit 9: Hidden RAM enable

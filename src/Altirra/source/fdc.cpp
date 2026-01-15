@@ -34,6 +34,62 @@ ATLogChannel g_ATLCFDCCommand(false, false, "FDCCMD", "Floppy drive controller c
 ATLogChannel g_ATLCFDCCommandFI(false, false, "FDCCMDFI", "Floppy drive controller extra forced interrupt commands");
 ATLogChannel g_ATLCFDCData(false, false, "FDCDATA", "Floppy drive controller data transfer");
 
+#define XSET()								\
+	X(Idle)									\
+	X(BeginCommand)							\
+	X(DispatchCommand)						\
+	X(EndCommand)							\
+	X(EndCommand2)							\
+	X(Restore)								\
+	X(Restore_Step)							\
+	X(Seek)									\
+	X(Step)									\
+	X(StepIn)								\
+	X(StepOut)								\
+	X(ReadSector)							\
+	X(ReadSector_TransferFirstByte)			\
+	X(ReadSector_TransferFirstByteNever)	\
+	X(ReadSector_TransferByte)				\
+	X(ReadSector_TransferComplete)			\
+	X(WriteSector)							\
+	X(WriteSector_InitialDrq)				\
+	X(WriteSector_CheckInitialDrq)			\
+	X(WriteSector_TransferByte)				\
+	X(WriteSector_TransferComplete)			\
+	X(ReadAddress)							\
+	X(ReadTrack)							\
+	X(ReadTrack_WaitHeadLoad)				\
+	X(ReadTrack_WaitIndexPulse)				\
+	X(ReadTrack_TransferByte)				\
+	X(ReadTrack_Complete)					\
+	X(WriteTrack)							\
+	X(WriteTrack_WaitHeadLoad)				\
+	X(WriteTrack_InitialDrq)				\
+	X(WriteTrack_WaitIndexPulse)			\
+	X(WriteTrack_TransferByte)				\
+	X(WriteTrack_TransferByteAfterCRC)		\
+	X(WriteTrack_InitialDrqTimeout)			\
+	X(WriteTrack_Complete)					\
+	X(ForceInterrupt)
+
+enum ATFDCEmulator::State : uint32 {
+#define X(name) kState_##name,
+	XSET()
+#undef X
+};
+
+const char *ATFDCEmulator::GetStateName(State state) {
+	switch(state) {
+#define X(name) case kState_##name: return #name;
+		XSET()
+#undef X
+		default:
+			return "?";
+	}
+}
+
+#undef XSET
+
 ATFDCEmulator::ATFDCEmulator() {
 	mpFnDrqChange = [](bool drq) {};
 	mpFnIrqChange = [](bool drq) {};
@@ -56,79 +112,6 @@ void ATFDCEmulator::Init(ATScheduler *sch, float rpm, float periodAdjustFactor, 
 	mCyclesPerIndexPulse = VDRoundToInt32(schRate * 0.004);
 
 	SetSpeeds(rpm, periodAdjustFactor, false);
-
-	// Standard times for WD1771/279X at 2MHz (which we adjust below for 1MHz).
-	static constexpr double kStepTimeSecs[4] = {
-		 3.0 / 1000.0,
-		 6.0 / 1000.0,
-		10.0 / 1000.0,
-		15.0 / 1000.0,
-	};
-
-	// Standard times for WD1770 at 8MHz.
-	static constexpr double kStepTimeSecs1770[4] = {
-		 6.0 / 1000.0,
-		12.0 / 1000.0,
-		20.0 / 1000.0,
-		30.0 / 1000.0,
-	};
-
-	// Standard times for WD1772 at 8MHz.
-	static constexpr double kStepTimeSecs1772[4] = {
-		2.0 / 1000.0,
-		3.0 / 1000.0,
-		5.0 / 1000.0,
-		6.0 / 1000.0,
-	};
-
-	VDASSERTCT(vdcountof(kStepTimeSecs) == vdcountof(mCycleStepTable));
-	VDASSERTCT(vdcountof(kStepTimeSecs1772) == vdcountof(mCycleStepTable));
-
-	// If the disk is spinning faster than usual, as it does in the XF551, then the
-	// FDC is up-clocked by the same amount... and step delays are correspondingly
-	// shorter.
-
-	if (mType == kType_1772) { 
-		for(int i=0; i<4; ++i)
-			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs1772[i] * periodAdjustFactor);
-	} else if (mType == kType_1770) { 
-		for(int i=0; i<4; ++i)
-			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs1770[i] * periodAdjustFactor);
-	} else {
-		for(int i=0; i<4; ++i)
-			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs[i] * periodAdjustFactor);
-	}
-
-	// The 1771 uses a 10ms head delay at 2MHz (which doubles to 20ms at the 810's 1MHz).
-	// The 279X uses 15ms at 2MHz (which doubles to 30ms at the 1050's 1MHz).
-	float headLoadDelaySecs = 10.0f;
-
-	switch(mType) {
-		case kType_1770:		// 30ms at 8MHz
-			headLoadDelaySecs = 0.030f;
-			break;
-
-		case kType_1772:		// 15ms at 8MHz (data sheets inconsistent -- some say 30ms)
-			headLoadDelaySecs = 0.015f;
-			break;
-
-		case kType_1771:		// 10ms at 2MHz (doubled on 810 due to 1MHz clock)
-			headLoadDelaySecs = 0.020f;
-			break;
-
-		default:
-		case kType_2793:
-		case kType_2797:		// 15ms at 2MHz (doubled on 1050 due to 1MHz clock)
-			headLoadDelaySecs = 0.030f;
-			break;
-	}
-
-	mCyclesHeadLoadDelay = VDRoundToInt(schRate * headLoadDelaySecs * periodAdjustFactor);
-
-	// When head load delay is disabled, it takes about 210us for the FDC to assert DRQ on
-	// a real 1050.
-	float writeTrackFastDelaySecs = 210e-6f;
-	mCyclesWriteTrackFastDelay = VDRoundToInt(schRate * writeTrackFastDelaySecs * periodAdjustFactor);
 }
 
 void ATFDCEmulator::Shutdown() {
@@ -143,7 +126,7 @@ void ATFDCEmulator::Shutdown() {
 
 void ATFDCEmulator::DumpStatus(ATConsoleOutput& out) {
 	out("Command register: $%02X", mRegCommand);
-	out("Command status:   state %u (%u cycles to transition)", (unsigned)mState, mpStateEvent ? mpScheduler->GetTicksToEvent(mpStateEvent) : 0);
+	out("Command status:   state %u / %s (%u cycles to transition)", (unsigned)mState, GetStateName(mState), mpStateEvent ? mpScheduler->GetTicksToEvent(mpStateEvent) : 0);
 	out("Track register:   $%02X (physical track: %.1f)", mRegTrack, (float)mPhysHalfTrack / 2.0f);
 	out("Sector register:  $%02X", mRegSector);
 	out("Status register:  $%02X (%s)", DebugReadByte(0), mbRegStatusTypeI ? "type I" : "type II-IV");
@@ -294,6 +277,8 @@ void ATFDCEmulator::SetSpeeds(float rpm, float periodAdjustFactor, bool doubleCl
 	}
 
 	SetDoubleClock(doubleClock);
+
+	UpdateStepTimes();
 }
 
 void ATFDCEmulator::SetDoubleClock(bool doubleClock) {
@@ -332,13 +317,15 @@ void ATFDCEmulator::SetDiskImage(IATDiskImage *image) {
 		mDiskGeometry = {};
 
 	UpdateAutoIndexPulse();
+	UpdateDiskReady();
 
 	if (mpRotationTracer)
 		mpRotationTracer->SetDiskImage(image);
 }
 
 void ATFDCEmulator::SetDiskImageReady(std::optional<bool> diskReady) {
-	mbDiskReady = diskReady.value_or(mpDiskImage != nullptr);
+	mDiskReadyInput = diskReady;
+	UpdateDiskReady();
 }
 
 void ATFDCEmulator::SetDiskInterface(ATDiskInterface *diskIf) {
@@ -509,7 +496,7 @@ void ATFDCEmulator::WriteByte(uint8 address, uint8 value) {
 
 				// clear activity indicator
 				if (mpDiskInterface)
-					mpDiskInterface->SetShowActivity(false, 0);
+					mpDiskInterface->SetShowActivity(false, 0, kActivityHoldTime);
 
 				SetMotorIdleTimer();
 
@@ -946,7 +933,7 @@ void ATFDCEmulator::RunStateMachine() {
 			}
 
 			if (mpDiskInterface)
-				mpDiskInterface->SetShowActivity(false, 0);
+				mpDiskInterface->SetShowActivity(false, 0, kActivityHoldTime);
 
 			SetMotorIdleTimer();
 			break;
@@ -1949,6 +1936,10 @@ void ATFDCEmulator::UpdateAutoIndexPulse() {
 	}
 }
 
+void ATFDCEmulator::UpdateDiskReady() {
+	mbDiskReady = mDiskReadyInput.value_or(mpDiskImage != nullptr);
+}
+
 void ATFDCEmulator::SetMotorIdleTimer() {
 	if ((mType != kType_1770 && mType != kType_1772) || !mbMotorEnabled)
 		return;
@@ -1966,6 +1957,98 @@ void ATFDCEmulator::ClearMotorIdleTimer() {
 void ATFDCEmulator::UpdateDensity() {
 	mCyclesPerByte_FX16 = mbMFM ? mCyclesPerByteMFM_FX16 : mCyclesPerByteFM_FX16;
 	mCyclesPerByte = (mCyclesPerByte_FX16 + 0x8000) >> 16;
+}
+
+void ATFDCEmulator::UpdateStepTimes() {
+	const double schRate = mpScheduler->GetRate().asDouble();
+
+	// Standard times for FD1771 at 1MHz
+	static constexpr double kStepTimeSecs1771[4] = {
+		12.0 / 1000.0,
+		12.0 / 1000.0,
+		20.0 / 1000.0,
+		40.0 / 1000.0,
+	};
+
+	// Standard times for WD279X at 1MHz
+	static constexpr double kStepTimeSecs279X[4] = {
+		 6.0 / 1000.0,
+		12.0 / 1000.0,
+		20.0 / 1000.0,
+		30.0 / 1000.0,
+	};
+
+	// Standard times for WD1770 at 8MHz.
+	static constexpr double kStepTimeSecs1770[4] = {
+		 6.0 / 1000.0,
+		12.0 / 1000.0,
+		20.0 / 1000.0,
+		30.0 / 1000.0,
+	};
+
+	// Standard times for WD1772 at 8MHz.
+	static constexpr double kStepTimeSecs1772[4] = {
+		2.0 / 1000.0,
+		3.0 / 1000.0,
+		5.0 / 1000.0,
+		6.0 / 1000.0,
+	};
+
+	VDASSERTCT(vdcountof(kStepTimeSecs1771) == vdcountof(mCycleStepTable));
+	VDASSERTCT(vdcountof(kStepTimeSecs279X) == vdcountof(mCycleStepTable));
+	VDASSERTCT(vdcountof(kStepTimeSecs1770) == vdcountof(mCycleStepTable));
+	VDASSERTCT(vdcountof(kStepTimeSecs1772) == vdcountof(mCycleStepTable));
+
+	// If the disk is spinning faster than usual, as it does in the XF551, then the
+	// FDC is up-clocked by the same amount... and step delays are correspondingly
+	// shorter.
+
+	const double factor = mPeriodAdjustFactor * (mbDoubleClock ? 0.5f : 1.0f);
+
+	if (mType == kType_1772) { 
+		for(int i=0; i<4; ++i)
+			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs1772[i] * factor);
+	} else if (mType == kType_1770) { 
+		for(int i=0; i<4; ++i)
+			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs1770[i] * factor);
+	} else if (mType == kType_1771) { 
+		for(int i=0; i<4; ++i)
+			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs1771[i] * factor);
+	} else {
+		for(int i=0; i<4; ++i)
+			mCycleStepTable[i] = VDRoundToInt(schRate * kStepTimeSecs279X[i] * factor);
+	}
+
+	// The 1771 uses a 10ms head delay at 2MHz (which doubles to 20ms at the 810's 1MHz).
+	// The 279X uses 15ms at 2MHz (which doubles to 30ms at the 1050's 1MHz).
+	float headLoadDelaySecs = 10.0f;
+
+	switch(mType) {
+		case kType_1770:		// 30ms at 8MHz
+			headLoadDelaySecs = 0.030f;
+			break;
+
+		case kType_1772:		// 15ms at 8MHz (data sheets inconsistent -- some say 30ms)
+			headLoadDelaySecs = 0.015f;
+			break;
+
+		case kType_1771:		// 10ms at 2MHz (doubled on 810 due to 1MHz clock)
+			headLoadDelaySecs = 0.020f;
+			break;
+
+		default:
+		case kType_2793:
+		case kType_2797:		// 15ms at 2MHz (doubled on 1050 due to 1MHz clock)
+			headLoadDelaySecs = 0.030f;
+			break;
+	}
+
+	mCyclesHeadLoadDelay = VDRoundToInt(schRate * headLoadDelaySecs * factor);
+
+	// When head load delay is disabled, it takes about 210us for the FDC to assert DRQ on
+	// a real 1050.
+	float writeTrackFastDelaySecs = 210e-6f;
+	mCyclesWriteTrackFastDelay = VDRoundToInt(schRate * writeTrackFastDelaySecs * factor);
 }
 
 void ATFDCEmulator::FinalizeWriteTrack() {
@@ -2283,8 +2366,12 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 			if (psec.mLen > 128)
 				bytesPerSector = 256;
 
-			if (psec.mId > 18)
-				sectorsPerTrack = 26;
+			if (psec.mId >= 36)				// Black Box 1.44M format (3.5" HD)
+				sectorsPerTrack = 36;
+			else if (psec.mId > 26 && sectorsPerTrack < 29)
+				sectorsPerTrack = 29;		// Black Box 1.2M format (5.25" HD)
+			else if (psec.mId > 18 && sectorsPerTrack < 26)
+				sectorsPerTrack = 26;		// ATR8000 8" double density
 		}
 	} else if (mbMFM) {
 		bytesPerSector = 256;
@@ -2310,7 +2397,7 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 	g_ATLCFDC("End track with %u sectors - using geometry: %u sectors of %u bytes\n", (unsigned)parsedSectors.size(), sectorsPerTrack, bytesPerSector);
 
 	// Bin the physical sectors according to virtual sectors.
-	ATDiskVirtualSectorInfo newVirtSectors[26] = {};
+	ATDiskVirtualSectorInfo newVirtSectors[36] = {};
 	vdfastvector<ATDiskPhysicalSectorInfo> newPhysSectors;
 	newPhysSectors.reserve(parsedSectors.size());
 
@@ -2366,7 +2453,7 @@ void ATFDCEmulator::FinalizeWriteTrack() {
 		ATDiskGeometryInfo newGeometry = {};
 		newGeometry.mSectorSize = bytesPerSector;
 		newGeometry.mBootSectorCount = bytesPerSector > 256 ? 0 : 3;
-		newGeometry.mTrackCount = 40;
+		newGeometry.mTrackCount = mSideMappingTrackCount;
 		newGeometry.mSectorsPerTrack = sectorsPerTrack;
 		newGeometry.mSideCount = 1;
 		newGeometry.mbMFM = mbMFM;

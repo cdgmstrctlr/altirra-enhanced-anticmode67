@@ -43,6 +43,7 @@ public:
 	void SetSplineFactor(double A) { mSplineFactor = A; }
 	void SetSharpnessFactors(float x, float y) { mSharpnessFactorX = x; mSharpnessFactorY = y; }
 	void SetFilters(FilterMode h, FilterMode v, bool interpolationOnly);
+	void SetLinear(bool enabled);
 	bool Init(uint32 dw, uint32 dh, int dstformat, uint32 sw, uint32 sh, int srcformat);
 	bool Init(const vdrect32f& dstrect, uint32 dw, uint32 dh, int dstformat, const vdrect32f& srcrect, uint32 sw, uint32 sh, int srcformat);
 	void Shutdown();
@@ -54,12 +55,13 @@ protected:
 
 	vdautoptr<IVDPixmapBlitter> mpBlitter;
 	vdautoptr<IVDPixmapBlitter> mpBlitter2;
-	double				mSplineFactor;
+	double				mSplineFactor = 0;
 	float				mSharpnessFactorX = 1.0f;
 	float				mSharpnessFactorY = 1.0f;
-	FilterMode			mFilterH;
-	FilterMode			mFilterV;
-	bool				mbInterpOnly;
+	FilterMode			mFilterH {};
+	FilterMode			mFilterV {};
+	bool				mbInterpOnly = false;
+	bool				mbLinear = false;
 
 	vdrect32			mDstRectPlane0;
 	vdrect32			mDstRectPlane12;
@@ -83,6 +85,10 @@ void VDPixmapResampler::SetFilters(FilterMode h, FilterMode v, bool interpolatio
 	mFilterH = h;
 	mFilterV = v;
 	mbInterpOnly = interpolationOnly;
+}
+
+void VDPixmapResampler::SetLinear(bool enabled) {
+	mbLinear = enabled;
 }
 
 bool VDPixmapResampler::Init(uint32 dw, uint32 dh, int dstformat, uint32 sw, uint32 sh, int srcformat) {
@@ -210,7 +216,14 @@ bool VDPixmapResampler::Init(const vdrect32f& dstrect0, uint32 dw, uint32 dh, in
 	switch(srcformat) {
 		case nsVDPixmap::kPixFormat_XRGB8888:
 			gen.ldsrc(0, 0, 0, 0, sw, sh, VDPixmapGetFormatTokenFromFormat(srcformat), sw*4);
+
+			if (mbLinear)
+				gen.conv_8888_to_X32F_linear();
+
 			ApplyFilters(gen, mDstRectPlane0.width(), mDstRectPlane0.height(), xoffset, yoffset, xfactor, yfactor);
+
+			if (mbLinear)
+				gen.conv_X32F_linear_to_8888();
 			break;
 
 		case nsVDPixmap::kPixFormat_Y8:

@@ -442,11 +442,11 @@ public:
 		);
 	}
 
-	void EndCommand() {
+	void EndCommand() override {
 		mbCompleted = true;
 	}
 
-	bool ProcessSubCommand(const char *s) { return !mbCompleted; }
+	bool ProcessSubCommand(const char *s) override { return !mbCompleted; }
 
 private:
 	void OnCapturedFrame(const VDPixmap *px) {
@@ -503,15 +503,15 @@ public:
 		g_sim.Resume();
 	}
 
-	void EndCommand() {
+	void EndCommand() override {
 		g_sim.GetGTIA().RemoveVideoTap(this);
 		mbCompleted = true;
 	}
 
-	bool ProcessSubCommand(const char *s) { return !mbCompleted; }
+	bool ProcessSubCommand(const char *s) override { return !mbCompleted; }
 
 private:
-	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) {
+	void WriteFrame(const VDPixmap& px, uint64 timestampStart, uint64 timestampEnd, float par) override {
 		if (mFramesRecorded++ == 0)
 			return;
 
@@ -554,11 +554,11 @@ public:
 		mCommands.push_back(0);
 	}
 
-	void EndCommand() {
+	void EndCommand() override {
 		g_ATAutotestMacros[mName] = mCommands;
 	}
 
-	bool ProcessSubCommand(const char *s) {
+	bool ProcessSubCommand(const char *s) override {
 		if (!*s)
 			return false;
 

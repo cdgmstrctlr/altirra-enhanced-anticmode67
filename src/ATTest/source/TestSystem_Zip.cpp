@@ -110,7 +110,103 @@ DEFINE_TEST_NONAUTO(System_Zip) {
 	return 0;
 }
 
-DEFINE_TEST_NONAUTO(System_ZipBench) {
+template<VDDeflateCompressionLevel T_Level>
+void ATTestSystem_ZipBench() {
+	const wchar_t *args = ATTestGetArguments();
+	VDStringRefW fnsrc(args);
+	VDStringRefW fndst;
+
+	if (fnsrc.split(L',', fndst))
+		std::swap(fnsrc, fndst);
+
+	VDFileStream fs(VDStringW(fnsrc).c_str());
+
+	vdfastvector<uint8> buf;
+	vdfastvector<uint8> buf2;
+	buf.resize(fs.Length());
+	buf2.resize(buf.size());
+
+	fs.read(buf.data(), buf.size());
+
+	VDMemoryBufferStream mbs;
+
+	uint64 cmindt = 0;
+	uint64 dmindt = 0;
+
+	{
+		auto t0 = VDGetPreciseTick();
+
+		mbs.Clear();
+
+		{
+			VDDeflateStream ds(mbs, VDDeflateChecksumMode::CRC32, T_Level);
+			ds.Write(buf.data(), buf.size());
+			ds.Finalize();
+		}
+
+		cmindt = VDGetPreciseTick() - t0;
+
+		if (!fndst.empty()) {
+			VDFileStream fs(VDStringW(fndst).c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways);
+
+			fs.write("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xFF", 10);
+
+			auto zbuf = mbs.GetBuffer();
+			fs.write(zbuf.data(), zbuf.size());
+
+			uint32 crcv[2];
+
+			crcv[0] = VDCRCTable::CRC32.CRC(buf.data(), buf.size());
+			crcv[1] = buf.size();
+
+			fs.write(crcv, 8);
+		}
+
+		uint64 len = mbs.Pos();
+		mbs.Seek(0);
+		VDInflateStream<false> zs;
+		zs.Init(&mbs, len, false);
+
+		buf2.resize(buf.size());
+
+		auto t1 = VDGetPreciseTick();
+		auto actual = zs.ReadData(buf2.data(), buf2.size());
+		dmindt = VDGetPreciseTick() - t1;
+
+		AT_TEST_ASSERTF(actual == buf2.size(), "Decompression mismatch: only read %d bytes", (int)actual);
+		AT_TEST_ASSERTF(!memcmp(buf.data(), buf2.data(), buf.size()), "Decompression data mismatch");
+
+		char dummy = 0;
+		actual = zs.ReadData(&dummy, 1);
+		AT_TEST_ASSERTF(!actual, "Extra data found after decompressed stream");
+	}
+
+	double csecs = (double)cmindt * VDGetPreciseSecondsPerTick();
+	double dsecs = (double)dmindt * VDGetPreciseSecondsPerTick();
+	uint64 len = mbs.Pos();
+
+	printf("%10u | %7.1f ms / %7.1f MB/sec | %7.1f ms / %7.1f MB/sec | %10u (%5.1f%%)\n"
+		, (unsigned)buf.size()
+		, csecs * 1000.0
+		, (double)buf.size() / 1000000.0 / csecs
+		, dsecs * 1000.0
+		, (double)buf.size() / 1000000.0 / dsecs
+		, (unsigned)len
+		, 100.0 * (1.0 - (double)len / (double)buf.size())
+	);
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchQ) {
+	ATTestSystem_ZipBench<VDDeflateCompressionLevel::Quick>();
+	return 0;
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchX) {
+	ATTestSystem_ZipBench<VDDeflateCompressionLevel::Best>();
+	return 0;
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchUnzip) {
 	const wchar_t *args = ATTestGetArguments();
 
 	if (!*args)
@@ -194,5 +290,208 @@ DEFINE_TEST_NONAUTO(System_ZipBench) {
 			);
 		}
 	}
+	return 0;
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchCompress) {
+	VDMemoryBufferStream mbs;
+
+	vdblock<uint8> buf(10*1000*1000);
+	vdblock<uint8> buf2(10*1000*1000);
+
+	const wchar_t *outpath = ATTestGetArguments();
+
+	const auto testBench = [&](const char *name, const wchar_t *fn, VDDeflateCompressionLevel level) {
+		uint64 cmindt = 0;
+		uint64 dmindt = 0;
+		const int lim = *outpath ? 1 : 5;
+
+		for(int i=0; i<lim; ++i) {
+			auto t0 = VDGetPreciseTick();
+
+			mbs.Clear();
+
+			{
+				VDDeflateStream ds(mbs, VDDeflateChecksumMode::CRC32, level);
+				ds.Write(buf.data(), buf.size());
+				ds.Finalize();
+			}
+
+			auto dt = VDGetPreciseTick() - t0;
+
+			if (*outpath) {
+				VDFileStream fs(VDMakePath(outpath, fn).c_str(), nsVDFile::kWrite | nsVDFile::kCreateAlways);
+
+				fs.write("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xFF", 10);
+
+				auto zbuf = mbs.GetBuffer();
+				fs.write(zbuf.data(), zbuf.size());
+
+				uint32 crcv[2];
+
+				crcv[0] = VDCRCTable::CRC32.CRC(buf.data(), buf.size());
+				crcv[1] = buf.size();
+
+				fs.write(crcv, 8);
+			}
+
+			if (!i || dt < cmindt)
+				cmindt = dt;
+
+			uint64 len = mbs.Pos();
+			mbs.Seek(0);
+			VDInflateStream<false> zs;
+			zs.Init(&mbs, len, false);
+			memset(buf2.data(), 0xA5, buf2.size());
+
+			auto t1 = VDGetPreciseTick();
+			auto actual = zs.ReadData(buf2.data(), buf2.size());
+			auto dt2 = VDGetPreciseTick() - t1;
+
+			if (!i || dt2 < dmindt)
+				dmindt = dt2;
+
+			AT_TEST_ASSERTF(actual == buf2.size(), "Decompression mismatch: only read %d bytes", (int)actual);
+			AT_TEST_ASSERTF(!memcmp(buf.data(), buf2.data(), buf.size()), "Decompression data mismatch");
+
+			char dummy = 0;
+			actual = zs.ReadData(&dummy, 1);
+			AT_TEST_ASSERTF(!actual, "Extra data found after decompressed stream");
+		}
+
+		double csecs = (double)cmindt * VDGetPreciseSecondsPerTick();
+		double dsecs = (double)dmindt * VDGetPreciseSecondsPerTick();
+		uint64 len = mbs.Pos();
+
+		printf("%7.1f ms / %7.1f MB/sec | %7.1f ms / %7.1f MB/sec | %10u (%5.1f%%) | %s\n"
+			, csecs * 1000.0
+			, (double)buf.size() / 1000000.0 / csecs
+			, dsecs * 1000.0
+			, (double)buf.size() / 1000000.0 / dsecs
+			, (unsigned)len
+			, 100.0 * (1.0 - (double)len / (double)buf.size())
+			, name
+		);
+	};
+
+	memset(buf.data(), 0, buf.size());
+
+	testBench("10MB zero data", L"10mb-zero-x.gz", VDDeflateCompressionLevel::Best);
+	testBench("10MB zero data (quick)", L"10mb-zero-q.gz", VDDeflateCompressionLevel::Quick);
+
+	uint32 seed = 1;
+	for(uint8& v : buf) {
+		v = (uint8)seed++;
+	}
+
+	testBench("10MB repeated data", L"10mb-repeat-x.gz", VDDeflateCompressionLevel::Best);
+	testBench("10MB repeated data (quick)", L"10mb-repeat-q.gz", VDDeflateCompressionLevel::Quick);
+
+	seed = 1;
+	for(uint8& v : buf) {
+		v = seed & 0x0F;
+
+		seed = (seed << 8) + (((seed >> 24) ^ (seed >> 22) ^ (seed >> 18) ^ (seed >> 17)) & 0xFF);
+	}
+
+	testBench("10MB random 4-bit data", L"10mb-4bitrand-x.gz", VDDeflateCompressionLevel::Best);
+	testBench("10MB random 4-bit data (quick)", L"10mb-4bitrand-q.gz",VDDeflateCompressionLevel::Quick);
+	testBench("10MB random 4-bit data (stored)", L"10mb-4bitrand-s.gz", VDDeflateCompressionLevel::Store);
+
+	seed = 1;
+	for(uint8& v : buf) {
+
+		v = seed;
+
+		seed = (seed << 8) + (((seed >> 24) ^ (seed >> 22) ^ (seed >> 18) ^ (seed >> 17)) & 0xFF);
+	}
+
+	testBench("10MB random 8-bit data", L"10mb-8bitrand-x.gz", VDDeflateCompressionLevel::Best);
+	testBench("10MB random 8-bit data (quick)", L"10mb-8bitrand-x.gz", VDDeflateCompressionLevel::Quick);
+	testBench("10MB random 8-bit data (stored)", L"10mb-8bitrand-x.gz", VDDeflateCompressionLevel::Store);
+
+	return 0;
+}
+
+template<VDDeflateCompressionLevel T_Level>
+void ATTestSystem_ZipBenchReZip() {
+	VDFileStream fs(ATTestGetArguments());
+	VDZipArchive arch;
+
+	arch.Init(&fs);
+
+	sint32 n = arch.GetFileCount();
+	vdfastvector<uint8> buf;
+	vdfastvector<uint8> buf2;
+	VDMemoryBufferStream mbs;
+	for(sint32 i = 0; i < n; ++i) {
+		const auto& fileInfo = arch.GetFileInfo(i);
+
+		buf.resize(fileInfo.mUncompressedSize);
+		vdautoptr<IVDInflateStream> ds { arch.OpenDecodedStream(i, true) };
+		ds->Read(buf.data(), buf.size());
+		ds = nullptr;
+
+		uint64 cmindt = 0;
+		uint64 dmindt = 0;
+
+		{
+			auto t0 = VDGetPreciseTick();
+
+			mbs.Clear();
+
+			{
+				VDDeflateStream ds(mbs, VDDeflateChecksumMode::CRC32, T_Level);
+				ds.Write(buf.data(), buf.size());
+				ds.Finalize();
+			}
+
+			cmindt = VDGetPreciseTick() - t0;
+
+			uint64 len = mbs.Pos();
+			mbs.Seek(0);
+			VDInflateStream<false> zs;
+			zs.Init(&mbs, len, false);
+
+			buf2.resize(buf.size());
+
+			auto t1 = VDGetPreciseTick();
+			auto actual = zs.ReadData(buf2.data(), buf2.size());
+			dmindt = VDGetPreciseTick() - t1;
+
+			AT_TEST_ASSERTF(actual == buf2.size(), "Decompression mismatch: only read %d bytes", (int)actual);
+			AT_TEST_ASSERTF(!memcmp(buf.data(), buf2.data(), buf.size()), "Decompression data mismatch");
+
+			char dummy = 0;
+			actual = zs.ReadData(&dummy, 1);
+			AT_TEST_ASSERTF(!actual, "Extra data found after decompressed stream");
+		}
+
+		double csecs = (double)cmindt * VDGetPreciseSecondsPerTick();
+		double dsecs = (double)dmindt * VDGetPreciseSecondsPerTick();
+		uint64 len = mbs.Pos();
+
+		printf("%10u | %10u | %7.1f ms / %7.1f MB/sec / %7.1f MB/sec | %7.1f ms / %7.1f MB/sec | %10u (%5.1f%%) | %s\n"
+			, fileInfo.mUncompressedSize
+			, fileInfo.mCompressedSize
+			, csecs * 1000.0
+			, (double)buf.size() / 1000000.0 / csecs
+			, (double)mbs.GetBuffer().size() / 1000000.0 / csecs
+			, dsecs * 1000.0
+			, (double)buf.size() / 1000000.0 / dsecs
+			, (unsigned)len
+			, 100.0 * (1.0 - (double)len / (double)buf.size())
+			, fileInfo.mRawFileName.c_str()
+		);
+	};
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchRezipN) {
+	ATTestSystem_ZipBenchReZip<VDDeflateCompressionLevel::Best>();
+	return 0;
+}
+
+DEFINE_TEST_NONAUTO(System_ZipBenchRezipQ) {
+	ATTestSystem_ZipBenchReZip<VDDeflateCompressionLevel::Quick>();
 	return 0;
 }

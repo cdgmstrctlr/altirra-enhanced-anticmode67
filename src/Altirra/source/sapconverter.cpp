@@ -106,6 +106,7 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 	uint8 defSong = 0;
 	uint8 songCount = 1;
 	bool pal = true;
+	bool stereo = false;
 	uint8 vcountsPerTick = 0;
 
 	VDStringA author;
@@ -245,6 +246,8 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 				throw ATUnsupportedSAPFileException();
 
 			songCount = (uint8)songVal;
+		} else if (typeStr == "STEREO") {
+			stereo = true;
 		}
 	}
 
@@ -339,8 +342,9 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 		result.assign(std::begin(g_ATSapPlayerTypeR), std::end(g_ATSapPlayerTypeR));
 
 		result[6] = vcountsPerTick;
-		ATConvertATASCIIToINTERNAL(&result[17+40], author.data(), author.size());
-		ATConvertATASCIIToINTERNAL(&result[17], name.data(), name.size());
+		result[7] = stereo ? 0x80 : 0x00;
+		ATConvertATASCIIToINTERNAL(&result[18+40], author.data(), author.size());
+		ATConvertATASCIIToINTERNAL(&result[18], name.data(), name.size());
 
 		result.push_back(0x00);
 		result.push_back(0x10);
@@ -350,90 +354,103 @@ void ATConvertSAPToPlayer(const void *sap, uint32 len, vdfastvector<uint8>& resu
 		const size_t basePos = result.size();
 
 		// parse remaining data
-		uint8 prevdat[9] = {0};
-		size_t lastduroff = 0;
+		struct Context {
+			uint8 prevdat[9] = {0};
+			size_t lastduroff = 0;
 
-		uint8 dmhistory[16] = {0};
-		int dmhindex = 0;
+			uint8 dmhistory[16] = {0};
+			int dmhindex = 0;
+		} contexts[2];
 
-		if (end - s >= 9) {
-			memcpy(prevdat, s, 9);
+		bool firstTick = true;
+		ptrdiff_t nch = stereo ? 2 : 1;
 
-			for(int i=0; i<9; ++i)
-				prevdat[i] = ~prevdat[i];
-		}
+		while(end - s >= nch*9) {
+			for(ptrdiff_t ch = 0; ch < nch; ++ch) {
+				Context& ctx = contexts[ch];
+				const uint8 *pokeydat = (const uint8 *)s;
 
-		while(end - s >= 9) {
-			const uint8 *pokeydat = (const uint8 *)s;
+				uint32 deltaMask = 0;
 
-			uint32 deltaMask = 0;
-			if (memcmp(prevdat, pokeydat, 9)) {
-				for(int i=0; i<9; ++i) {
-					if (prevdat[i] != pokeydat[i]) {
-						prevdat[i] = pokeydat[i];
+				if (firstTick) {
+					deltaMask = 0x1FF;
+				} else {
+					if (memcmp(ctx.prevdat, pokeydat, 9)) {
+						for(int i=0; i<9; ++i) {
+							if (ctx.prevdat[i] != pokeydat[i]) {
+								ctx.prevdat[i] = pokeydat[i];
 
-						deltaMask |= (1 << i);
+								deltaMask |= (1 << i);
+							}
+						}
+
+						// check if we can shorten the last command
+						if (ctx.lastduroff && result[ctx.lastduroff] == 1) {
+							result[ctx.lastduroff + 1] |= 0x80;
+							result.erase(result.begin() + ctx.lastduroff);
+
+							if (stereo && contexts[ch ^ 1].lastduroff > ctx.lastduroff)
+								--contexts[ch ^ 1].lastduroff;
+						}
+
+						ctx.lastduroff = 0;
 					}
 				}
 
-				// check if we can shorten the last command
-				if (lastduroff && result[lastduroff] == 1) {
-					result[lastduroff + 1] |= 0x80;
-					result.erase(result.begin() + lastduroff);
+				if (result[ctx.lastduroff] == 0x7F) {
+					ctx.lastduroff = 0;
 				}
 
-				lastduroff = 0;
-			}
+				if (ctx.lastduroff == 0 || deltaMask) {
+					ctx.lastduroff = result.size();
 
-			if (result[lastduroff] == 0x7F) {
-				lastduroff = 0;
-				deltaMask = 0;
-			}
+					result.push_back(1);
 
-			if (lastduroff == 0 || deltaMask) {
-				lastduroff = result.size();
+					if (deltaMask == 0) {
+						// push a no-op command
+						result.push_back(0);
+					} else {
+						// see if we can reuse a previous delta mask
+						int reuseIdx = -1;
+						uint8 dmask = (uint8)deltaMask;
 
-				result.push_back(1);
+						for(int i=0; i<16; ++i) {
+							if (ctx.dmhistory[(ctx.dmhindex + i) & 15] == dmask) {
+								reuseIdx = i;
+								break;
+							}
+						}
 
-				if (deltaMask == 0) {
-					// push a no-op command
-					result.push_back(0);
-				} else {
-					// see if we can reuse a previous delta mask
-					int reuseIdx = -1;
-					uint8 dmask = (uint8)deltaMask;
+						if (reuseIdx >= 0) {
+							if (deltaMask & 0x100)
+								result.push_back((uint8)(0x61 + reuseIdx*2));
+							else
+								result.push_back((uint8)(0x60 + reuseIdx*2));
+						} else if (dmask == 0xFF) {
+							result.push_back(2);
 
-					for(int i=0; i<16; ++i) {
-						if (dmhistory[(dmhindex + i) & 15] == dmask) {
-							reuseIdx = i;
-							break;
+							for(int i=8; i>=0; --i)
+								result.push_back(pokeydat[i]);
+
+							deltaMask = 0;
+						} else {
+							ctx.dmhistory[ctx.dmhindex++ & 15] = dmask;
+							result.push_back(deltaMask & 0x100 ? 5 : 4);
+							result.push_back(dmask);
+						}
+
+						for(int i=8; i>=0; --i) {
+							if (deltaMask & (1 << i))
+								result.push_back(pokeydat[i]);
 						}
 					}
+				} else
+					++result[ctx.lastduroff];
 
-					if (reuseIdx >= 0) {
-						if (deltaMask & 0x100)
-							result.push_back((uint8)(0x61 + reuseIdx*2));
-						else
-							result.push_back((uint8)(0x60 + reuseIdx*2));
-					} else if (dmask == 0xFF) {
-						result.push_back(2);
-						result.insert(result.end(), pokeydat, pokeydat+9);
-						deltaMask = 0;
-					} else {
-						dmhistory[dmhindex++ & 15] = dmask;
-						result.push_back(deltaMask & 0x100 ? 5 : 4);
-						result.push_back(dmask);
-					}
+				s += 9;
+			}
 
-					for(int i=8; i>=0; --i) {
-						if (deltaMask & (1 << i))
-							result.push_back(pokeydat[i]);
-					}
-				}
-			} else
-				++result[lastduroff];
-
-			s += 9;
+			firstTick = false;
 		}
 
 		// push a terminate command

@@ -62,13 +62,27 @@ AT_DEFINE_ENUM_TABLE_BEGIN(ATVideoStandard)
 AT_DEFINE_ENUM_TABLE_END(ATVideoStandard, kATVideoStandard_NTSC)
 
 extern constexpr ATHardwareModeTraits kATHardwareModeTraits[] = {
-	/* 800    */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false },
-	/* 800XL  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true  },
-	/* 5200   */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false },
-	/* XEGS   */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true  },
-	/* 1200XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = false, .mbSupportsPBI = true  },
-	/* 130XE  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true  },
-	/* 1400XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true  },
+	/* 800    */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false,
+					  .mbHasSIO12V = true, .mbHas9VACPower = true
+					},
+	/* 800XL  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true,
+					  .mbHasSIO12V = false, .mbHas9VACPower = false
+					},
+	/* 5200   */	{ .mbRunsXLOS = false, .mbHasPort34 = true , .mbFloatingDataBus = true , .mbInternalBASIC = false, .mbSupportsPBI = false,
+					  .mbHasSIO12V = false, .mbHas9VACPower = true
+					},
+	/* XEGS   */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true,
+					  .mbHasSIO12V = false, .mbHas9VACPower = false
+					},
+	/* 1200XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = false, .mbSupportsPBI = true,
+					  .mbHasSIO12V = false, .mbHas9VACPower = true
+					},
+	/* 130XE  */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = true , .mbInternalBASIC = true , .mbSupportsPBI = true,
+					  .mbHasSIO12V = false, .mbHas9VACPower = false
+					},
+	/* 1400XL */	{ .mbRunsXLOS = true , .mbHasPort34 = false, .mbFloatingDataBus = false, .mbInternalBASIC = true , .mbSupportsPBI = true,
+					  .mbHasSIO12V = false, .mbHas9VACPower = false
+					},
 };
 
 static_assert(vdcountof(kATHardwareModeTraits) == kATHardwareModeCount);

@@ -83,7 +83,7 @@ void ATUIShowError(VDGUIHandle h, const wchar_t *text) {
 }
 
 void ATUIShowError(VDGUIHandle h, const MyError& e) {
-	if (!e.empty() && *e.wc_str())
+	if (e.visible())
 		ATUIShowError(h, e.wc_str());
 }
 

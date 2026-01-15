@@ -26,16 +26,16 @@ public:
 	ATCallStackWindow();
 	~ATCallStackWindow();
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId) {}
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override {}
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
-	void OnFontsUpdated();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
+	void OnFontsUpdated() override;
 
 	HWND	mhwndList;
 	VDStringW	mState;

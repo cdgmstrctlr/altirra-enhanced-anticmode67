@@ -17,6 +17,7 @@
 
 #include <stdafx.h>
 #include <vd2/system/binary.h>
+#include <vd2/system/constexpr.h>
 #include <vd2/system/error.h>
 #include <vd2/system/file.h>
 #include <vd2/system/filesys.h>
@@ -41,9 +42,38 @@ namespace {
 	// Each data bit is therefore 8us, and data byte 8*8 = 64us.
 	static const int kBitsPerTrackFM = 26042;
 
+	template<uint8... T_SectorNo>
+	constexpr auto SectorOrderToSectorPosition() {
+		const uint8 sectorNumbers[] {
+			T_SectorNo...
+		};
+
+		const uint8 kInvalid = 255;
+
+		VDCxArray<uint8, sizeof...(T_SectorNo)> sectorPositions {};
+
+		// preinit to max so we know if there's been a mistake
+		for(uint8& v : sectorPositions)
+			v = kInvalid;
+
+		// set sector positions for each sector number; note that sector numbers
+		// are 1-based
+		uint8 pos = 0;
+
+		for(uint8 no : sectorNumbers) {
+			if (sectorPositions[no-1] != kInvalid)
+				throw;
+
+			sectorPositions[no-1] = pos++;
+		}
+
+		return sectorPositions;
+	}
+
 	// Tables for encoding the angular position of each sector. Note that these are
 	// indexed by virtual sector and not physical sector, so they are inverted from
 	// the usual way that interleave patterns are written.
+
 
 	// 1,8,15,4,11,18,7,14,3,10,17,6,13,2,9,16,5,12
 	static const int kTrackInterleaveSD_12_1[18]={
@@ -64,6 +94,11 @@ namespace {
 	static const int kTrackInterleaveSD_5_1[18]={
 		4, 9, 14, 0, 5, 10, 15, 1, 6, 11, 16, 2, 7, 12, 17, 3, 8, 13
 	};
+
+	// 5,10,15,1,6,11,16,2,7,12,17,3,8,13,18,4,9,14 (Indus GT SuperSynchromesh)
+	static constexpr auto kTrackInterleaveSD_4_1 = SectorOrderToSectorPosition<
+		5,10,15,1,6,11,16,2,7,12,17,3,8,13,18,4,9,14
+	>();
 
 	static const int kTrackInterleaveSD_2_1[18]={
 		0, 2, 4, 6, 8, 10, 12, 14, 16, 1, 3, 5, 7, 9, 11, 13, 15, 17
@@ -109,12 +144,6 @@ namespace {
 		uint8 mPassInfo;
 		uint8 mSectorLo;
 		uint8 mSectorHi;
-	};
-
-	enum ATDCMDiskType {
-		kATDCMDiskType_SD,
-		kATDCMDiskType_DD,
-		kATDCMDiskType_ED
 	};
 
 	enum ATXDensity : uint8 {
@@ -537,8 +566,6 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 	uint32 mainSectorCount = 0;
 	bool mfm = false;
 
-	ATDCMDiskType diskType = kATDCMDiskType_SD;
-
 	for(;;) {
 		ATDCMPassHeader passHeader;
 
@@ -553,16 +580,13 @@ void ATDiskImage::LoadDCM(IVDRandomAccessStream& stream, uint32 len, const wchar
 		switch(passHeader.mPassInfo & 0x60) {
 			case 0x00:
 				mainSectorCount = 720;
-				diskType = kATDCMDiskType_SD;
 				break;
 			case 0x40:
 				mainSectorCount = 1040;
-				diskType = kATDCMDiskType_ED;
 				mfm = true;
 				break;
 			case 0x20:
 				mainSectorCount = 720;
-				diskType = kATDCMDiskType_DD;
 				mfm = true;
 				break;
 		}
@@ -881,8 +905,6 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 			isTrack0MFM = isTrackMFM;
 
 		// scan all physical sectors and bin sort into virtual sectors
-		uint32 sectorsWithExtraData = 0;
-
 		trackIds.clear();
 
 		for(uint32 k=0; k<trkhdr.mNumSectors; ++k) {
@@ -907,9 +929,6 @@ void ATDiskImage::LoadATX(IVDRandomAccessStream& stream, uint32 len, const uint8
 			}
 
 			PhysicalSectorId& psecId = psecIds[trackIds[sechdr.mIndex]];
-
-			if (sechdr.mFDCStatus & 0x40)
-				++sectorsWithExtraData;
 
 			phySectorLookup[k] = (sint32)psecs.size();
 
@@ -3120,8 +3139,13 @@ ATDiskGeometryInfo ATDiskCreateDefaultGeometry(uint32 sectorCount, uint32 sector
 					geom.mSideCount = 1;
 					break;
 
-				case 1440:		// 5.25" double density: 40/80 tracks, double sided, 18 sectors per track
-				case 2880:
+				case 1440:		// 5.25" double density: 40 tracks, double sided, 18 sectors per track
+					// Unfortunately this is ambiguous with 3.5" double density, single sided 80 track....
+					geom.mSectorsPerTrack = 18;
+					geom.mSideCount = 2;
+					break;
+				case 2880:		// 5.25" double density: 80 tracks, double sided, 18 sectors per track
+								// 3.5" double density: 80 tracks, double sided, 18 sectors per track
 					geom.mSectorsPerTrack = 18;
 					geom.mSideCount = 2;
 					break;
@@ -3134,6 +3158,18 @@ ATDiskGeometryInfo ATDiskCreateDefaultGeometry(uint32 sectorCount, uint32 sector
 
 				case 4004:		// 8" 77 tracks, double sided, 26 sectors per track
 					geom.mSectorsPerTrack = 26;
+					geom.mSideCount = 2;
+					geom.mbHighDensity = true;
+					break;
+
+				case 4640:		// 5.25" 80 tracks, double sided, 29 sectors per track (Black Box 5.25" HD)
+					geom.mSectorsPerTrack = 29;
+					geom.mSideCount = 2;
+					geom.mbHighDensity = true;
+					break;
+
+				case 5760:		// 3.5" 80 tracks, double sided, 36 sectors per track (Black Box 3.5" HD)
+					geom.mSectorsPerTrack = 36;
 					geom.mSideCount = 2;
 					geom.mbHighDensity = true;
 					break;
@@ -3222,6 +3258,9 @@ vdfunction<float(uint32)> ATDiskGetInterleaveFn(ATDiskInterleave interleave, con
 
 		case kATDiskInterleave_SD_5_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_5_1[secIdx % 18] * kTurnsPerSectorSD; };
+
+		case kATDiskInterleave_SD_4_1:
+			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_4_1[secIdx % 18] * kTurnsPerSectorSD; };
 
 		case kATDiskInterleave_SD_2_1:
 			return [](uint32 secIdx) { return (float)kTrackInterleaveSD_2_1[secIdx % 18] * kTurnsPerSectorSD; };

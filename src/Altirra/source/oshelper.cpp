@@ -237,9 +237,6 @@ void ATFileSetReadOnlyAttribute(const wchar_t *path, bool readOnly) {
 void ATCopyFrameToClipboard(const VDPixmap& px) {
 	if (::OpenClipboard(nullptr)) {
 		if (::EmptyClipboard()) {
-			HANDLE hMem;
-			void *lpvMem;
-
 			VDPixmapLayout layout;
 			uint32 imageSize = VDMakeBitmapCompatiblePixmapLayout(layout, px.w, px.h, nsVDPixmap::kPixFormat_RGB888, 0);
 
@@ -248,8 +245,8 @@ void ATCopyFrameToClipboard(const VDPixmap& px) {
 
 			uint32 headerSize = (uint32)bih.size();
 
-			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, headerSize + imageSize)) {
-				if (lpvMem = ::GlobalLock(hMem)) {
+			if (HANDLE hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, headerSize + imageSize)) {
+				if (void *lpvMem = ::GlobalLock(hMem)) {
 					memcpy(lpvMem, bih.data(), headerSize);
 
 					VDPixmapBlt(VDPixmapFromLayout(layout, (char *)lpvMem + headerSize), px);
@@ -355,13 +352,10 @@ void ATSaveFrame(const VDPixmap& px, const wchar_t *filename) {
 void ATCopyTextToClipboard(void *hwnd, const char *s) {
 	if (::OpenClipboard((HWND)hwnd)) {
 		if (::EmptyClipboard()) {
-			HANDLE hMem;
-			void *lpvMem;
+			const size_t len = strlen(s);
 
-			size_t len = strlen(s);
-
-			if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len + 1)) {
-				if (lpvMem = ::GlobalLock(hMem)) {
+			if (HANDLE hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, len + 1)) {
+				if (void *lpvMem = ::GlobalLock(hMem)) {
 					memcpy(lpvMem, s, len + 1);
 
 					::GlobalUnlock(lpvMem);
@@ -381,13 +375,10 @@ void ATCopyTextToClipboard(void *hwnd, const wchar_t *s) {
 		return;
 
 	if (::EmptyClipboard()) {
-		HANDLE hMem;
-		void *lpvMem;
+		const size_t len = wcslen(s);
 
-		size_t len = wcslen(s);
-
-		if (hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (len + 1) * sizeof(WCHAR))) {
-			if (lpvMem = ::GlobalLock(hMem)) {
+		if (HANDLE hMem = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_DDESHARE, (len + 1) * sizeof(WCHAR))) {
+			if (void *lpvMem = ::GlobalLock(hMem)) {
 				memcpy(lpvMem, s, (len + 1) * sizeof(WCHAR));
 
 				::GlobalUnlock(lpvMem);

@@ -62,6 +62,7 @@ public:
 
 	void SetBindEventHandler(vdfunction<bool(ATVMCompiler&, const char *, const ATVMScriptFragment&)> bindEventFn);
 	void SetOptionHandler(vdfunction<bool(ATVMCompiler&, const char *, const ATVMDataValue&)> setOptionFn);
+	void SetUnsafeCallsAllowed(bool allowed);
 
 	static bool IsValidVariableName(const char *name);
 	bool IsSpecialVariableReferenced(const char *name) const;
@@ -216,8 +217,10 @@ private:
 	VDStringSpanA mTokIdent;
 	VDStringA mError;
 	sint32 mErrorPos = -1;
+	uint32 mNestingLevel = 0;
 
 	bool mbCompileDebugCode = false;
+	bool mbUnsafeCallsAllowed = false;
 
 	ATVMDomain *mpDomain = nullptr;
 	vdfastvector<uint8> mByteCodeBuffer;

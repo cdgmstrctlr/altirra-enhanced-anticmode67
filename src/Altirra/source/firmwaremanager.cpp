@@ -97,6 +97,9 @@ static constexpr const char *kATFirmwareTypeNames[]={
 	"820",
 	"1025",
 	"1029",
+	"850",
+	"blackboxfloppy",
+	"speedyxf"
 };
 
 VDASSERTCT(vdcountof(kATFirmwareTypeNames) == kATFirmwareTypeCount);

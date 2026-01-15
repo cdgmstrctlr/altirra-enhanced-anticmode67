@@ -154,7 +154,7 @@ void VDVideoDisplayManager::Shutdown() {
 	mThreadID = 0;
 }
 
-void VDVideoDisplayManager::SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent)>& profileHook) {
+void VDVideoDisplayManager::SetProfileHook(const vdfunction<void(IVDVideoDisplay::ProfileEvent, uintptr)>& profileHook) {
 	mpProfileHook = profileHook;
 }
 
@@ -296,15 +296,28 @@ void VDVideoDisplayManager::UpdateDisplayInfoCache() {
 				ent.mInfo.mSDRLevel = (float)devlevel.SDRWhiteLevel / 1000.0f * 80;
 			}
 
-			DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO getinfo {};
-			getinfo.header.adapterId = path.targetInfo.adapterId;
-			getinfo.header.id = path.targetInfo.id;
-			getinfo.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-			getinfo.header.size = sizeof(DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO);
+			// use GET_ADVANCED_COLOR_INFO_2 if we can -- it is required to distinguish
+			// between WCG and HDR
+			DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2 getinfo2 {};
+			getinfo2.header.adapterId = path.targetInfo.adapterId;
+			getinfo2.header.id = path.targetInfo.id;
+			getinfo2.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2;
+			getinfo2.header.size = sizeof(DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO_2);
 
-			if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo(&getinfo.header)) {
-				ent.mInfo.mbHDRCapable = getinfo.advancedColorSupported;
-				ent.mInfo.mbHDREnabled = getinfo.advancedColorEnabled;
+			if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo(&getinfo2.header)) {
+				ent.mInfo.mbHDRCapable = getinfo2.highDynamicRangeSupported;
+				ent.mInfo.mbHDREnabled = getinfo2.activeColorMode == DISPLAYCONFIG_ADVANCED_COLOR_MODE_HDR;
+			} else {
+				DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO getinfo {};
+				getinfo.header.adapterId = path.targetInfo.adapterId;
+				getinfo.header.id = path.targetInfo.id;
+				getinfo.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
+				getinfo.header.size = sizeof(DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO);
+
+				if (ERROR_SUCCESS == DisplayConfigGetDeviceInfo(&getinfo.header)) {
+					ent.mInfo.mbHDRCapable = getinfo.advancedColorSupported;
+					ent.mInfo.mbHDREnabled = getinfo.advancedColorEnabled;
+				}
 			}
 		}
 	}
@@ -369,7 +382,7 @@ void VDVideoDisplayManager::ThreadRunTimerOnly() {
 
 void VDVideoDisplayManager::DispatchTicks() {
 	if (mpProfileHook)
-		mpProfileHook(IVDVideoDisplay::kProfileEvent_BeginTick);
+		mpProfileHook(IVDVideoDisplay::kProfileEvent_BeginTick, 0);
 
 	Clients::iterator it(mClients.begin()), itEnd(mClients.end());
 	for(; it!=itEnd; ++it) {
@@ -380,7 +393,7 @@ void VDVideoDisplayManager::DispatchTicks() {
 	}
 
 	if (mpProfileHook)
-		mpProfileHook(IVDVideoDisplay::kProfileEvent_EndTick);
+		mpProfileHook(IVDVideoDisplay::kProfileEvent_EndTick, 0);
 }
 
 void VDVideoDisplayManager::PostTick() {

@@ -34,6 +34,7 @@
     <ClCompile Include="source\blt_reference_yuvrev.cpp" />
     <ClCompile Include="source\blt_setup.cpp" />
     <ClCompile Include="source\blt_spanutils.cpp" />
+    <ClCompile Include="source\blt_spanutils_arm64.cpp" />
     <ClCompile Include="source\blt_uberblit.cpp" />
     <ClCompile Include="source\pixel.cpp" />
     <ClCompile Include="source\pixmaputils.cpp" />
@@ -59,6 +60,7 @@
     <ClCompile Include="source\resample.cpp" />
     <ClCompile Include="source\resample_kernels.cpp" />
     <ClCompile Include="source\resample_stages.cpp" />
+    <ClCompile Include="source\resample_stages_arm64.cpp" />
     <ClCompile Include="source\resample_stages_reference.cpp" />
     <ClCompile Include="source\stretchblt_reference.cpp" />
     <ClCompile Include="source\uberblit.cpp" />
@@ -98,6 +100,7 @@
     <ClInclude Include="h\bitutils.h" />
     <ClInclude Include="h\blt_setup.h" />
     <ClInclude Include="h\blt_spanutils.h" />
+    <ClInclude Include="h\blt_spanutils_arm64.h" />
     <ClInclude Include="h\blt_spanutils_x86.h" />
     <ClInclude Include="..\h\vd2\Kasumi\pixel.h" />
     <ClInclude Include="..\h\vd2\Kasumi\pixmap.h" />
@@ -106,6 +109,7 @@
     <ClInclude Include="..\h\vd2\Kasumi\region.h" />
     <ClInclude Include="..\h\vd2\Kasumi\resample.h" />
     <ClInclude Include="h\resample_stages.h" />
+    <ClInclude Include="h\resample_stages_arm64.h" />
     <ClInclude Include="h\resample_stages_reference.h" />
     <ClInclude Include="h\resample_stages_x64.h" />
     <ClInclude Include="h\resample_stages_x86.h" />

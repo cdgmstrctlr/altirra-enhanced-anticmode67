@@ -40,6 +40,8 @@
 #include <vd2/system/unknown.h>
 #include <vd2/system/vdstl.h>
 
+class IATAudioAsyncSource;
+class IATAudioAsyncSamplePlayer;
 class IATSyncAudioSource;
 class IATSyncAudioSamplePlayer;
 class IATSyncAudioEdgePlayer;
@@ -87,9 +89,13 @@ public:
 	virtual void AddSyncAudioSource(IATSyncAudioSource *src) = 0;
 	virtual void RemoveSyncAudioSource(IATSyncAudioSource *src) = 0;
 
+	virtual void AddAsyncAudioSource(IATAudioAsyncSource& src) = 0;
+	virtual void RemoveAsyncAudioSource(IATAudioAsyncSource& src) = 0;
+
 	virtual IATSyncAudioSamplePlayer& GetSamplePlayer() = 0;
 	virtual IATSyncAudioSamplePlayer& GetEdgeSamplePlayer() = 0;
 	virtual IATSyncAudioEdgePlayer& GetEdgePlayer() = 0;
+	virtual IATSyncAudioSamplePlayer& GetAsyncSamplePlayer() = 0;
 
 	// Add/remove internal audio taps, which receive the raw audio output from the computer. Currently this
 	// receives just the main POKEY output.
@@ -167,15 +173,48 @@ public:
 	virtual void Play(uint32 t, float volume) = 0;
 };
 
+class IATAudioSampleHandle : public IVDRefCount {};
+
+enum class ATAudioSamplingRateUnit {
+	Hz,
+	PokeyMixingRate
+};
+
+struct ATAudioSoundSamplingRate {
+	float mValue {};
+	ATAudioSamplingRateUnit mUnit {};
+
+	ATAudioSoundSamplingRate(float val = 0, ATAudioSamplingRateUnit unit = ATAudioSamplingRateUnit::Hz)
+		: mValue(val), mUnit(unit) {}
+};
+
+struct ATSoundParams {
+	float mDelay = 0.0f;
+	float mRateScale = 1.0f;
+	float mVolume = 1.0f;
+	float mPan = 0;
+	bool mbLooping = false;
+
+	ATSoundParams&& Delay(float delay) && { mDelay = delay; return static_cast<ATSoundParams&&>(*this); }
+	ATSoundParams&& RateScale(float rate) && { mRateScale = rate; return static_cast<ATSoundParams&&>(*this); }
+	ATSoundParams&& Volume(float vol) && { mVolume = vol; return static_cast<ATSoundParams&&>(*this); }
+	ATSoundParams&& Pan(float pan) && { mPan = pan; return static_cast<ATSoundParams&&>(*this); }
+	ATSoundParams&& Loop(bool enabled = true) && { mbLooping = enabled; return static_cast<ATSoundParams&&>(*this); }
+};
+
 class IATSyncAudioSamplePlayer {
 public:
 	virtual IATSyncAudioSource& AsSource() = 0;
+
+	virtual vdrefptr<IATAudioSampleHandle> RegisterSample(vdspan<const sint16> soundData, const ATAudioSoundSamplingRate& samplingRate, float volume) = 0;
 
 	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
 	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, ATAudioSampleId sampleId, float volume) = 0;
 
 	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, uint32 len, float volume) = 0;
 	virtual ATSoundId AddLoopingSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleSource *src, IVDRefCount *owner, float volume) = 0;
+
+	virtual ATSoundId AddSound(IATAudioSoundGroup& soundGroup, uint32 delay, IATAudioSampleHandle& sample, const ATSoundParams& params) = 0;
 
 	// Create a sound group. All sounds placed into the group are subject to the policies of that group.
 	// All sounds in a group are automatically stopped when the last reference to the group is released,

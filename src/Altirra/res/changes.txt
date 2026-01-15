@@ -1,6 +1,116 @@
 Altirra Change Log
 
-Version 4.31:
+Version 4.40 [December 31, 2025]
+   [changes]
+   * Display: Bloom radius has been reset due to different units.
+   * UI: Options have been merged from Tools > Options into System > Configure System.
+
+   [features added]
+   * Cartridge: MaxFlash 1Mbit flash type is now selectable, including recent SST39SF010-based cartridges.
+   * Cheats: Cheat window is now modeless and resizable.
+   * Command Line: Specifying more than one image will now stack media slots in order.
+   * Custom Devices: Memory layers can now be auto-controlled based on OS/BASIC/Self-Test ROM visibility.
+   * Custom Devices: Improved error display when hot reloading the custom device definition file.
+   * Debugger: Improved SIODATA trace channel output.
+   * Debugger: Added .devices and .device_info commands.
+   * Debugger: Static trace (st) command now has -b option to trace through BRK instructions.
+   * Debugger: Added block detection support for Z80 disassembly.
+   * Debugger: .tracecio now reports AUX2 on open commands.
+   * Debugger: Implemented history for memory pane.
+   * Devices: Added full emulation for 850 Interface Module.
+   * Devices: Internal 850 R: handler now blocks Break during concurrent I/O instead of ending concurrent I/O when it is pressed.
+   * Devices: Standard 850 emulation is now more consistent with DTR/RTS state.
+   * Devices: Add device list is now sorted by name.
+   * Devices: Improve timing precision of Indus GT full emulation.
+   * Devices: Added The Pill device.
+   * Devices: Added the Black Box Floppy Board.
+   * Devices: Added Speedy XF disk drive.
+   * Devices: Added CSS Multiplexer.
+   * Devices: Added XM301 modem.
+   * Devices: Added named pipe serial adapter.
+   * Disk: Add option for reinterleaving to 4:1 SD for SuperSynchromesh.
+   * Disk: Improved timing correction when accelerating disk reads.
+   * Disk Explorer: Multiple files can now be exported at a time.
+   * Display: Added support for screen masks.
+   * Display: Move screen mask rendering to after color correction to reduce aliasing.
+   * Display: Improved scaling of bloom filter to different resolutions.
+   * Display: Added Direct3D 11 custom effect support.
+   * Display: Added NEON optimizations for PAL high artifacting.
+   * Firmware: Redesigned firmware dialog.
+   * Firmware: Added known firmware audit dialog.
+   * HDevice: Added support for MyDOS XIO 34 (Make Directory) and using XIO 33 (Delete) on directories.
+   * Input: Added paddle input emulation.
+   * PerfAnalyzer: Right-drag scrolling is now supported.
+   * PerfAnalyzer: Added native tracing mode, which profiles the emulator itself.
+   * PerfAnalyzer: Added option for video trace channel frame size and resizable splitter to change the height of the displayed video channel.
+   * Printer: 1020 plotter pen colors can now be customized.
+   * Printer: The printer UI pane now allows selecting between multiple printer outputs.
+   * Recorder: Added option to pause/resume video recording.
+   * Recorder: Added support for recording and playback of stereo SAP type R.
+   * Recorder: Added VGM recording and playback support.
+   * Simulator: Increased scanlines run at a time to slightly improve speed.
+   * UI: Added 850 error codes to error decoder.
+   * UI: Reduced flickering on drive indicators when using full emulation disk drives.
+   * UI: Removed title bar from docked panes and improved resizing behavior.
+   * UI: Increased splitter bar size slightly and raised drag thresholds to reduce accidental pane undocking.
+
+   [bugs fixed]
+   * ANTIC: Fixed line buffer being cleared on blank lines.
+   * Cartridge: Improved emulation of SpartaDOS X pass-through cartridge port.
+   * Cartridge: Added reset button for The!Cart.
+   * Cassette: Fixed recording position not being reset properly when creating a new tape.
+   * Cassette: Improved accuracy of Vorbis decoding.
+   * Command Line: /profile command line switch is now case insensitive.
+   * Custom Devices: Fixed crash when attempting to create a memory layer directly mapping beyond the end of a segment without explicit offset.
+   * Custom Devices: Fixed a compiler crash when using nested anonymous functions.
+   * Custom Devices: Added support for unsafe calls, including the ability to issue UI commands.
+   * Debugger: Improved debugger UI state update when non-debugger commands are used to resume execution.
+   * Debugger: Fixed .pathdump command repeating instruction lines.
+   * Debugger: Fixed history view sometimes not displaying effective address on an instruction after stepping from a memory access breakpoint.
+   * Debugger: Fixed horizontal scroll problems with overscroll in memory window.
+   * Devices: Fixed Rapidus write-through improperly capturing writes to ROM or extended memory.
+   * Devices: 1090 registers are now always visible regardless of PBI enable state to match the known PAL equations.
+   * Devices: Booting off the 1030 with internal firmware now registers T: device properly.
+   * Devices: Fixed 1030 ModemLink and T: handler download with SIO acceleration enabled.
+   * Devices: SuperSALT test assembly voltage inputs now reflect computer model differences.
+   * Devices: Fixed some coprocessors losing cycles when single stepping.
+   * Devices: Fixed SIDE 3 not being switchable from a controlled cartridge port.
+   * Devices: Fixed SX212 speed not saving and emulation mode not switching properly.
+   * Devices: Fixed modem not dialing out to IPv6 addresses.
+   * Disk: Relaxed standard disk emulator requirements on command frames and ignore overlapping commands for most disk emulation profiles.
+   * Disk Explorer: Dragging out directories from a MyDOS disk no longer produces a bogus file.
+   * Disk Explorer: Fixed crashes and directory corruption issues in CP/M filesystem handler.
+   * Display: Fixed regression in D3D11 driver where bloom broke in full-screen mode.
+   * Display: Screen effects dialog no longer reports high dynamic range (HDR) is available when the display is configured for wide color gamut (WCG).
+   * Display: Fixed Enhanced CIO screen editor not wrapping characters properly on Delete Character commands.
+   * Firmware: The initial "autoselect" state for OS and BASIC firmwares is now always shown.
+   * GTIA: Fixed intermediate state when switching from CTIA to GTIA on the fly.
+   * HDevice: Current directory is now cleared on reset.
+   * HDevice: Long file name encoding/truncation now works for directories.
+   * HDevice: Fixed relative paths being parsed with the wrong unit's current working directory.
+   * HLE: Fixed a bug in the fast math acceleration hook for the normalization routine.
+   * HLE: CIO acceleration now supports multiple devices with the same name but different units, e.g. P3: and P6.
+   * IDE: CHS translation mappings now round down the number of cylinders instead of rounding up.
+   * Input: Fixed crash after XInput controller is disconnected.
+   * Input: Added workaround for Xbox Wireless Controller being detected twice through DirectInput.
+   * Input: Fixed regression with Keyboard Controller not reading properly in fast pot scan mode.
+   * Input: POT4-7 inputs are now grounded properly on XL/XE machines.
+   * PerfAnalyzer: Fixed CPU profile window breaking temporarily after saving a trace.
+   * PerfAnalyzer: Fixed scrolling artifacts with frame boundary lines.
+   * PerfAnalyzer: Fixed lockup when pressing Tab.
+   * POKEY: Improved accuracy of pot scan.
+   * Recorder: Fixed bitrate not being adjustable for H.264+AAC encoding.
+   * Recorder: Fixed memory leak when using MediaFoundation-based formats.
+   * Save States: Fixed bug with active POKEY IRQs getting lost.
+   * Simulator: Fixed booting a new image sometimes not cancelling a program load in progress.
+   * Simulator: Loading a program with Open Image no longer forces a cold reset.
+   * Modem: Fixed intermittent failure to disable Nagle on outgoing connections.
+   * Modem: Outgoing connections no longer force off server-side echo.
+   * Modem: Binary mode negotiation is disabled when CR/LF translation is enabled.
+   * VBXE: Fixed hires artifacts when using attribute map with 1.26 core and extended color, or hires switching at the borders.
+   * VBXE: Fixed bugs with attribute map horizontal scrolling.
+
+Version 4.31 [February 8, 2025]:
    * Cassette: Fixed a crash if decoding errors occurred while loading a raw tape.
    * Devices: Fixed a crash when adding a device with certain nodes selected. 
    * Display: Fixed D3D9 gamma correction bugs in specific display configurations with bloom enabled.

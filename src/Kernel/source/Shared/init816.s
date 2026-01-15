@@ -253,7 +253,7 @@ notRAM:
 		dta		$ff							;$0011 BRKKEY
 
 		dta		$02,a(lmargn)
-		dta		$00							;$0052 LMARGN
+		dta		$00							;$0052 LMARGN CMC
 		dta		$27							;$0053 RMARGN
 
 		dta		$18,a(vdslst)

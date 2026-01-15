@@ -48,6 +48,10 @@ public:
 	// blending when color correction is not active.
 	uint32 mUncorrectedPalette[256];
 
+	// Same as uncorrected palette, but with signed encoding. Alpha is undefined,
+	// however.
+	uint32 mUncorrectedSignedPalette[256];
+
 	// If present, indicates a color correction matrix to apply in linear
 	// RGB space.
 	std::optional<vdfloat3x3> mColorMatchingMatrix;

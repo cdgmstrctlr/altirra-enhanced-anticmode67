@@ -31,6 +31,8 @@
 class IATUIRenderer;
 class IATSyncAudioSource;
 class IATAudioMixer;
+class ATScheduler;
+class ATAudioSamplePool;
 
 class IATAudioTap {
 public:
@@ -64,7 +66,7 @@ class IATAudioOutput {
 public:
 	virtual ~IATAudioOutput() = default;
 
-	virtual void Init(IATSyncAudioSamplePlayer *samplePlayer, IATSyncAudioSamplePlayer *edgeSamplePlayer) = 0;
+	virtual void Init(ATScheduler& scheduler) = 0;
 
 	// Create the native audio device. This must be done before writing audio. This is a separate call
 	// to allow the audio engine to be pre-configured and only init the native audio once afterward, since
@@ -79,6 +81,7 @@ public:
 	virtual ATUIAudioStatus GetAudioStatus() const = 0;
 
 	virtual IATAudioMixer& AsMixer() = 0;
+	virtual ATAudioSamplePool& GetPool() = 0;
 
 	virtual void SetCyclesPerSecond(double cps, double repeatfactor) = 0;
 

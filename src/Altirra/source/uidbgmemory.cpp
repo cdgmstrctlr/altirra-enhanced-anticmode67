@@ -33,6 +33,14 @@ ATMemoryWindowPanel::ATMemoryWindowPanel()
 {
 	mAddressView.SetOnEndEdit(
 		[this](const wchar_t *s) -> bool {
+			// need to defer as the combo box does weird things if we delete the
+			// selected item
+			PostCall(
+				[this, str = VDStringW(s)] {
+					AddToHistory(str.c_str());
+				}
+			);
+
 			if (mpOnAddressSet)
 				mpOnAddressSet(s);
 
@@ -113,6 +121,35 @@ bool ATMemoryWindowPanel::OnLoaded() {
 	}
 
 	return VDDialogFrameW32::OnLoaded();
+}
+
+void ATMemoryWindowPanel::AddToHistory(const wchar_t *s) {
+	VDStringSpanW addr(s);
+
+	while(!addr.empty() && iswspace(addr.back()))
+		addr = addr.subspan(0, addr.size() -1);
+
+	while(!addr.empty() && iswspace(addr.front()))
+		addr = addr.subspan(1);
+
+	int index = 0;
+	for(const VDStringW& hs : mAddressHistory) {
+		if (!hs.comparei(addr)) {
+			mAddressHistory.erase(mAddressHistory.begin() + index);
+			mAddressView.DeleteItem(index);
+			break;
+		}
+
+		++index;
+	}
+
+	VDStringW addrStr(addr);
+	mAddressHistory.insert(mAddressHistory.begin(), addrStr);
+	mAddressView.InsertItem(0, addrStr.c_str());
+
+	// Deleting the selection clears the combo box, so we need to reinstate the
+	// text.
+	mAddressView.SetCaption(addrStr.c_str());
 }
 
 void ATMemoryWindowPanel::ToggleExpand() {
@@ -590,7 +627,7 @@ void ATMemoryWindow::OnSize() {
 	mPartiallyVisibleRows = (mTextArea.bottom - mTextArea.top + mLineHeight - 1) / mLineHeight;
 
 	mScrollBar.SetPageSize(std::max<sint32>(mCompletelyVisibleRows, 1));
-	mHScrollBar.SetPageSize(mTextArea.right - mTextArea.left);
+	UpdateHScrollRange();
 
 	mbViewValid = false;
 	RemakeView(mViewStart, false);
@@ -643,6 +680,7 @@ void ATMemoryWindow::UpdateContentFontMetrics() {
 
 	if (doUpdates) {
 		UpdateLineHeight();
+		UpdateContentWidth();
 		UpdateHScrollRange();
 		Invalidate();
 	}
@@ -677,7 +715,7 @@ void ATMemoryWindow::UpdateScrollRange() {
 	mScrollBar.SetRange(0, 0x10000 / mColumns);
 }
 
-void ATMemoryWindow::UpdateHScrollRange() {
+void ATMemoryWindow::UpdateContentWidth() {
 	// "ADDR:"
 	sint32 numChars = GetAddressLength() + 1;
 
@@ -730,19 +768,25 @@ void ATMemoryWindow::UpdateHScrollRange() {
 			break;
 	}
 
-	const sint32 hscrRange = numPixels + numChars * mCharWidth;
+	const sint32 newContentWidth = numPixels + numChars * mCharWidth;
 
-	mHScrollBar.SetRange(0, hscrRange);
+	if (mContentWidth != newContentWidth) {
+		mContentWidth = newContentWidth;
 
+		UpdateHScrollRange();
+	}
+}
+
+void ATMemoryWindow::UpdateHScrollRange() {
 	// We need to reapply this because the scrollbar will clamp the page size
 	// if it exceeds the range, which means it can now be incorrect.
 	const sint32 hscrPage = mTextArea.right - mTextArea.left;
-	mHScrollBar.SetPageSize(hscrPage);
+	const sint32 hscrRange = std::max<sint32>(hscrPage + mHScrollPos, mContentWidth) - 1;
 
-	// if we're scrolled past the new range, force a scroll
-	const sint32 hscrMax = std::max(0, hscrRange - hscrPage);
-	if (mHScrollPos > hscrMax)
-		OnViewHScroll(hscrMax, false);
+	mHScrollBar.SetParams(
+		std::nullopt,
+		std::pair<sint32, sint32>(0, hscrRange),
+		hscrPage);
 }
 
 void ATMemoryWindow::AdjustColumnCount() {
@@ -1215,14 +1259,26 @@ void ATMemoryWindow::OnViewScroll(sint32 pos, [[maybe_unused]] bool tracking) {
 	RemakeView((mViewStart & 0xFFFF0000) + (mViewStart & 0xFFFF) % mColumns + std::max<sint32>(0, pos) * mColumns, true);
 }
 
-void ATMemoryWindow::OnViewHScroll(sint32 pos, [[maybe_unused]] bool tracking) {
+void ATMemoryWindow::OnViewHScroll(sint32 pos, bool tracking) {
+	if (pos < mHScrollPos) {
+		const sint32 viewWidth = mTextArea.right - mTextArea.left;
+		const sint32 range = std::max<sint32>(viewWidth + mHScrollPos, mContentWidth) - viewWidth;
+
+		pos = std::min<sint32>(pos, range);
+	}
+
+	if (pos < 0)
+		pos = 0;
+
 	sint32 delta = pos - mHScrollPos;
-	if (!delta)
-		return;
+	if (delta) {
+		mHScrollPos = pos;
 
-	mHScrollPos = pos;
+		::ScrollWindow(mhwnd, -delta, 0, &mTextArea, &mTextArea);
+	}
 
-	::ScrollWindow(mhwnd, -delta, 0, &mTextArea, &mTextArea);
+	if (!tracking)
+		UpdateHScrollRange();
 }
 
 struct ATWrapRange32 {
@@ -1256,6 +1312,8 @@ void ATMemoryWindow::RemakeView(uint32 focusAddr, bool fromScroll) {
 		mViewStart = focusAddr;
 		mbViewValid = true;
 		changed = true;
+
+		UpdateContentWidth();
 	}
 
 	const uint32 rows = mPartiallyVisibleRows;
@@ -1516,6 +1574,7 @@ void ATMemoryWindow::SetColumns(uint32 cols, bool updateUI) {
 		mColumns = cols;
 
 		UpdateScrollRange();
+		UpdateContentWidth();
 		UpdateHScrollRange();
 
 		mbViewValid = false;
@@ -1533,6 +1592,7 @@ void ATMemoryWindow::SetValueMode(ValueMode mode) {
 	mValueMode = mode;
 
 	AdjustColumnCount();
+	UpdateContentWidth();
 	Invalidate();
 }
 
@@ -1544,6 +1604,7 @@ void ATMemoryWindow::SetInterpretMode(InterpretMode mode) {
 
 	AdjustColumnCount();
 	UpdateLineHeight();
+	UpdateContentWidth();
 	UpdateHScrollRange();
 	Invalidate();
 }

@@ -31,7 +31,7 @@
 #include <at/atio/diskimage.h>
 #include "diskinterface.h"
 
-class ATAudioSamplePlayer;
+class IATSyncAudioSamplePlayer;
 class ATDiskRotationTracer;
 
 class ATCPUEmulatorMemory;
@@ -76,7 +76,7 @@ public:
 	ATDiskEmulator();
 	~ATDiskEmulator();
 
-	void Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, ATAudioSamplePlayer *mixer);
+	void Init(int unit, ATDiskInterface *dif, ATScheduler *sched, ATScheduler *slowsched, IATSyncAudioSamplePlayer& mixer);
 	void Shutdown();
 
 	void Rename(int unit);
@@ -173,6 +173,7 @@ protected:
 	uint32 GetCyclesToReadSector(const ATDiskPhysicalSectorInfo& psi, uint32 transferLength) const;
 
 	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
 	ATScheduler *mpScheduler = nullptr;
 	ATScheduler *mpSlowScheduler = nullptr;
 	int		mUnit = 0;
@@ -246,7 +247,7 @@ protected:
 	uint32	mCyclesPerSIOBitCurrent = 1;
 	uint32	mCyclesPerSIOByteCurrent = 1;
 
-	ATAudioSamplePlayer *mpAudioSyncMixer = nullptr;
+	IATSyncAudioSamplePlayer *mpAudioSyncMixer = nullptr;
 	vdrefptr<IATAudioSoundGroup> mpRotationSoundGroup;
 	vdrefptr<IATAudioSoundGroup> mpStepSoundGroup;
 

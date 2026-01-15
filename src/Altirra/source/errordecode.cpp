@@ -24,7 +24,8 @@ vdfastvector<ATDecodedError> ATDecodeError(uint8 code) {
 		SIO,
 		DOS,
 		DOS3,
-		SDX
+		SDX,
+		MyDOS
 	};
 
 	static constexpr const wchar_t *kErrClasses[] {
@@ -34,6 +35,7 @@ vdfastvector<ATDecodedError> ATDecodeError(uint8 code) {
 		L"DOS",
 		L"DOS 3",
 		L"SDX",
+		L"MyDOS"
 	};
 
 	struct ErrInfo {
@@ -88,6 +90,14 @@ vdfastvector<ATDecodedError> ATDecodeError(uint8 code) {
 		{ 146, ErrClass::CIO,	L"Not supported" },
 		{ 147, ErrClass::CIO,	L"Out of memory" },
 
+		{ 150, ErrClass::CIO,	L"850: Port already open" },
+		{ 150, ErrClass::SDX,	L"Path not found" },
+
+		{ 151, ErrClass::CIO,	L"850: Concurrent mode I/O not enabled" },
+		{ 152, ErrClass::CIO,	L"850: Illegal user-supplied buffer" },
+		{ 153, ErrClass::CIO,	L"850: Active concurrent mode I/O" },
+		{ 154, ErrClass::CIO,	L"850: Concurrent mode I/O not active" },
+
 		{ 160, ErrClass::DOS,	L"Invalid drive number" },
 		{ 161, ErrClass::DOS,	L"Too many open files" },
 		{ 162, ErrClass::DOS,	L"Disk full" },
@@ -100,10 +110,11 @@ vdfastvector<ATDecodedError> ATDecodeError(uint8 code) {
 		{ 169, ErrClass::DOS,	L"Directory full" },
 		{ 170, ErrClass::DOS,	L"File not found" },
 		{ 171, ErrClass::DOS,	L"Invalid POINT" },
-
+		{ 172, ErrClass::MyDOS,	L"File/directory already exists" },
 		{ 173, ErrClass::DOS3,	L"Bad sectors at format time" },
 		{ 174, ErrClass::DOS3,	L"Duplicate filename" },
 		{ 175, ErrClass::DOS3,	L"Bad load file" },
+		{ 175, ErrClass::MyDOS,	L"Directory not empty" },
 		{ 176, ErrClass::SDX,	L"Access denied\n<b>DOS 3:</b> Incompatible format" },
 		{ 177, ErrClass::DOS3,	L"Disk structure damaged" },
 		{ 182, ErrClass::SDX,	L"Path too long" },

@@ -645,7 +645,7 @@ private:
 	bool OnLoaded() override;
 	void OnDestroy() override;
 	bool PreNCDestroy() override;
-	bool OnPreTranslate(VDZMSG& msg);
+	bool OnPreTranslate(VDZMSG& msg) override;
 	bool OnErase(VDZHDC hdc) override;
 	bool OnCommand(uint32 id, uint32 extcode) override;
 	bool OnOK() override;

@@ -242,22 +242,24 @@ void ATConsoleWindow::OnSize() {
 		if (prw * 3 > r.right)
 			prw = 0;
 
-		if (mhwndLog) {
-			VDVERIFY(SetWindowPos(mhwndLog, NULL, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE));
-		}
+		ATContainerResizer resizer;
+
+		if (mhwndLog)
+			resizer.LayoutWindow(mhwndLog, 0, 0, r.right, r.bottom > h ? r.bottom - h : 0, false);
 
 		if (mhwndPrompt) {
 			if (prw > 0) {
-				VDVERIFY(SetWindowPos(mhwndPrompt, NULL, 0, r.bottom - h, prw, h, SWP_NOZORDER|SWP_NOACTIVATE));
-				ShowWindow(mhwndPrompt, SW_SHOW);
+				resizer.LayoutWindow(mhwndPrompt, 0, r.bottom - h, prw, h, true);
 			} else {
-				ShowWindow(mhwndPrompt, SW_HIDE);
+				resizer.HideWindow(mhwndPrompt);
 			}
 		}
 
 		if (mhwndEdit) {
-			VDVERIFY(SetWindowPos(mhwndEdit, NULL, prw, r.bottom - h, r.right - prw, h, SWP_NOZORDER|SWP_NOACTIVATE));
+			resizer.LayoutWindow(mhwndEdit, prw, r.bottom - h, r.right - prw, h, false);
 		}
+
+		resizer.Flush();
 	}
 }
 
@@ -559,8 +561,8 @@ LRESULT ATConsoleWindow::CommandEditWndProc(HWND hwnd, UINT msg, WPARAM wParam, 
 
 			try {
 				ATConsoleQueueCommand(s.c_str());
-			} catch(const MyError& e) {
-				ATConsolePrintf("%s\n", e.gets());
+			} catch(const VDException& e) {
+				ATConsolePrintf("%ls\n", e.wc_str());
 			}
 
 			return 0;

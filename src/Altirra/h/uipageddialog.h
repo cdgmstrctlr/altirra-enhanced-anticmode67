@@ -140,7 +140,7 @@ protected:
 	ATUIContextualHelpProvider *GetHelpProvider() override final;
 
 protected:
-	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam);
+	VDZINT_PTR DlgProc(VDZUINT msg, VDZWPARAM wParam, VDZLPARAM lParam) override;
 	bool OnLoaded() override;
 	void OnDataExchange(bool write) override;
 	void OnDestroy() override;

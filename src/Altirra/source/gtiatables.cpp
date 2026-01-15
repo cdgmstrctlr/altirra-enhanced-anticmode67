@@ -84,7 +84,7 @@ extern const ATPALPhaseInfo kATPALPhaseLookup[15] = {
 	{  0.0f,  1,  0.0f,  1 },
 };
 
-void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
+void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {	// CMC
 	// Priority table initialization
 	//
 	// The priority logic in the GTIA works as follows:
@@ -136,27 +136,34 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 	// either 10 or 12 through the addition of black.
 
 	memset(priorityTables, 0, 64LL * 256);
-	
+
 	int i;
-	for (int prior = 0; prior < 64; ++prior)		// CMC because prior is ANDed below, going through all 64 entries for enhanced mode is OK
-	{
+	for (int prior = 0; prior < 64; ++prior) {		// CMC because prior is ANDed below, going through all 64 entries for enhanced mode is OK
 		const bool multi = (prior & 16) != 0;
 		const bool pri0 = (prior & 1) != 0;
 		const bool pri1 = (prior & 2) != 0;
 		const bool pri2 = (prior & 4) != 0;
 		const bool pri3 = (prior & 8) != 0;
-		const bool pri01 = pri0 || pri1;
-		const bool pri12 = pri1 || pri2;
-		const bool pri23 = pri2 || pri3;
-		const bool pri03 = pri0 || pri3;
+		const bool pri01 = pri0 | pri1;
+		const bool pri12 = pri1 | pri2;
+		const bool pri23 = pri2 | pri3;
+		const bool pri03 = pri0 | pri3;
 
-		for (i = 0; i < 256; ++i)
-		{
+		for(int i=0; i<256; ++i) {
 			// The way the ANx decode logic works in GTIA, there is no possibility of any
 			// conflict between playfield bits except for PF3, which can conflict due to
 			// being reused for the fifth player. Therefore, we remap the table so that
 			// any conflicts are resolved in favor of the higher playfield.
-			static const uint8 kPlayfieldPriorityTable[8] = { 0, 1, 2, 2, 4, 4, 4, 4 };
+			static const uint8 kPlayfieldPriorityTable[8]={
+				0,
+				1,
+				2,
+				2,
+				4,
+				4,
+				4,
+				4,
+			};
 
 			const uint8 v = kPlayfieldPriorityTable[i & 7];
 
@@ -169,22 +176,22 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 			const bool p2 = (i & 64) != 0;
 			const bool p3 = (i & 128) != 0;
 
-			const bool p01 = p0 || p1;
-			const bool p23 = p2 || p3;
-			const bool pf01 = pf0 || pf1;
-			const bool pf23 = pf2 || pf3;
+			const bool p01 = p0 | p1;
+			const bool p23 = p2 | p3;
+			const bool pf01 = pf0 | pf1;
+			const bool pf23 = pf2 | pf3;
 
-			const bool sp0 = p0 && !(pf01 && pri23) && !(pri2 && pf23);
-			const bool sp1 = p1 && !(pf01 && pri23) && !(pri2 && pf23) && (!p0 || multi);
-			const bool sp2 = p2 && !p01 && !(pf23 && pri12) && !(pf01 && !pri0);
-			const bool sp3 = p3 && !p01 && !(pf23 && pri12) && !(pf01 && !pri0) && (!p2 || multi);
+			const bool sp0 = p0 & !(pf01 & pri23) & !(pri2 & pf23);
+			const bool sp1 = p1 & !(pf01 & pri23) & !(pri2 & pf23) & (!p0 | multi);
+			const bool sp2 = p2 & !p01 & !(pf23 & pri12) & !(pf01 & !pri0);
+			const bool sp3 = p3 & !p01 & !(pf23 & pri12) & !(pf01 & !pri0) & (!p2 | multi);
 
-			const bool sf3 = pf3 && !(p23 && pri03) && !(p01 && !pri2);
-			const bool sf2 = pf2 && !(p23 && pri03) && !(p01 && !pri2) && !sf3;
-			const bool sf1 = pf1 && !(p23 && pri0) && !(p01 && pri01) && !sf3;
-			const bool sf0 = pf0 && !(p23 && pri0) && !(p01 && pri01) && !sf3;
+			const bool sf3 = pf3 & !(p23 & pri03) & !(p01 & !pri2);
+			const bool sf2 = pf2 & !(p23 & pri03) & !(p01 & !pri2) & !sf3;
+			const bool sf1 = pf1 & !(p23 & pri0) & !(p01 & pri01) & !sf3;
+			const bool sf0 = pf0 & !(p23 & pri0) & !(p01 & pri01) & !sf3;
 
-			const bool sb = !p01 && !p23 && !pf01 && !pf23;
+			const bool sb = !p01 & !p23 & !pf01 & !pf23;
 
 			int out = 0;
 			if (sf0) out += 0x001;
@@ -232,6 +239,7 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 		}
 	}
 
+	// CMC
 	// Upper nybbles are assigned to pixels from PM0 through PM3 one bit per sprite, lower are playfield colors. Each byte in the merge buffer indexes into
 	// a 256 byte block for each possible PRIOR value. My priority tables are rebuilt to include the extra colors.
 	// These tables give instructions on how to build each 256 byte PRIOR block - they are NOT the priority table values themselves.
@@ -248,7 +256,7 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 		{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },	// pri 7
 		{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x10, 0x20, 0x40, 0x80, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x00 }	// pri 8
 	};
-	
+
 	// kColorBlack is used to tell the priority builder to leave the existing value in place from the existing table generator since I haven't worked out the "conflict" modes yet.
 	// Lower indexed entries have higher priority than higher indexed entries and these entries tell the renderer which color register to use to display a pixel.
 	// Depending on the PRIOR mode, players may be in front of the playfield, or certain groups of playfields may be in front of players.
@@ -263,7 +271,7 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 	static const uint8 mode67CRemap[9][20] =
 	{
 		{ kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack, kColorBlack },
-		// |----        players 0-3        ----|  |----       playfields 0-14                                                                                                                                                                          ----|
+		// |----        players 0-3        ----| |----       playfields 0-14                                                                                                                                                                          ----|
 		{ kColorP0, kColorP1, kColorP2, kColorP3, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorBAK },		// 1
 		// |- players 0-1 -|  |----                      playerfields 0-14                                                                                                                                                         ----|  |-- players 2-3 -|
 		{ kColorP0, kColorP1, kColorPF0, kColorPF1, kColorPF2, kColorPF3, kColorP2, kColorP3, kColorPF0 | 32, kColorPF1 | 32, kColorPF2 | 32, kColorPF3 | 32, kColorP0 | 32, kColorP1 | 32, kColorP2 | 32, kColorP3 | 32, kColorBAK | 32, kColorP2, kColorP3, kColorBAK },		// 2
@@ -303,7 +311,7 @@ void ATInitGTIAPriorityTables(uint8 priorityTables[64][256]) {
 
 	for (i = 0; i < 16; i++)
 		for (int j = 1; j < 16; j++)
-			priorityTables[32+16+4][j+16*i] = priorityTables[32+4][j + 16 * i];
+			priorityTables[32 + 16 + 4][j + 16 * i] = priorityTables[32 + 4][j + 16 * i];
 }
 
 /*

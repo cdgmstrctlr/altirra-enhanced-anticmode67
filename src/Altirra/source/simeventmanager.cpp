@@ -154,7 +154,7 @@ void ATSimulatorEventManager::RemoveEventCallback(uint32 id) {
 }
 
 void ATSimulatorEventManager::NotifyEvent(ATSimulatorEvent ev) {
-	if (ev == kATSimEvent_AnonymousInterrupt || !ev)
+	if (ev == kATSimEvent_AnonymousPause || ev == kATSimEvent_AnonymousInterrupt || !ev)
 		return;
 
 	Iterator it = { mpIteratorList, 0, mCallbacks.size(), mEventCallbackLists[ev - 1] };

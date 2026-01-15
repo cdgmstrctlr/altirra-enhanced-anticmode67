@@ -64,6 +64,9 @@
     <Filter Include="Source Files\Rapidus">
       <UniqueIdentifier>{56013b1b-af0f-4e6e-b37f-a6293be32a6f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\VGMPlayer">
+      <UniqueIdentifier>{53dacfcb-bd0e-4b25-9db1-8304c6559a21}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="source\loader.xasm">
@@ -336,6 +339,9 @@
     </None>
     <None Include="source\Additions\phload.s">
       <Filter>Source Files\Additions</Filter>
+    </None>
+    <None Include="source\VGMPlayer\playvgm.s">
+      <Filter>Source Files\VGMPlayer</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

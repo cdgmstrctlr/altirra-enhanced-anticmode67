@@ -21,7 +21,7 @@
 #ifndef f_AT_SIO_H
 #define f_AT_SIO_H
 
-uint8 ATComputeSIOChecksum(const uint8 *p, int len);
+uint8 ATComputeSIOChecksum(const uint8 *p, size_t len);
 
 const char *ATDecodeSIOCommand(uint8 device, uint8 command, const uint8 *aux);
 

@@ -37,7 +37,7 @@ public:
 	void OnSetFocus() override;
 
 protected:
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 	void EndWithResult(Result result);
 

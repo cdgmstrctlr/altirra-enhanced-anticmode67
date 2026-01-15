@@ -755,6 +755,17 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 		return breakMap;
 	}();
 
+	static constexpr std::array<uint8, 256> kBreakMapZ80 = [] {
+		std::array<uint8, 256> breakMap {};
+
+		breakMap[0x18] |= kBM_EndBlock;		// JR r8 (12T)
+		breakMap[0xC3] |= kBM_EndBlock;		// JP (10T)
+		breakMap[0xE9] |= kBM_EndBlock;		// JP (HL) (4T)
+		breakMap[0xC9] |= kBM_EndBlock;		// RET
+
+		return breakMap;
+	}();
+
 	const uint8 *VDRESTRICT breakMap = nullptr;
 	uint8 (*breakMapSpecialHandler)(const uint8 *insn) = nullptr;
 
@@ -790,6 +801,10 @@ ATDisassemblyWindow::DisasmResult ATDisassemblyWindow::Disassemble(
 
 		case kATDebugDisasmMode_8051:
 			breakMap = kBreakMap8051.data();
+			break;
+
+		case kATDebugDisasmMode_Z80:
+			breakMap = kBreakMapZ80.data();
 			break;
 	}
 

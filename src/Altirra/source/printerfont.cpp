@@ -137,7 +137,7 @@ static constexpr void ATWritePrinterPropFont(
 						v |= 1 << row;
 					else if (c != '.') {
 						if (row != 0) {
-							linePtrs[-ch];		// broken character
+							(void)linePtrs[-ch];		// broken character
 							throw;
 						}
 

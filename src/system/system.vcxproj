@@ -23,6 +23,7 @@
     <_ProjectFileVersion>10.0.40219.1</_ProjectFileVersion>
   </PropertyGroup>
   <ItemGroup>
+    <ClCompile Include="source\binary.cpp" />
     <ClCompile Include="source\bitmath.cpp" />
     <ClCompile Include="source\cache.cpp" />
     <ClCompile Include="source\cmdline.cpp" />
@@ -48,8 +49,6 @@
     <ClCompile Include="source\int128.cpp">
     </ClCompile>
     <ClCompile Include="source\linearalloc.cpp" />
-    <ClCompile Include="source\list.cpp">
-    </ClCompile>
     <ClCompile Include="source\math.cpp">
     </ClCompile>
     <ClCompile Include="source\memory.cpp">
@@ -121,7 +120,6 @@
     <ClInclude Include="..\h\vd2\system\hash.h" />
     <ClInclude Include="..\h\VD2\system\int128.h" />
     <ClInclude Include="..\h\vd2\system\linearalloc.h" />
-    <ClInclude Include="..\h\VD2\system\list.h" />
     <ClInclude Include="..\h\vd2\system\math.h" />
     <ClInclude Include="..\h\VD2\system\memory.h" />
     <ClInclude Include="..\h\vd2\system\process.h" />
@@ -133,6 +131,7 @@
     <ClInclude Include="..\h\vd2\system\vdstl_fastdeque.h" />
     <ClInclude Include="..\h\vd2\system\vdstl_fastvector.h" />
     <ClInclude Include="..\h\vd2\system\vdstl_ilist.h" />
+    <ClInclude Include="..\h\vd2\system\vdstl_span.h" />
     <ClInclude Include="..\h\vd2\system\vdstl_structex.h" />
     <ClInclude Include="..\h\vd2\system\vecmath.h" />
     <ClInclude Include="..\h\VD2\system\strutil.h" />

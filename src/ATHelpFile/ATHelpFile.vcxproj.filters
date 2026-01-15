@@ -60,7 +60,7 @@
     <None Include="source\getting-started.xml">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="source\host-device.xml">
+    <None Include="source\devices-hostdevice.xml">
       <Filter>Source Files</Filter>
     </None>
     <None Include="source\index.xml">
@@ -108,7 +108,7 @@
     <None Include="source\vbxe.xml">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="source\xep80.xml">
+    <None Include="source\devices-xep80.xml">
       <Filter>Source Files</Filter>
     </None>
     <None Include="source\compatibility.xsl">

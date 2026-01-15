@@ -106,7 +106,7 @@ public:
 
 	FindBitResult FindBit(uint32 pos, uint32 limit, bool polarity, bool bypassFSK) const override;
 
-	void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const;
+	void GetTransitionCounts(uint32 pos, uint32 n, bool lastPolarity, bool bypassFSK, uint32& xcount, uint32& mcount) const override;
 
 	// Note that volume here differs from the cassette image as it applies to signed samples, not normalized
 	// samples.

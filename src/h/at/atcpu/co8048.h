@@ -116,12 +116,10 @@ private:
 	bool	mbTimerActive = false;
 	uint32		mTimerDeadline = 0;
 
-	const uint8	*mpNextState = nullptr;
 	const bool	*mpBreakpointMap = nullptr;
 	IATCPUBreakpointHandler *mpBreakpointHandler = nullptr;
 	ATCPUHistoryEntry *mpHistory = nullptr;
 	uint32		mHistoryIndex = 0;
-	uint8		mReadOpcodeState = 0;
 
 	vdfunction<bool()> mpFnReadT0;
 	vdfunction<bool()> mpFnReadT1;

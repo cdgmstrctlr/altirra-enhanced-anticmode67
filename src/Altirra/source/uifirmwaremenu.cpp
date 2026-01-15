@@ -131,7 +131,16 @@ void ATUIGetKernelFirmwareList(ATHardwareMode hwmode, vdvector<ATFirmwareInfo>& 
 
 	fwmgr->GetFirmwareList(firmwareList);
 
-	for(const ATFirmwareInfo& fwi : firmwareList) {
+	// add autoselect entry
+	ATFirmwareInfo& autoselect = *firmwareList.insert_as(firmwareList.begin(), ATFirmwareInfo());
+	autoselect.mId = 0;
+	autoselect.mbVisible = true;
+	autoselect.mbAutoselect = false;
+	autoselect.mName = L"[Autoselect]";
+
+	sortedFirmwareList.push_back(&firmwareList.front());
+
+	for(const ATFirmwareInfo& fwi : vdspan(firmwareList).subspan(1)) {
 		if (!fwi.mbVisible)
 			continue;
 
@@ -161,7 +170,7 @@ void ATUIGetKernelFirmwareList(ATHardwareMode hwmode, vdvector<ATFirmwareInfo>& 
 		sortedFirmwareList.push_back(&fwi);
 	}
 
-	std::sort(sortedFirmwareList.begin(), sortedFirmwareList.end(),
+	std::sort(sortedFirmwareList.begin() + 1, sortedFirmwareList.end(),
 		[](const ATFirmwareInfo *x, const ATFirmwareInfo *y) { return x->mName.comparei(y->mName) < 0; });
 }
 
@@ -170,11 +179,20 @@ void ATUIGetBASICFirmwareList(vdvector<ATFirmwareInfo>& firmwareList, vdfastvect
 
 	fwmgr->GetFirmwareList(firmwareList);
 
-	for(const ATFirmwareInfo& fwi : firmwareList) {
+	// add autoselect entry
+	ATFirmwareInfo& autoselect = *firmwareList.insert_as(firmwareList.begin(), ATFirmwareInfo());
+	autoselect.mId = 0;
+	autoselect.mbVisible = true;
+	autoselect.mbAutoselect = false;
+	autoselect.mName = L"[Autoselect]";
+
+	sortedFirmwareList.push_back(&firmwareList.front());
+
+	for(const ATFirmwareInfo& fwi : vdspan(firmwareList).subspan(1)) {
 		if (fwi.mbVisible && fwi.mType == kATFirmwareType_Basic)
 			sortedFirmwareList.push_back(&fwi);
 	}
 
-	std::sort(sortedFirmwareList.begin(), sortedFirmwareList.end(),
+	std::sort(sortedFirmwareList.begin() + 1, sortedFirmwareList.end(),
 		[](const ATFirmwareInfo *x, const ATFirmwareInfo *y) { return x->mName.comparei(y->mName) < 0; });
 }

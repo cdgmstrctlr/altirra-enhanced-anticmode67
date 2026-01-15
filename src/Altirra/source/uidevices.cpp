@@ -139,6 +139,12 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 				L"Adds an Ethernet port to the computer. No firmware is built-in; "
 					L"networking software must be run separately."
 			},
+			{ "multiplexer", L"Multiplexer",
+				L"Cartridge device made by Computer Software Services (CSS) that allows computers to share disk drives and printers over a local network.\n"
+				L"At least two emulated computers are needed each with a Multiplexer, one running the MASTER.COM software to share its devices and the rest "
+				L"running the MUX OS or equivalent to access those devices over the network.\n"
+				L"This emulation simulates the parallel ribbon cable bus with a shared TCP/IP port."
+			},
 			{ "myide-d5xx", L"MyIDE (cartridge)",
 				L"IDE adapter attached to cartridge port, using the $D5xx address range."
 			},
@@ -167,6 +173,9 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "veronica", L"Veronica",
 				L"A cartridge-based 65C816 coprocessor with 128K of on-board memory.\n"
 					L"Veronica does not have on-board firmware, so software must be externally loaded to use it."
+			},
+			{ "thepill", L"The Pill",
+				L"A cartridge from Computer Software Services which has no ROM of its own, but has a switch to write protect the cartridge memory areas to allow RAM to simulate a cartridge. Requires at least 48K of memory."
 			},
 		}
 	},
@@ -287,6 +296,10 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "netserial", L"Networked serial port",
 				L"Network to serial port bridge over TCP/IP."
 			},
+			{ "pipeserial", L"Named pipe serial port",
+				L"Windows named pipe to serial port bridge. This bridges a serial port in the emulation to a named pipe, "
+				L"allowing access from programs that read or write to a file path."
+			},
 			{ "serialsplitter", L"Serial splitter",
 				L"Allows different connections for the input and output halves of a serial port."
 			}
@@ -362,6 +375,12 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"The Speedy 1050 is an enhanced 1050 that supports double density, track buffering, and high speed operation.\n"
 					L"NOTE: The Speedy 1050 may operate erratically in high-speed mode with NTSC computers due to marginal write timing. "
 					L"Version 1.6 or later firmware is needed for reliable high-speed writes in NTSC."
+			},
+
+			{ "diskdrivespeedyxf", L"Speedy XF",
+				L"Full Speedy XF disk drive emulation, including 65C02 CPU.\n"
+					L"The Speedy XF is a modified XF551 drive that replaces the 8040 MCU with a 65C02 and adds 64K of ROM and 32K of RAM, "
+					L"making it more similar to a Speedy 1050."
 			},
 
 			{ "diskdrivehappy1050", L"Happy 1050",
@@ -466,6 +485,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 					L"the DOS 2.x AUTORUN.SYS will automatically load the R: handler from the 850; otherwise, "
 					L"the tools in the Additions disk can be used to load the handler."
 			},
+			{ "850full", L"850 Interface Module (full emulation)",
+				L"Full emulation of the 850 Interface Module's hardware and built-in controller. This requires 850 firmware "
+					L"to function, and lacks acceleration support possible with the regular 850 emulation, but supports running "
+					L"6502 code directly on the module."
+			},
 			{ "1020", L"1020 Color Printer",
 				L"A four-color plotter that prints on roll paper with an 820-compatible printer protocol."
 			},
@@ -544,7 +568,11 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			{ "testsiohs", L"SIO High Speed Test Device",
 				L"A fictitious SIO device for testing that implements an ultra-high speed SIO device with an external clock. "
 					L"The device ID is $31 and supports a pseudo-disk protocol."
-			}
+			},
+			{ "xm301", L"XM301 Modem",
+				L"A 300 baud modem that connects directly to the SIO port, with auto-answer and audio support.\n"
+					L"A T: handler is needed to use the XM301, which must be loaded from disk or included in software."
+			},
 		}
 	},
 	{
@@ -573,6 +601,15 @@ const ATUIDialogDeviceNew::CategoryEntry ATUIDialogDeviceNew::kCategories[]={
 			},
 			{ "videostillimage", L"Video still image",
 				L"Generates a still image frame for a composite video input from an image file."
+			}
+		}
+	},
+	{
+		L"Add-on devices",
+		"blackboxfloppy",
+		{
+			{ "blackboxfloppy", L"Black Box Floppy Board",
+				L"Adds parallel bus based floppy drive support to the Black Box."
 			}
 		}
 	},
@@ -634,9 +671,20 @@ bool ATUIDialogDeviceNew::OnLoaded() {
 
 		VDUIProxyTreeViewControl::NodeRef catNode = mTreeView.AddItem(mTreeView.kNodeRoot, mTreeView.kNodeLast, category.mpText);
 
-		for(const auto& device : category.mDevices) {
-			mTreeView.AddVirtualItem(catNode, mTreeView.kNodeLast, vdmakerefptr(new TreeNode(device)));
-		}
+		vdfastvector<const TreeEntry *> devs;
+
+		for(const auto& device : category.mDevices)
+			devs.push_back(&device);
+
+		std::ranges::sort(
+			devs,
+			[](const TreeEntry *a, const TreeEntry *b) {
+				return VDStringSpanW(a->mpText).comparei(b->mpText) < 0;
+			}
+		);
+
+		for(const auto *device : devs)
+			mTreeView.AddVirtualItem(catNode, mTreeView.kNodeLast, vdmakerefptr(new TreeNode(*device)));
 
 		mTreeView.ExpandNode(catNode, true);
 	}
@@ -766,7 +814,7 @@ struct ATUIControllerDevices::DeviceNode final : public vdrefcounted<IVDUITreeVi
 		mpParent = parent;
 	}
 
-	void *AsInterface(uint32 id) {
+	void *AsInterface(uint32 id) override {
 		return nullptr;
 	}
 
@@ -920,8 +968,15 @@ void ATUIControllerDevices::Add() {
 
 	auto *p = static_cast<DeviceNode *>(mTreeView.GetSelectedVirtualItem());
 	if (p) {
-		while(p->mpParent)
+		for(;;) {
+			if (!devBus)
+				devBus = p->mpDevBus;
+
+			if (!p->mpParent)
+				break;
+
 			p = p->mpParent;
+		}
 
 		devParent = vdpoly_cast<IATDeviceParent *>(p->mpDev);
 
@@ -929,8 +984,6 @@ void ATUIControllerDevices::Add() {
 		// base implementation easier
 		if (devParent && !devParent->GetDeviceBus(0))
 			devParent = nullptr;
-
-		devBus = p->mpDevBus;
 	}
 
 	static const char *const kBaseCategories[]={

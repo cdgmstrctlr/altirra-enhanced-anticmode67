@@ -32,6 +32,7 @@ class ATUISettingsWindow;
 class ATSimulatorEventManager;
 class IATDeviceVideoOutput;
 class IATDeviceVideoManager;
+class IATVideoWriter;
 
 class ATUIDisplayTool;
 struct ATUIDisplayAccessibilityScreen;
@@ -98,6 +99,8 @@ public:
 	vdrect32 GetTextSpanBoundingBox(int ypos, int xc1, int xc2) const;
 	vdpoint32 GetNearestBeamPositionForPoint(const vdpoint32& pt) const;
 
+	void SetVideoWriter(IATVideoWriter *writer);
+
 public:		// IATUIEnhancedTextOutput
 	void InvalidateTextOutput() override;
 
@@ -147,7 +150,7 @@ protected:
 	void OnDragLeave() override;
 	ATUIDragEffect OnDragDrop(sint32 x, sint32 y, ATUIDragModifiers modifiers, IATUIDragDropObject *obj) override;
 
-	virtual void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 
 public:
 	void UpdateEnhTextSize();
@@ -306,6 +309,8 @@ private:
 
 	vdfunction<void(uint32)> mpOnAddedVideoOutput;
 	vdfunction<void(uint32)> mpOnRemovingVideoOutput;
+
+	IATVideoWriter *mpVideoWriter = nullptr;
 
 	struct ActiveKey {
 		uint32 mVkey;

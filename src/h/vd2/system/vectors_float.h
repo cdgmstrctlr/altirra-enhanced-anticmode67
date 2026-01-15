@@ -32,6 +32,7 @@ public:
 };
 
 VDFORCEINLINE vdfloat2 operator*(const float s, const vdfloat2& v) { return v*s; }
+VDFORCEINLINE vdfloat2 operator/(const float s, const vdfloat2& v) { return vdfloat2 { s / v.x, s / v.y }; }
 
 inline bool operator==(const vdfloat2& a, const vdfloat2& b) {
 	return a.x == b.x && a.y == b.y;

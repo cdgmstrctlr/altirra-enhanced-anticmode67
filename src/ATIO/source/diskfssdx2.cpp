@@ -36,7 +36,7 @@ public:
 	void InitNew(IATDiskImage *image, const char *volNameHint);
 
 public:
-	void GetInfo(ATDiskFSInfo& info);
+	void GetInfo(ATDiskFSInfo& info) override;
 
 	bool IsReadOnly() override { return mbReadOnly; }
 	void SetReadOnly(bool readOnly) override;

@@ -65,6 +65,9 @@ public:
 	bool IsEnabled() const;
 	void SetEnabled(bool enabled);
 
+	bool IsTabStop() const;
+	void SetTabStop(bool enabled);
+
 	// Retrieve or set the size of a window in the parent's coordinate system.
 	// This includes the frame. Origin position is unchanged.
 	vdsize32 GetSize() const;
@@ -97,6 +100,8 @@ public:
 
 	// Raise a window to the top of the Z-order amongst its siblings.
 	void BringToFront();
+
+	void InsertBelow(VDZHWND reference);
 
 	// Retrieve or set the caption text of a window.
 	VDStringW GetCaption() const;

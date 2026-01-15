@@ -137,7 +137,7 @@ void ATDevice820Full::Init() {
 	spec.mbBit0Top = true;
 	spec.mNumPins = 7;
 
-	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(spec);
+	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(g_ATDeviceDefPrinter820Full.mpName, spec);
 }
 
 void ATDevice820Full::Shutdown() {

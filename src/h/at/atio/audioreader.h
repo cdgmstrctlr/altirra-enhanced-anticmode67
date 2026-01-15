@@ -37,6 +37,7 @@ public:
 	virtual uint32 ReadStereo16(sint16 *dst, uint32 n) = 0;
 };
 
+IATAudioReader *ATCreateAudioReaderDetect(IVDRandomAccessStream& inputStream);
 IATAudioReader *ATCreateAudioReaderWAV(IVDRandomAccessStream& inputStream);
 IATAudioReader *ATCreateAudioReaderVorbis(IVDRandomAccessStream& inputStream);
 IATAudioReader *ATCreateAudioReaderFLAC(IVDRandomAccessStream& inputStream, bool verify);

@@ -92,10 +92,10 @@ public:	// IATDiskInterfaceClient
 	void OnWriteModeChanged() override;
 	void OnTimingModeChanged() override;
 	void OnAudioModeChanged() override;
-	bool IsImageSupported(const IATDiskImage& image) const;
+	bool IsImageSupported(const IATDiskImage& image) const override;
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(bool polarity);
 

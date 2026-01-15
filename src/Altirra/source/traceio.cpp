@@ -171,7 +171,7 @@ void ATSaveTraceCPUChannel(ATSavedTraceRoot& root, ATTraceChannelCPUHistory& cpu
 	for(const auto& predictor : predictors.mPredictors)
 		cpuDetail->mPredictors.emplace_back(vdpoly_cast<IATSerializable *>(predictor.get()));
 
-	cpuHistory.StartHistoryIteration(0, 0);
+	auto cursor = cpuHistory.StartHistoryIteration(0, 0);
 
 	for(uint32 row = 0; row < cpuDetail->mRowCount; row += cpuDetail->mRowGroupSize) {
 		uint32 tc = std::min<uint32>(cpuDetail->mRowGroupSize, cpuDetail->mRowCount - row);
@@ -185,7 +185,7 @@ void ATSaveTraceCPUChannel(ATSavedTraceRoot& root, ATTraceChannelCPUHistory& cpu
 		uint32 offset = 0;
 		while(offset < tc) {
 			uint32 tc2 = std::min<uint32>(tc - offset, (uint32)vdcountof(heptrs));
-			const uint32 actual = cpuHistory.ReadHistoryEvents(heptrs, row + offset, tc2);
+			const uint32 actual = cpuHistory.ReadHistoryEvents(cursor, heptrs, row + offset, tc2);
 			if (actual < tc2)
 				throw MyError("Unexpected end of stream while reading CPU history events.");
 
@@ -410,8 +410,24 @@ void ATSaveTraceVideoChannel(ATSavedTraceRoot& root, IATTraceChannelVideo& video
 				uint32 x1 = 0;
 				uint32 x2 = w;
 
+#if VD_PTR_SIZE >= 8
+				while(x1 + 7 < x2 && VDReadUnalignedU64(&src1[x1]) == VDReadUnalignedU64(&src2[x1]))
+					x1 += 8;
+#else
+				while(x1 + 3 < x2 && VDReadUnalignedU32(&src1[x1]) == VDReadUnalignedU32(&src2[x1]))
+					x1 += 4;
+#endif
+
 				while(x1 < x2 && src1[x1] == src2[x1])
 					++x1;
+
+#if VD_PTR_SIZE >= 8
+				while(x1 + 7 < x2 && VDReadUnalignedU64(&src1[x2-8]) == VDReadUnalignedU64(&src2[x2-8]))
+					x2 -= 8;
+#else
+				while(x1 + 3 < x2 && VDReadUnalignedU32(&src1[x2-4]) == VDReadUnalignedU32(&src2[x2-4]))
+					x2 -= 4;
+#endif
 
 				while(x1 < x2 && src1[x2-1] == src2[x2-1])
 					--x2;

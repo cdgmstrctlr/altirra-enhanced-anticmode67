@@ -71,6 +71,9 @@ namespace {
 			case kVDTF_R16G16B16A16F:
 				return DXGI_FORMAT_R16G16B16A16_FLOAT;
 
+			case kVDTF_R32G32B32A32F:
+				return DXGI_FORMAT_R32G32B32A32_FLOAT;
+
 			default:
 				return DXGI_FORMAT_UNKNOWN;
 		}
@@ -105,6 +108,9 @@ namespace {
 			case DXGI_FORMAT_R16G16B16A16_FLOAT:
 				return kVDTF_R16G16B16A16F;
 
+			case DXGI_FORMAT_R32G32B32A32_FLOAT:
+				return kVDTF_R32G32B32A32F;
+
 			default:
 				return kVDTF_Unknown;
 		}
@@ -127,18 +133,6 @@ namespace {
 
 			default:
 				return GetSurfaceFormatD3D11(format);
-		}
-	}
-
-	bool IsDXGIFormatSRGB(DXGI_FORMAT format) {
-		switch(format) {
-			case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-			case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-			case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
-				return true;
-
-			default:
-				return false;
 		}
 	}
 
@@ -272,8 +266,8 @@ void VDD3D11Holder::Shutdown() {
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTResourceD3D11::VDTResourceD3D11() {
-	mListNodePrev = NULL;
-	mpParent = NULL;
+	mListNodePrev = nullptr;
+	mpParent = nullptr;
 }
 
 VDTResourceD3D11::~VDTResourceD3D11() {
@@ -282,6 +276,8 @@ VDTResourceD3D11::~VDTResourceD3D11() {
 void VDTResourceD3D11::Shutdown() {
 	if (mListNodePrev)
 		mpParent->RemoveResource(this);
+
+	mpParent = nullptr;
 }
 
 void VDTResourceManagerD3D11::AddResource(VDTResourceD3D11 *res) {
@@ -346,7 +342,7 @@ bool VDTReadbackBufferD3D11::Init(VDTContextD3D11 *parent, uint32 width, uint32 
 	desc.Height = height;
 	desc.MipLevels = 1;
 	desc.ArraySize = 1;
-	desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	desc.Format = GetSurfaceFormatD3D11(format);
 	desc.SampleDesc.Count = 1;
 	desc.SampleDesc.Quality = 0;
 	desc.Usage = D3D11_USAGE_STAGING;
@@ -394,8 +390,54 @@ void VDTReadbackBufferD3D11::Unlock() {
 	devctx->Unmap(mpSurface, 0);
 }
 
-bool VDTReadbackBufferD3D11::Restore() {
+///////////////////////////////////////////////////////////////////////////////
+
+VDTConstantBufferD3D11::VDTConstantBufferD3D11() {
+}
+
+VDTConstantBufferD3D11::~VDTConstantBufferD3D11() {
+	Shutdown();
+}
+
+bool VDTConstantBufferD3D11::Init(VDTContextD3D11& parent, uint32 size, const void *initDataOpt) {
+	D3D11_BUFFER_DESC desc {};
+
+    desc.ByteWidth = size;
+    desc.Usage = initDataOpt ? D3D11_USAGE_IMMUTABLE : D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    desc.CPUAccessFlags = 0;
+
+	D3D11_SUBRESOURCE_DATA initData {};
+	initData.pSysMem = initDataOpt;
+
+	HRESULT hr = parent.GetDeviceD3D11()->CreateBuffer(&desc, initDataOpt ? &initData : nullptr, &mpD3DBuffer);
+	if (FAILED(hr))
+		return false;
+	
+	parent.AddResource(this);
 	return true;
+}
+
+void VDTConstantBufferD3D11::Shutdown() {
+	if (mpParent)
+		static_cast<VDTContextD3D11 *>(mpParent)->UnsetConstantBuffer(*this);
+
+	vdsaferelease <<= mpD3DBuffer;
+
+	VDTResourceD3D11::Shutdown();
+}
+
+void VDTConstantBufferD3D11::Load(const void *newData) {
+	if (mpParent && mpD3DBuffer) {
+		static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11()->UpdateSubresource(
+			mpD3DBuffer,
+			0,
+			nullptr,
+			newData,
+			0,
+			0
+		);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -583,10 +625,6 @@ void VDTSurfaceD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTSurfaceD3D11::Restore() {
-	return true;
-}
-
 bool VDTSurfaceD3D11::Readback(IVDTReadbackBuffer *target) {
 	VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
 	ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
@@ -642,16 +680,6 @@ void VDTSurfaceD3D11::GetDesc(VDTSurfaceDesc& desc) {
 bool VDTSurfaceD3D11::Lock(const vdrect32 *r, bool discard, VDTLockData2D& lockData) {
 	if (!mpTextureSys)
 		return false;
-
-	RECT r2;
-	const RECT *pr = NULL;
-	if (r) {
-		r2.left = r->left;
-		r2.top = r->top;
-		r2.right = r->right;
-		r2.bottom = r->bottom;
-		pr = &r2;
-	}
 
 	VDTContextD3D11 *parent = static_cast<VDTContextD3D11 *>(mpParent);
 	ID3D11DeviceContext *devctx = parent->GetDeviceContextD3D11();
@@ -909,10 +937,6 @@ void VDTTexture2DD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTTexture2DD3D11::Restore() {
-	return true;
-}
-
 IVDTSurface *VDTTexture2DD3D11::GetLevelSurface(uint32 level) {
 	return mMipmaps[level];
 }
@@ -988,10 +1012,6 @@ void VDTVertexBufferD3D11::Shutdown() {
 	}
 
 	VDTResourceD3D11::Shutdown();
-}
-
-bool VDTVertexBufferD3D11::Restore() {
-	return true;
 }
 
 bool VDTVertexBufferD3D11::Load(uint32 offset, uint32 size, const void *data) {
@@ -1088,10 +1108,6 @@ void VDTIndexBufferD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTIndexBufferD3D11::Restore() {
-	return true;
-}
-
 bool VDTIndexBufferD3D11::Load(uint32 offset, uint32 size, const void *data) {
 	if (!size)
 		return true;
@@ -1145,7 +1161,8 @@ bool VDTVertexFormatD3D11::Init(VDTContextD3D11 *parent, const VDTVertexElement 
 		"texcoord",
 		"tangent",
 		"binormal",
-		"color"
+		"color",
+		"sv_position"
 	};
 
 	static const DXGI_FORMAT kFormatD3D11[]={
@@ -1197,10 +1214,6 @@ void VDTVertexFormatD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTVertexFormatD3D11::Restore() {
-	return true;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTVertexProgramD3D11::VDTVertexProgramD3D11()
@@ -1236,10 +1249,6 @@ void VDTVertexProgramD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTVertexProgramD3D11::Restore() {
-	return true;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTFragmentProgramD3D11::VDTFragmentProgramD3D11()
@@ -1273,10 +1282,6 @@ void VDTFragmentProgramD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTFragmentProgramD3D11::Restore() {
-	return true;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTComputeProgramD3D11::VDTComputeProgramD3D11() {
@@ -1306,10 +1311,6 @@ void VDTComputeProgramD3D11::Shutdown() {
 	}
 
 	VDTResourceD3D11::Shutdown();
-}
-
-bool VDTComputeProgramD3D11::Restore() {
-	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1393,9 +1394,6 @@ void VDTBlendStateD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTBlendStateD3D11::Restore() {
-	return true;
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -1459,10 +1457,6 @@ void VDTRasterizerStateD3D11::Shutdown() {
 	VDTResourceD3D11::Shutdown();
 }
 
-bool VDTRasterizerStateD3D11::Restore() {
-	return true;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 VDTSamplerStateD3D11::VDTSamplerStateD3D11()
@@ -1487,7 +1481,8 @@ bool VDTSamplerStateD3D11::Init(VDTContextD3D11 *parent, const VDTSamplerStateDe
 
 	static const D3D11_TEXTURE_ADDRESS_MODE kD3DAddressLookup[]={
 		D3D11_TEXTURE_ADDRESS_CLAMP,
-		D3D11_TEXTURE_ADDRESS_WRAP
+		D3D11_TEXTURE_ADDRESS_WRAP,
+		D3D11_TEXTURE_ADDRESS_BORDER
 	};
 
 	D3D11_SAMPLER_DESC d3ddesc = {};
@@ -1500,6 +1495,7 @@ bool VDTSamplerStateD3D11::Init(VDTContextD3D11 *parent, const VDTSamplerStateDe
 	d3ddesc.ComparisonFunc = D3D11_COMPARISON_ALWAYS;
     d3ddesc.MinLOD = 0;
     d3ddesc.MaxLOD = D3D11_FLOAT32_MAX;
+	d3ddesc.BorderColor[0] = 0;
 
 	HRESULT hr = parent->GetDeviceD3D11()->CreateSamplerState(&d3ddesc, &mpSamplerState);
 	if (FAILED(hr)) {
@@ -1521,10 +1517,6 @@ void VDTSamplerStateD3D11::Shutdown() {
 	}
 
 	VDTResourceD3D11::Shutdown();
-}
-
-bool VDTSamplerStateD3D11::Restore() {
-	return true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1695,7 +1687,38 @@ bool VDTSwapChainD3D11::Init(VDTContextD3D11 *parent, const VDTSwapChainDesc& de
 		}
 	}
 
-	HRESULT hr = parent->GetDXGIFactory()->CreateSwapChain(parent->GetDeviceD3D11(), &scdesc, &mpSwapChain);
+	IDXGIFactory *factory = parent->GetDXGIFactory();
+
+	vdrefptr<IDXGIFactory2> factory2;
+	HRESULT hr;
+
+	// On Windows 8, use DXGI 1.2 APIs to create a swap chain with DXGI_SCALING_NONE, which reduces
+	// artifacts on resizing by suppressing the DWM's tendency to auto-stretch the surface. We can't
+	// use this on Windows 7, where the API may be available but attempting to use DXGI_SCALING_NONE
+	// will throw an invalid parameter error.
+	if (mDesc.mbWindowed && VDIsAtLeast8W32() && SUCCEEDED(factory->QueryInterface(IID_IDXGIFactory2, (void **)~factory2))) {
+		vdrefptr<IDXGISwapChain1> swapChain1;
+
+		DXGI_SWAP_CHAIN_DESC1 scdesc1 {};
+		scdesc1.Width = scdesc.BufferDesc.Width;
+		scdesc1.Height = scdesc.BufferDesc.Height;
+		scdesc1.Format = scdesc.BufferDesc.Format;
+		scdesc1.Stereo = FALSE;
+		scdesc1.SampleDesc = scdesc.SampleDesc;
+		scdesc1.BufferUsage = scdesc.BufferUsage;
+		scdesc1.BufferCount = scdesc.BufferCount;
+		scdesc1.Scaling = DXGI_SCALING_NONE;	// requires Windows 8
+		scdesc1.SwapEffect = scdesc.SwapEffect;
+		scdesc1.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+		scdesc1.Flags = scdesc.Flags;
+
+		hr = factory2->CreateSwapChainForHwnd(parent->GetDeviceD3D11(), scdesc.OutputWindow, &scdesc1, nullptr, nullptr, ~swapChain1);
+
+		mpSwapChain = swapChain1.release();
+	} else {
+		hr = factory->CreateSwapChain(parent->GetDeviceD3D11(), &scdesc, &mpSwapChain);
+	}
+
 	if (FAILED(hr)) {
 		Shutdown();
 		return false;
@@ -1907,8 +1930,10 @@ bool VDTSwapChainD3D11::ResizeBuffers(uint32 width, uint32 height) {
 		return false;
 	}
 
+	const bool useSrgb = mDesc.mbSRGB && !mDesc.mbHDR;
+
 	vdrefptr<VDTTexture2DD3D11> tex(new VDTTexture2DD3D11);
-	if (!tex->Init(parent, d3dtex, NULL, false)) {
+	if (!tex->Init(parent, d3dtex, NULL, useSrgb)) {
 		Shutdown();
 		return false;
 	}
@@ -2075,7 +2100,7 @@ void VDTSwapChainD3D11::Present() {
 		mbVSyncPending = false;
 }
 
-void VDTSwapChainD3D11::PresentVSync(void *monitor, bool adaptive) {	
+void VDTSwapChainD3D11::PresentVSync(void *monitor) {
 	const uint64 t = VDGetPreciseTick();
 	bool waitActive = false;
 	bool waitReady = false;
@@ -2086,7 +2111,6 @@ void VDTSwapChainD3D11::PresentVSync(void *monitor, bool adaptive) {
 	mVSyncMutex.Lock();
 	mhVSyncMonitor = monitor;
 
-	mbVSyncPollAdaptive = adaptive;
 	mVSyncCompositionWaitTime = 0;
 
 	waitActive = mbVSyncIsWaiting;
@@ -2278,7 +2302,6 @@ bool VDTSwapChainD3D11::PresentVSyncComplete() {
 	float lpDelay = 0;
 	uint64 syncTick = 0;
 	uint32 syncCount = 0;
-	uint32 presentId = 0;
 
 	mLastPresentTick = VDGetPreciseTick();
 
@@ -2407,7 +2430,7 @@ bool VDTSwapChainD3D11::PresentVSyncComplete() {
 				double xs = 0;
 				double xxs = 0;
 				double ys = 0;
-				double yys = 0;
+				[[maybe_unused]] double yys = 0;
 				double xys = 0;
 				for(int i=1; i<std::ssize(mSyncHistory); ++i) {
 					double x = (double)(sint32)(mSyncHistory[i].mRefreshCount - x0);
@@ -2452,7 +2475,6 @@ bool VDTSwapChainD3D11::PresentVSyncComplete() {
 
 			syncTick = stats.SyncQPCTime.QuadPart;
 			syncCount = stats.SyncRefreshCount;
-			presentId = stats.PresentCount;
 		}
 	}
 
@@ -2511,6 +2533,19 @@ bool VDTSwapChainD3D11::PresentVSyncComplete() {
 		status.mRefreshRate = (float)VDGetPreciseTicksPerSecond() / mVSyncPeriod;
 	else
 		status.mRefreshRate = -1.0f;
+
+	status.mbHaveVSyncInfo = false;
+
+	if (mbUsingFrameStatistics && mSyncHistoryLen >= 2) {
+		const auto& syncEvent1 = mSyncHistory[(mSyncHistoryIndex - 2) & (std::ssize(mSyncHistory) - 1)];
+		const auto& syncEvent2 = mSyncHistory[(mSyncHistoryIndex - 1) & (std::ssize(mSyncHistory) - 1)];
+
+		status.mbHaveVSyncInfo = true;
+		status.mVSyncQpcCounts[0] = syncEvent1.mSyncQpcTime;
+		status.mVSyncQpcCounts[1] = syncEvent2.mSyncQpcTime;
+		status.mVSyncRefreshCounts[0] = syncEvent1.mRefreshCount;
+		status.mVSyncRefreshCounts[1] = syncEvent2.mRefreshCount;
+	}
 
 	mpVSyncCallback->OnPresentCompleted(status);
 
@@ -2607,10 +2642,7 @@ void VDTSwapChainD3D11::ThreadRun() {
 		// wait for something to do
 		mVSyncPollPendingSema.Wait();
 
-		bool pollAdaptive = false;
-
 		mVSyncMutex.Lock();
-		pollAdaptive = mbVSyncPollAdaptive;
 
 		if (mbVSyncExit) {
 			mVSyncMutex.Unlock();
@@ -2753,20 +2785,113 @@ void VDTSwapChainD3D11::ThreadRun() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+VDTQueryD3D11::VDTQueryD3D11(vdrefptr<ID3D11Query>&& query)
+	: mpQuery(std::move(query))
+{
+}
+
+VDTQueryD3D11::~VDTQueryD3D11() {
+	Shutdown();
+}
+
+void VDTQueryD3D11::Shutdown() {
+	mpQuery = nullptr;
+
+	VDTResourceD3D11::Shutdown();
+}
+
+bool VDTQueryD3D11::IsPending() const {
+	if (!mpQuery)
+		return false;
+
+	if (!mpParent)
+		return false;
+
+	ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+	HRESULT hr = ctx->GetData(mpQuery, nullptr, 0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+	
+	return hr == S_FALSE;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void *VDTTimestampQueryD3D11::AsInterface(uint32 id) {
+	return nullptr;
+}
+
+void VDTTimestampQueryD3D11::Issue() {
+	if (mpParent && mpQuery) {
+		ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+
+		ctx->End(mpQuery);
+	}
+}
+
+bool VDTTimestampQueryD3D11::IsPending() const {
+	return VDTQueryD3D11::IsPending();
+}
+
+uint64 VDTTimestampQueryD3D11::GetTimestamp() const {
+	if (mpQuery) {
+		ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+
+		UINT64 timestamp = 0;
+		HRESULT hr = ctx->GetData(mpQuery, &timestamp, sizeof timestamp, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+		if (hr == S_OK)
+			return timestamp;
+	}
+
+	VDFAIL("Unable to retrieve query data");
+	return 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void *VDTTimestampFrequencyQueryD3D11::AsInterface(uint32 id) {
+	return nullptr;
+}
+
+void VDTTimestampFrequencyQueryD3D11::Begin() {
+	if (mpParent && mpQuery) {
+		ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+
+		ctx->Begin(mpQuery);
+	}
+}
+
+void VDTTimestampFrequencyQueryD3D11::End() {
+	if (mpParent && mpQuery) {
+		ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+
+		ctx->End(mpQuery);
+	}
+}
+
+bool VDTTimestampFrequencyQueryD3D11::IsPending() const {
+	return VDTQueryD3D11::IsPending();
+}
+
+double VDTTimestampFrequencyQueryD3D11::GetTimestampFrequency() const {
+	if (mpQuery) {
+		ID3D11DeviceContext *ctx = static_cast<VDTContextD3D11 *>(mpParent)->GetDeviceContextD3D11();
+		D3D10_QUERY_DATA_TIMESTAMP_DISJOINT data {};
+		HRESULT hr = ctx->GetData(mpQuery, &data, sizeof data, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+		if (hr == S_OK)
+			return (double)data.Frequency;
+	}
+
+	VDFAIL("Unable to retrieve query data");
+	return 1;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
 struct VDTContextD3D11::PrivateData {
 	bool mbMinPrecisionSupportedPS = false;
 	bool mbMinPrecisionSupportedOther = false;
 	D3D_FEATURE_LEVEL mFeatureLevel {};
 
 	VDTFenceManagerD3D11 mFenceManager;
-};
-
-const uint8 VDTContextD3D11::kConstLookup[] = {
-	0, 0,					// 0-16
-	1,						// 17-32
-	2, 2,					// 33-64
-	3, 3, 3, 3,				// 65-128
-	4, 4, 4, 4, 4, 4, 4, 4,	// 129-256
 };
 
 VDTContextD3D11::VDTContextD3D11() {
@@ -2828,6 +2953,10 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			mCaps.mbNonPow2 = true;
 			mCaps.mbNonPow2Conditional = true;
 			mCaps.mbComputeSM5 = true;
+			mCaps.mbGraphicsSM5 = true;
+			mCaps.mbGraphicsSM4 = true;
+			mCaps.mbGraphicsSM3 = true;
+			mCaps.mbSamplerBorder = true;
 			break;
 
 		case D3D_FEATURE_LEVEL_10_1:
@@ -2836,6 +2965,10 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			mCaps.mMaxTextureHeight = 8192;
 			mCaps.mbNonPow2 = true;
 			mCaps.mbNonPow2Conditional = true;
+			mCaps.mbGraphicsSM5 = false;
+			mCaps.mbGraphicsSM4 = true;
+			mCaps.mbGraphicsSM3 = true;
+			mCaps.mbSamplerBorder = true;
 			break;
 
 		case D3D_FEATURE_LEVEL_9_3:
@@ -2843,6 +2976,10 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			mCaps.mMaxTextureHeight = 4096;
 			mCaps.mbNonPow2 = false;
 			mCaps.mbNonPow2Conditional = true;
+			mCaps.mbGraphicsSM5 = false;
+			mCaps.mbGraphicsSM4 = false;
+			mCaps.mbGraphicsSM3 = true;
+			mCaps.mbSamplerBorder = true;
 			break;
 
 		case D3D_FEATURE_LEVEL_9_2:
@@ -2852,6 +2989,10 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 			mCaps.mMaxTextureHeight = 2048;
 			mCaps.mbNonPow2 = false;
 			mCaps.mbNonPow2Conditional = true;
+			mCaps.mbGraphicsSM5 = false;
+			mCaps.mbGraphicsSM4 = false;
+			mCaps.mbGraphicsSM3 = false;
+			mCaps.mbSamplerBorder = false;
 			break;
 	}
 
@@ -2906,31 +3047,6 @@ bool VDTContextD3D11::Init(ID3D11Device *dev, ID3D11DeviceContext *devctx, IDXGI
 	for(int i=0; i<16; ++i)
 		mpCurrentPsSamplerStates[i] = mpDefaultSS;
 
-	D3D11_BUFFER_DESC bufdesc = {};
-	for(uint32 i=0; i<kConstMaxShift; ++i) {
-		bufdesc.ByteWidth = (sizeof(float) * 4) << (kConstBaseShift + i);
-		bufdesc.Usage = D3D11_USAGE_DEFAULT;
-		bufdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-		bufdesc.CPUAccessFlags = 0;
-		bufdesc.MiscFlags = 0;
-		bufdesc.StructureByteStride = 0;
-		HRESULT hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpVSConstBuffers[i]);
-		if (FAILED(hr))
-			return false;
-
-		hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpPSConstBuffers[i]);
-		if (FAILED(hr))
-			return false;
-
-		hr = mpD3DDevice->CreateBuffer(&bufdesc, NULL, &mpCSConstBuffers[i]);
-		if (FAILED(hr))
-			return false;
-	}
-
-	mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffers[0]);
-	mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffers[0]);
-	mpD3DDeviceContext->CSSetConstantBuffers(0, 1, &mpCSConstBuffers[0]);
-
 	SetBlendState(NULL);
 	SetRasterizerState(NULL);
 
@@ -2957,9 +3073,6 @@ void VDTContextD3D11::Shutdown() {
 	ShutdownAllResources();
 
 	vdsaferelease <<= mpDefaultSS, mpDefaultRS, mpDefaultBS;
-	vdsaferelease <<= mpPSConstBuffers;
-	vdsaferelease <<= mpVSConstBuffers;
-	vdsaferelease <<= mpCSConstBuffers;
 
 	mpData->mFenceManager.Shutdown();
 
@@ -3200,6 +3313,15 @@ bool VDTContextD3D11::CreateIndexBuffer(uint32 size, bool index32, bool dynamic,
 
 	*ppbuffer = ib.release();
 	return true;
+}
+
+vdrefptr<IVDTConstantBuffer> VDTContextD3D11::CreateConstantBuffer(uint32 size, const void *initDataOpt) {
+	vdrefptr<VDTConstantBufferD3D11> cb(new VDTConstantBufferD3D11);
+
+	if (!cb->Init(*this, size, initDataOpt))
+		return nullptr;
+
+	return cb;
 }
 
 bool VDTContextD3D11::CreateBlendState(const VDTBlendStateDesc& desc, IVDTBlendState **state) {
@@ -3452,35 +3574,52 @@ void VDTContextD3D11::SetScissorRect(const vdrect32& r) {
 	}
 }
 
-void VDTContextD3D11::SetVertexProgramConstCount(uint32 count) {
-	uint32 shift = kConstLookup[(count + 15) >> 4];
+void VDTContextD3D11::VsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) {
+	VDASSERT(index < kMaxConstantBuffers);
 
-	if (mVSConstShift != shift) {
-		mVSConstShift = shift;
+	if (mpVsConstBuffers[index] != cb) {
+		mpVsConstBuffers[index] = cb;
 
-		mpD3DDeviceContext->VSSetConstantBuffers(0, 1, &mpVSConstBuffers[shift]);
-		mbVSConstDirty = true;
+		ID3D11Buffer *d3dcb = cb ? static_cast<VDTConstantBufferD3D11 *>(cb)->mpD3DBuffer : nullptr;
+		mpD3DDeviceContext->VSSetConstantBuffers(index, 1, &d3dcb);
 	}
 }
 
-void VDTContextD3D11::SetVertexProgramConstF(uint32 baseIndex, uint32 count, const float *data) {
-	memcpy(&mVSConsts[baseIndex][0], data, count * 16);
-	mbVSConstDirty = true;
-}
+void VDTContextD3D11::VsClearConstantBuffersStartingAt(uint32 index) {
+	while(index < kMaxConstantBuffers) {
+		if (mpVsConstBuffers[index]) {
+			mpVsConstBuffers[index] = nullptr;
 
-void VDTContextD3D11::SetFragmentProgramConstCount(uint32 count) {
-	uint32 shift = kConstLookup[(count + 15) >> 4];
+			ID3D11Buffer *d3dcb = nullptr;
+			mpD3DDeviceContext->VSSetConstantBuffers(index, 1, &d3dcb);
+		}
 
-	if (mPSConstShift != shift) {
-		mPSConstShift = shift;
-		mpD3DDeviceContext->PSSetConstantBuffers(0, 1, &mpPSConstBuffers[shift]);
-		mbPSConstDirty = true;
+		++index;
 	}
 }
 
-void VDTContextD3D11::SetFragmentProgramConstF(uint32 baseIndex, uint32 count, const float *data) {
-	memcpy(&mPSConsts[baseIndex][0], data, count * 16);
-	mbPSConstDirty = true;
+void VDTContextD3D11::PsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) {
+	VDASSERT(index < kMaxConstantBuffers);
+
+	if (mpPsConstBuffers[index] != cb) {
+		mpPsConstBuffers[index] = cb;
+
+		ID3D11Buffer *d3dcb = cb ? static_cast<VDTConstantBufferD3D11 *>(cb)->mpD3DBuffer : nullptr;
+		mpD3DDeviceContext->PSSetConstantBuffers(index, 1, &d3dcb);
+	}
+}
+
+void VDTContextD3D11::PsClearConstantBuffersStartingAt(uint32 index) {
+	while(index < kMaxConstantBuffers) {
+		if (mpPsConstBuffers[index]) {
+			mpPsConstBuffers[index] = nullptr;
+
+			ID3D11Buffer *d3dcb = nullptr;
+			mpD3DDeviceContext->PSSetConstantBuffers(index, 1, &d3dcb);
+		}
+
+		++index;
+	}
 }
 
 void VDTContextD3D11::Clear(VDTClearFlags clearFlags, uint32 color, float depth, uint32 stencil) {
@@ -3517,8 +3656,6 @@ void VDTContextD3D11::DrawPrimitive(VDTPrimitiveType type, uint32 startVertex, u
 		mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
 	}
 
-	UpdateConstants();
-
 	switch(type) {
 		case kVDTPT_Triangles:
 			mpD3DDeviceContext->Draw(primitiveCount * 3, startVertex);
@@ -3544,8 +3681,6 @@ void VDTContextD3D11::DrawIndexedPrimitive(VDTPrimitiveType type, uint32 baseVer
 
 		mpD3DDeviceContext->IASetPrimitiveTopology(kPTLookup[type]);
 	}
-
-	UpdateConstants();
 
 	uint32 indexCount = 0;
 	switch(type) {
@@ -3578,20 +3713,15 @@ void VDTContextD3D11::CsSetProgram(IVDTComputeProgram *program) {
 	mpD3DDeviceContext->CSSetShader(mpCurrentCP ? mpCurrentCP->mpCS : NULL, NULL, 0);
 }
 
-void VDTContextD3D11::CsSetConstCount(uint32 count) {
-	uint32 shift = kConstLookup[(count + 15) >> 4];
+void VDTContextD3D11::CsSetConstantBuffer(uint32 index, IVDTConstantBuffer *cb) {
+	VDASSERT(index < kMaxConstantBuffers);
 
-	if (mCSConstShift != shift) {
-		mCSConstShift = shift;
+	if (mpCsConstBuffers[index] != cb) {
+		mpCsConstBuffers[index] = cb;
 
-		mpD3DDeviceContext->CSSetConstantBuffers(0, 1, &mpCSConstBuffers[shift]);
-		mbCSConstDirty = true;
+		ID3D11Buffer *d3dcb = cb ? static_cast<VDTConstantBufferD3D11 *>(cb)->mpD3DBuffer : nullptr;
+		mpD3DDeviceContext->CSSetConstantBuffers(index, 1, &d3dcb);
 	}
-}
-
-void VDTContextD3D11::CsSetConstF(uint32 baseIndex, uint32 count, const float *data) {
-	memcpy(&mCSConsts[baseIndex][0], data, count * 16);
-	mbCSConstDirty = true;
 }
 
 void VDTContextD3D11::CsSetSamplers(uint32 baseIndex, uint32 count, IVDTSamplerState *const *states) {
@@ -3667,8 +3797,6 @@ void VDTContextD3D11::CsClearUnorderedAccessViewsStartingAt(uint32 baseIndex) {
 }
 
 void VDTContextD3D11::CsDispatch(uint32 x, uint32 y, uint32 z) {
-	CsUpdateConstants();
-
 	mpD3DDeviceContext->Dispatch(x, y, z);
 }
 
@@ -3678,6 +3806,38 @@ uint32 VDTContextD3D11::InsertFence() {
 
 bool VDTContextD3D11::CheckFence(uint32 id) {
 	return mpData->mFenceManager.CheckFence(id);
+}
+
+vdrefptr<IVDTTimestampQuery> VDTContextD3D11::CreateTimestampQuery() {
+	D3D11_QUERY_DESC desc {};
+	desc.Query = D3D11_QUERY_TIMESTAMP;
+	desc.MiscFlags = 0;
+
+	vdrefptr<ID3D11Query> query;
+	HRESULT hr = mpD3DDevice->CreateQuery(&desc, ~query);
+	if (FAILED(hr))
+		return nullptr;
+
+	vdrefptr<VDTTimestampQueryD3D11> p(new VDTTimestampQueryD3D11(std::move(query)));
+	AddResource(p);
+
+	return p;
+}
+
+vdrefptr<IVDTTimestampFrequencyQuery> VDTContextD3D11::CreateTimestampFrequencyQuery() {
+	D3D11_QUERY_DESC desc {};
+	desc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+	desc.MiscFlags = 0;
+
+	vdrefptr<ID3D11Query> query;
+	HRESULT hr = mpD3DDevice->CreateQuery(&desc, ~query);
+	if (FAILED(hr))
+		return nullptr;
+
+	vdrefptr<VDTTimestampFrequencyQueryD3D11> p(new VDTTimestampFrequencyQueryD3D11(std::move(query)));
+	AddResource(p);
+
+	return p;
 }
 
 bool VDTContextD3D11::RecoverDevice() {
@@ -3757,6 +3917,33 @@ void VDTContextD3D11::UnsetIndexBuffer(IVDTIndexBuffer *buffer) {
 		SetIndexStream(NULL);
 }
 
+void VDTContextD3D11::UnsetConstantBuffer(IVDTConstantBuffer& buffer) {
+	IVDTConstantBuffer *(*const cbArrays[3])[kMaxConstantBuffers] {
+		&mpVsConstBuffers,
+		&mpPsConstBuffers,
+		&mpCsConstBuffers
+	};
+
+	const decltype(&ID3D11DeviceContext::VSSetConstantBuffers) cbSetMethods[3] {
+		&ID3D11DeviceContext::VSSetConstantBuffers,
+		&ID3D11DeviceContext::PSSetConstantBuffers,
+		&ID3D11DeviceContext::CSSetConstantBuffers
+	};
+
+	for(int type = 0; type < 3; ++type) {
+		auto& array = *cbArrays[type];
+
+		for(uint32 index = 0; index < kMaxConstantBuffers; ++index) {
+			if (array[index] == &buffer) {
+				array[index] = nullptr;
+
+				ID3D11Buffer *nullCb = nullptr;
+				(mpD3DDeviceContext->*cbSetMethods[type])(index, 1, &nullCb);
+			}
+		}
+	}
+}
+
 void VDTContextD3D11::UnsetRenderTarget(IVDTSurface *surface) {
 	if (mpCurrentRT == surface)
 		SetRenderTarget(0, NULL, false);
@@ -3810,28 +3997,6 @@ void VDTContextD3D11::UnsetTexture(IVDTTexture *tex) {
 }
 
 void VDTContextD3D11::ProcessHRESULT(uint32 hr) {
-}
-
-void VDTContextD3D11::UpdateConstants() {
-	if (mbVSConstDirty) {
-		mbVSConstDirty = false;
-
-		mpD3DDeviceContext->UpdateSubresource(mpVSConstBuffers[mVSConstShift], 0, nullptr, mVSConsts, 0, 0);
-	}
-
-	if (mbPSConstDirty) {
-		mbPSConstDirty = false;
-
-		mpD3DDeviceContext->UpdateSubresource(mpPSConstBuffers[mPSConstShift], 0, nullptr, mPSConsts, 0, 0);
-	}
-}
-
-void VDTContextD3D11::CsUpdateConstants() {
-	if (mbCSConstDirty) {
-		mbCSConstDirty = false;
-
-		mpD3DDeviceContext->UpdateSubresource(mpCSConstBuffers[mCSConstShift], 0, nullptr, mCSConsts, 0, 0);
-	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

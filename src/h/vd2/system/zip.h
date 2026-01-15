@@ -379,7 +379,8 @@ protected:
 
 enum class VDDeflateCompressionLevel : uint8 {
 	Quick,
-	Best
+	Best,
+	Store
 };
 
 inline bool operator< (VDDeflateCompressionLevel a, VDDeflateCompressionLevel b) { return (uint8)a <  (uint8)b; }
@@ -407,15 +408,21 @@ class VDDeflateStream final : public IVDStream {
 	VDDeflateStream(const VDDeflateStream&) = delete;
 	VDDeflateStream& operator=(const VDDeflateStream&) = delete;
 public:
-	VDDeflateStream(IVDStream& dest, VDDeflateChecksumMode checksumMode = VDDeflateChecksumMode::CRC32);
+	VDDeflateStream(IVDStream& dest,
+		VDDeflateChecksumMode checksumMode = VDDeflateChecksumMode::CRC32,
+		VDDeflateCompressionLevel level = VDDeflateCompressionLevel::Best);
 	~VDDeflateStream();
-
-	void SetCompressionLevel(VDDeflateCompressionLevel level);
 
 	// Reset the stream state to prepare for compressing another source
 	// stream to the same destination stream. This must be called after
 	// Finalize() for the previous stream.
-	void Reset();
+	void Reset(VDDeflateCompressionLevel level);
+
+	// Flush out any accumulated data and align the stream to a byte
+	// boundary. The stream can be continued afterward. This creates
+	// a continuous stream that can be transmitted and decoded in byte
+	// chunks.
+	void FlushToByteBoundary();
 
 	// Flush any remaining data out, writing a partial block if necessary.
 	// This must be called prior to destruction for the compressed

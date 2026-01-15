@@ -51,8 +51,8 @@ DEFINE_TEST(Trace_CPU) {
 
 		while(pos > 0) {
 			const ATCPUHistoryEntry *he = nullptr;
-			traceChannel->StartHistoryIteration(pos, 0);
-			AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(&he, 0, 1));
+			auto cursor = traceChannel->StartHistoryIteration(pos, 0);
+			AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(cursor, &he, 0, 1));
 			AT_TEST_ASSERT(he != nullptr);
 			AT_TEST_ASSERT(equal(*he, hbuf[pos]));
 
@@ -66,10 +66,10 @@ DEFINE_TEST(Trace_CPU) {
 	AT_TEST_ASSERT(traceChannel->GetEventCount() == 4096);
 
 	// test serial reading
-	traceChannel->StartHistoryIteration(0, 0);
+	auto cursor = traceChannel->StartHistoryIteration(0, 0);
 	for(int i=0; i<4096; ++i) {
 		const ATCPUHistoryEntry *he = nullptr;
-		AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(&he, i, 1));
+		AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(cursor, &he, i, 1));
 		AT_TEST_ASSERT(he != nullptr);
 		AT_TEST_ASSERT(equal(*he, hbuf[i]));
 	}
@@ -78,7 +78,7 @@ DEFINE_TEST(Trace_CPU) {
 	uint32 pos = 1;
 	for(int i=0; i<4096; ++i) {
 		const ATCPUHistoryEntry *he = nullptr;
-		AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(&he, pos, 1));
+		AT_TEST_ASSERT(1 == traceChannel->ReadHistoryEvents(cursor, &he, pos, 1));
 		AT_TEST_ASSERT(he != nullptr);
 		AT_TEST_ASSERT(equal(*he, hbuf[pos]));
 

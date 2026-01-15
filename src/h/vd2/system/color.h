@@ -60,6 +60,37 @@ protected:
 	uint32 mPackedColor;
 };
 
+template<typename T>
+class VDPackedColor8888 {
+public:
+	VDPackedColor8888()
+		: mPackedColor(0)
+	{
+	}
+
+	explicit VDPackedColor8888(uint32 v)
+		: mPackedColor(v)
+	{
+	}
+
+	explicit operator uint32() const { return mPackedColor; }
+
+	T Half() const {
+		return T((mPackedColor & 0xfefefefe) >> 1);
+	}
+
+	T Quarter() const {
+		return T((mPackedColor & 0xfcfcfcfc) >> 2);
+	}
+
+	static T Average(const T& x, const T& y) {
+		return T((x.mPackedColor | y.mPackedColor) - (((x.mPackedColor ^ y.mPackedColor) & 0xfefefefe) >> 1));
+	}
+
+protected:
+	uint32 mPackedColor;
+};
+
 class VDPackedColorRGB8 : public VDPackedColor888<VDPackedColorRGB8> {
 public:
 	using VDPackedColor888::VDPackedColor888;
@@ -79,6 +110,28 @@ public:
 	{
 	}
 };
+
+class VDPackedColorARGB8 : public VDPackedColor8888<VDPackedColorARGB8> {
+public:
+	using VDPackedColor8888::VDPackedColor8888;
+
+	VDPackedColorARGB8(uint8 r, uint8 g, uint8 b, uint8 a)
+		: VDPackedColor8888(((uint32)a << 24) + ((uint32)r << 16) + ((uint32)g << 8) + b)
+	{
+	}
+};
+
+class VDPackedColorABGR8 : public VDPackedColor8888<VDPackedColorBGR8> {
+public:
+	using VDPackedColor8888::VDPackedColor8888;
+
+	VDPackedColorABGR8(uint8 r, uint8 g, uint8 b, uint8 a)
+		: VDPackedColor8888(((uint32)a << 24) + ((uint32)b << 16) + ((uint32)g << 8) + r)
+	{
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////
 
 class VDColorRGB {
 public:
@@ -157,6 +210,140 @@ public:
 
 	VDColorRGB operator+(VDColorRGB y) const {
 		return VDColorRGB(v + y.v);
+	}
+
+private:
+	vdfloat32x4 v;
+};
+
+class VDColorARGB {
+public:
+	explicit VDColorARGB(VDPackedColorARGB8 c)
+		: v(vdfloat32x4::unpacku8((uint32)c))
+	{
+	}
+
+	explicit VDColorARGB(VDPackedColorABGR8 c)
+		: v(nsVDVecMath::permute<2,1,0,3>(vdfloat32x4::unpacku8((uint32)c)))
+	{
+	}
+
+	explicit VDColorARGB(const VDColorRGB& c, float a = 1.0f)
+		: v(vdfloat32x4::set(vdfloat32x3(c), a))
+	{
+	}
+
+	explicit VDColorARGB(vdfloat32x3 c)
+		: v(vdfloat32x4::set(c, 1.0f))
+	{
+	}
+
+	explicit VDColorARGB(vdfloat32x4 c)
+		: v(c)
+	{
+	}
+
+	explicit operator vdfloat32x3() const { return v.xyz(); }
+	explicit operator vdfloat32x4() const { return v; }
+	explicit operator VDColorRGB() const { return VDColorRGB(v); }
+
+	static VDColorRGB FromBGR8(uint32 c) {
+		return VDColorRGB(vdfloat32x4::unpacku8((uint32)c | 0xFF000000) * (1.0f / 255.0f));
+	}
+
+	static VDColorRGB FromRGB8(uint32 c) {
+		return VDColorRGB(nsVDVecMath::permute<2,1,0,3>(vdfloat32x4::unpacku8((uint32)c | 0xFF000000)) * (1.0f / 255.0f));
+	}
+
+	static VDColorARGB FromARGB8(uint32 c) {
+		return VDColorARGB(nsVDVecMath::permute<2,1,0,3>(vdfloat32x4::unpacku8((uint32)c)) * (1.0f / 255.0f));
+	}
+
+	uint32 ToBGR8() const {
+		return packus8(v * 255.0f) & 0xFFFFFF;
+	}
+
+	uint32 ToRGB8() const {
+		return packus8(nsVDVecMath::permute<2,1,0,3>(v) * 255.0f) & 0xFFFFFF;
+	}
+
+	uint32 ToARGB8() const {
+		return packus8(nsVDVecMath::permute<2,1,0,3>(v) * 255.0f);
+	}
+
+	VDColorARGB SRGBToLinear() const {
+		vdfloat32x3 x = (v.xyz() + 0.055f) * (1.0f / 1.055f);
+		vdfloat32x3 y = pow(x, 2.4f);
+
+		return VDColorARGB(
+			vdfloat32x4::set(
+				select(
+					cmplt(v.xyz(), vdfloat32x3::set1(0.04045f)),
+					v.xyz() * (1.0f / 12.92f),
+					y
+				),
+				v.w()
+			)
+		);
+	}
+
+	VDColorARGB LinearToSRGB() const {
+		vdfloat32x3 y = 1.055f * pow(v.xyz(), 1.0f / 2.4f) - 0.055f;
+
+		return VDColorARGB(
+			vdfloat32x4::set(select(cmplt(v.xyz(), vdfloat32x3::set1(0.0031308f)), v.xyz() * 12.92f, y), v.w())
+		);
+	}
+
+	float Luma() const {
+		vdfloat32x4 luma = v * vdfloat32x4::set(0.2126f, 0.7152f, 0.0722f, 0.0f);
+		return luma.x() + luma.y() + luma.z();
+	}
+
+	VDColorARGB Premultiply() const {
+		return VDColorARGB(vdfloat32x4::set(v.xyz() * v.w(), v.w()));
+	}
+
+	VDColorARGB DivideAlpha() const {
+		using namespace nsVDVecMath;
+
+		float a = v.w();
+		vdfloat32x3 rgb = v.xyz();
+
+		return VDColorARGB(
+			vdfloat32x4::set(
+				select(
+					cmplt(rgb, vdfloat32x3::set1(1e-5f)),
+					vdfloat32x3::zero(),
+					rgb / a
+				),
+				a
+			)
+		);
+	}
+
+	VDColorARGB PremulBlend(const VDColorARGB& b) const {
+		return VDColorARGB(v * (1.0f - b.v.w()) + b.v);
+	}
+
+	VDColorARGB operator*(float s) { 
+		return VDColorARGB(v*s);
+	}
+
+	VDColorARGB operator+(float s) const {
+		return VDColorARGB(v + s);
+	}
+
+	VDColorARGB operator-(float s) const {
+		return VDColorARGB(v - s);
+	}
+
+	VDColorARGB operator-(VDColorARGB y) const {
+		return VDColorARGB(v - y.v);
+	}
+
+	VDColorARGB operator+(VDColorARGB y) const {
+		return VDColorARGB(v + y.v);
 	}
 
 private:

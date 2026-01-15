@@ -64,6 +64,8 @@ void ATDevice1090::Init() {
 	mpMemLayerRegisters = mpMemMgr->CreateLayer(kATMemoryPri_PBI, handlers, 0xD1, 0x01);
 	mpMemMgr->SetLayerName(mpMemLayerRegisters, "1090 registers");
 
+	mpMemMgr->EnableLayer(mpMemLayerRegisters, true);
+
 	ATMemoryHandlerTable handlers2 {};
 	handlers2.mpThis = this;
 	handlers2.mbPassReads = true;
@@ -334,7 +336,6 @@ void ATDevice1090::SelectPBIDevice(bool enable) {
 	if (mbSelected != enable) {
 		mbSelected = enable;
 
-		mpMemMgr->EnableLayer(mpMemLayerRegisters, enable);
 		mpMemMgr->EnableLayer(mpMemLayerFirmware, enable);
 	}
 }

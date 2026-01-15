@@ -47,14 +47,12 @@ void ATDebugDevice::GetDeviceInfo(ATDeviceInfo& info) {
 }
 
 void ATDebugDevice::Init() {
-	mpSIOMgr->AddDevice(this);
+	mpSIOInterface = mpSIOMgr->AddDevice(this);
 }
 
 void ATDebugDevice::Shutdown() {
-	if (mpSIOMgr) {
-		mpSIOMgr->RemoveDevice(this);
-		mpSIOMgr = nullptr;
-	}
+	mpSIOInterface = nullptr;
+	mpSIOMgr = nullptr;
 }
 
 void ATDebugDevice::InitSIO(IATDeviceSIOManager *mgr) {
@@ -82,11 +80,11 @@ ATDebugDevice::CmdResponse ATDebugDevice::OnSerialAccelCommand(const ATDeviceSIO
 				memcpy(buf + 1, mDebuggerName.data(), msglen);
 				buf[0] = (uint8)msglen;
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->SendData(buf, len, true);
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->SendData(buf, len, true);
+				mpSIOInterface->EndCommand();
 			}
 
 			if (mpDebugger)
@@ -100,11 +98,11 @@ ATDebugDevice::CmdResponse ATDebugDevice::OnSerialAccelCommand(const ATDeviceSIO
 			return kCmdResponse_Send_ACK_Complete;
 
 		case 0x25:		// ADD SDX SYMBOL
-			mpSIOMgr->BeginCommand();
-			mpSIOMgr->SendACK();
-			mpSIOMgr->ReceiveData(kReceiveId_AddSDXSymbol, 13, true);
-			mpSIOMgr->SendComplete();
-			mpSIOMgr->EndCommand();
+			mpSIOInterface->BeginCommand();
+			mpSIOInterface->SendACK();
+			mpSIOInterface->ReceiveData(kReceiveId_AddSDXSymbol, 13, true);
+			mpSIOInterface->SendComplete();
+			mpSIOInterface->EndCommand();
 			return kCmdResponse_Start;
 
 		case 0x26:		// END SDX SYMBOLS
@@ -116,11 +114,11 @@ ATDebugDevice::CmdResponse ATDebugDevice::OnSerialAccelCommand(const ATDeviceSIO
 			{
 				const uint32 len = request.mAUX[0] ? request.mAUX[0] : 256;
 
-				mpSIOMgr->BeginCommand();
-				mpSIOMgr->SendACK();
-				mpSIOMgr->ReceiveData(kReceiveId_ProcessStartName, len, true);
-				mpSIOMgr->SendComplete();
-				mpSIOMgr->EndCommand();
+				mpSIOInterface->BeginCommand();
+				mpSIOInterface->SendACK();
+				mpSIOInterface->ReceiveData(kReceiveId_ProcessStartName, len, true);
+				mpSIOInterface->SendComplete();
+				mpSIOInterface->EndCommand();
 			}
 			return kCmdResponse_Start;
 

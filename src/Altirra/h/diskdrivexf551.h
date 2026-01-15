@@ -94,7 +94,7 @@ public:	// IATDiskInterfaceClient
 	bool IsImageSupported(const IATDiskImage& image) const override;
 
 protected:
-	void Sync();
+	void Sync() override;
 
 	void AddTransmitEdge(bool polarity);
 
@@ -164,7 +164,7 @@ protected:
 	public:
 		ATDiskDriveDebugTargetProxyXF551(ATDeviceDiskDriveXF551& parent);
 
-		std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const;
+		std::pair<const uintptr *, const uintptr *> GetReadWriteMaps() const override;
 		void SetHistoryBuffer(ATCPUHistoryEntry *harray) override;
 		uint32 GetHistoryCounter() const override;
 		uint32 GetTime() const override;

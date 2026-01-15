@@ -46,13 +46,6 @@ ATDeviceDiskDriveIndusGT::ATDeviceDiskDriveIndusGT() {
 
 	mDriveScheduler.SetRate(VDFraction(4000000, 1));
 
-	mSerialCmdQueue.SetOnDriveCommandStateChanged(
-		[this](bool asserted) {
-			if (asserted)
-				mCoProc.AssertIrq();
-		}
-	);
-
 	mTargetProxy.Init(mCoProc);
 	InitTargetControl(mTargetProxy, 4000000.0, kATDebugDisasmMode_Z80, &mBreakpointsImpl, this);
 
@@ -104,7 +97,6 @@ bool ATDeviceDiskDriveIndusGT::SetSettings(const ATPropertySet& settings) {
 
 void ATDeviceDiskDriveIndusGT::Init() {
 	mSerialXmitQueue.Init(mpScheduler, mpSIOMgr);
-	mSerialCmdQueue.Init(&mDriveScheduler, mpSIOMgr);
 
 	// The Indus GT memory map:
 	//
@@ -215,7 +207,6 @@ void ATDeviceDiskDriveIndusGT::Init() {
 void ATDeviceDiskDriveIndusGT::Shutdown() {
 	mAudioRawSource.Shutdown();
 	mAudioPlayer.Shutdown();
-	mSerialCmdQueue.Shutdown();
 	mSerialXmitQueue.Shutdown();
 
 	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
@@ -407,27 +398,18 @@ void ATDeviceDiskDriveIndusGT::OnScheduledEvent(uint32 id) {
 
 void ATDeviceDiskDriveIndusGT::OnCommandStateChanged(bool asserted) {
 	if (mbCommandState != asserted) {
+		Sync();
+
 		mbCommandState = asserted;
-
-		// Convert computer time to device time.
-		//
-		// We have a problem here because transmission is delayed by a byte time but we don't
-		// necessarily know that delay when the command line is dropped. The XF551 has strict
-		// requirements for the command line pulse because it needs about 77 machine cycles
-		// from command asserted to start bit, but more importantly requires it to still be
-		// asserted after the end of the last byte. To solve this, we assert /COMMAND
-		// immediately but stretch the deassert a bit.
-
-		const uint32 commandLatency = asserted ? 0 : 400;
-
-		mSerialCmdQueue.AddCommandEdge(MasterTimeToDriveTime() + commandLatency, asserted);
+		if (asserted)
+			mCoProc.AssertIrq();
 	}
 }
 
 void ATDeviceDiskDriveIndusGT::OnMotorStateChanged(bool asserted) {
 }
 
-void ATDeviceDiskDriveIndusGT::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
+void ATDeviceDiskDriveIndusGT::OnBeginReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
 	Sync();
 
 	mReceiveShiftRegister = (c + c + 0x200) * 2 + 1;
@@ -437,13 +419,23 @@ void ATDeviceDiskDriveIndusGT::OnReceiveByte(uint8 c, bool command, uint32 cycle
 	mReceiveTimingAccum = 0x200;
 	mReceiveTimingStep = cyclesPerBit * 2289;
 
-	// HACK - if we are transmitting at SuperSynchromesh speeds (>50Kbit), stretch the start bit.
+	// HACK - if we are transmitting at SuperSynchromesh speeds (>60Kbit), stretch the start bit.
 	// The SuperSynchromesh software has marginal read code that tends to read between bits
 	// instead of in the center of them. Cause is still unknown.
-	if (cyclesPerBit < 35)
+	if (cyclesPerBit < 30)
 		mReceiveTimingAccum += mReceiveTimingStep >> 2;
 
 	mDriveScheduler.SetEvent(1, this, kEventId_DriveReceiveBit, mpEventDriveReceiveBit);
+}
+
+void ATDeviceDiskDriveIndusGT::OnReceiveByte(uint8 c, bool command, uint32 cyclesPerBit) {
+}
+
+void ATDeviceDiskDriveIndusGT::OnTruncateByte() {
+	Sync();
+
+	mReceiveShiftRegister = 1;
+	mDriveScheduler.UnsetEvent(mpEventDriveReceiveBit);
 }
 
 void ATDeviceDiskDriveIndusGT::OnSendReady() {

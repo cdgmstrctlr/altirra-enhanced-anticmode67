@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <bitset>
 #include <vd2/system/thread.h>
 #include <vd2/system/vdstl.h>
 #include <vd2/system/VDString.h>
@@ -29,47 +30,145 @@
 	#pragma comment(lib, "ws2_32.lib")
 #endif
 
+namespace ATNetTelnetOptions {
+	enum ATTelnetOption : uint8 {
+		TransmitBinary = 0,
+		Echo = 1,
+		SuppressGoAhead = 3,
+		Status = 5,
+		TimingMark = 6,
+		TerminalType = 24,
+		Naws = 31,
+		TerminalSpeed = 32,
+		ToggleFlowControl = 33,
+		LineMode = 34,
+		XDisplayLocation = 35,
+		Environ = 36,
+		Authentication = 37,
+		Encrypt = 38,
+		NewEnviron = 39
+	};
+}
+
 namespace {
 	const char *GetTelnetOptionName(uint8 c) {
+		using namespace ATNetTelnetOptions;
+
 		switch(c) {
-		case 0x00:	return "TRANSMIT-BINARY";
-		case 0x01:	return "ECHO";
-		case 0x03:	return "SUPPRESS-GO-AHEAD";
-		case 0x05:	return "STATUS";
-		case 0x18:	return "TERMINAL-TYPE";
-		case 0x1F:	return "NAWS";
-		case 0x20:	return "TERMINAL-SPEED";
-		case 0x21:	return "TOGGLE-FLOW-CONTROL";
-		case 0x22:	return "LINEMODE";
-		case 0x23:	return "X-DISPLAY-LOCATION";
-		case 0x25:	return "AUTHENTICATION";
-		case 0x27:	return "NEW-ENVIRON";
-		default:	return "?";
+		case TransmitBinary:	return "TRANSMIT-BINARY";
+		case Echo:				return "ECHO";
+		case SuppressGoAhead:	return "SUPPRESS-GO-AHEAD";
+		case Status:			return "STATUS";
+		case TimingMark:		return "TIMING-MARK";
+		case TerminalType:		return "TERMINAL-TYPE";
+		case Naws:				return "NAWS";
+		case TerminalSpeed:		return "TERMINAL-SPEED";
+		case ToggleFlowControl:	return "TOGGLE-FLOW-CONTROL";
+		case LineMode:			return "LINEMODE";
+		case XDisplayLocation:	return "X-DISPLAY-LOCATION";
+		case Environ:			return "ENVIRON";
+		case Authentication:	return "AUTHENTICATION";
+		case Encrypt:			return "ENCRYPT";
+		case NewEnviron:		return "NEW-ENVIRON";
+		default:				return "?";
+		}
+	}
+
+	const char *GetWinsockError(uint32 err) {
+		switch(err) {
+#define X(v) case v: return #v;
+			X(WSAEINTR)
+			X(WSAEBADF)
+			X(WSAEACCES)
+			X(WSAEFAULT)
+			X(WSAEINVAL)
+			X(WSAEMFILE)
+			X(WSAEWOULDBLOCK)
+			X(WSAEINPROGRESS)
+			X(WSAEALREADY)
+			X(WSAENOTSOCK)
+			X(WSAEDESTADDRREQ)
+			X(WSAEMSGSIZE)
+			X(WSAEPROTOTYPE)
+			X(WSAENOPROTOOPT)
+			X(WSAEPROTONOSUPPORT)
+			X(WSAESOCKTNOSUPPORT)
+			X(WSAEOPNOTSUPP)
+			X(WSAEPFNOSUPPORT)
+			X(WSAEAFNOSUPPORT)
+			X(WSAEADDRINUSE)
+			X(WSAEADDRNOTAVAIL)
+			X(WSAENETDOWN)
+			X(WSAENETUNREACH)
+			X(WSAENETRESET)
+			X(WSAECONNABORTED)
+			X(WSAECONNRESET)
+			X(WSAENOBUFS)
+			X(WSAEISCONN)
+			X(WSAENOTCONN)
+			X(WSAESHUTDOWN)
+			X(WSAETOOMANYREFS)
+			X(WSAETIMEDOUT)
+			X(WSAECONNREFUSED)
+			X(WSAELOOP)
+			X(WSAENAMETOOLONG)
+			X(WSAEHOSTDOWN)
+			X(WSAEHOSTUNREACH)
+			X(WSAENOTEMPTY)
+			X(WSAEPROCLIM)
+			X(WSAEUSERS)
+			X(WSAEDQUOT)
+			X(WSAESTALE)
+			X(WSAEREMOTE)
+			X(WSASYSNOTREADY)
+			X(WSAVERNOTSUPPORTED)
+			X(WSANOTINITIALISED)
+			X(WSAEDISCON)
+			X(WSAENOMORE)
+			X(WSAECANCELLED)
+			X(WSAEINVALIDPROCTABLE)
+			X(WSAEINVALIDPROVIDER)
+			X(WSAEPROVIDERFAILEDINIT)
+			X(WSASYSCALLFAILURE)
+			X(WSASERVICE_NOT_FOUND)
+			X(WSATYPE_NOT_FOUND)
+			X(WSA_E_NO_MORE)
+			X(WSA_E_CANCELLED)
+			X(WSAEREFUSED)
+			X(WSAHOST_NOT_FOUND)
+			X(WSATRY_AGAIN)
+			X(WSANO_RECOVERY)
+			X(WSANO_DATA)
+#undef X
+
+			default:
+				return "?";
 		}
 	}
 }
 
-class ATModemDriverTCP : public IATModemDriver, public VDThread {
+class ATModemDriverTCP final : public IATModemDriver, public VDThread {
 public:
 	ATModemDriverTCP();
 	~ATModemDriverTCP();
 
-	bool Init(const char *address, const char *service, uint32 port, bool loggingEnabled, IATModemDriverCallback *callback);
-	void Shutdown();
+	bool Init(const char *address, const char *service, uint32 port, bool loggingEnabled, IATModemDriverCallback *callback) override;
+	void Shutdown() override;
 
-	bool GetLastIncomingAddress(VDStringA& address, uint32& port);
+	bool GetLastIncomingAddress(VDStringA& address, uint32& port) override;
 
-	void SetLoggingEnabled(bool enabled);
-	void SetConfig(const ATRS232Config& config);
+	void SetLoggingEnabled(bool enabled) override;
+	void SetConfig(const ATRS232Config& config) override;
 
-	uint32 Write(const void *data, uint32 len);
+	uint32 Write(const void *data, uint32 len) override;
 	uint32 Write(const void *data, uint32 len, bool escapeChars);
 
-	uint32 Read(void *buf, uint32 len);
-	bool ReadLogMessages(VDStringA& messages);
+	uint32 Read(void *buf, uint32 len) override;
+	bool ReadLogMessages(VDStringA& messages) override;
 
 protected:
-	void ThreadRun();
+	void ThreadRun() override;
+
 	void WorkerShutdown();
 	void OnCommandLocked();
 	void OnRead(uint32 bytes);
@@ -138,8 +237,8 @@ protected:
 		kTS_WaitingForCommandByte,
 		kTS_WaitingForDoOptionByte,
 		kTS_WaitingForDontOptionByte,
-		kTS_WaitingToDiscardWillOptionByte,
-		kTS_WaitingToDiscardWontOptionByte
+		kTS_WaitingForWillOptionByte,
+		kTS_WaitingForWontOptionByte
 	};
 
 	enum TelnetSubState {
@@ -163,6 +262,10 @@ protected:
 	bool		mbTelnetBinaryModeIncoming;
 	bool		mbTelnetBinaryModeOutgoing;
 	uint32		mTelnetBinaryModeIncomingPending;
+
+	// Which options we have sent a DO or DONT for, and shouldn't send another
+	// one unless we are deliberately asking for a mode change.
+	std::bitset<256> mTelnetSentDoDont;
 };
 
 IATModemDriver *ATCreateModemDriverTCP() {
@@ -529,6 +632,15 @@ void ATModemDriverTCP::ThreadRun() {
 					return;
 				}
 
+				// Disable Nagle's algorithm after completing the connection and before setting
+				// async events.
+				BOOL nodelay = TRUE;
+				if (setsockopt(mSocket, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof nodelay)) {
+					[[maybe_unused]] int setSockOptErr = WSAGetLastError();
+
+					VDDEBUG("ModemTCP: Unable to disable nagling (%d / %s).\n", setSockOptErr, GetWinsockError(setSockOptErr));
+				}
+
 				WSAEventSelect(mSocket, mNetworkEvent, FD_READ | FD_WRITE | FD_CLOSE);
 				networkEventMask = FD_CONNECT;
 
@@ -601,7 +713,7 @@ void ATModemDriverTCP::ThreadRun() {
 		VDDEBUG("ModemTCP: Looking up %s:%s\n", mAddress.c_str(), mService.c_str());
 
 		addrinfo hint = {0};
-		hint.ai_family = AF_INET;
+		hint.ai_family = AF_UNSPEC;
 		hint.ai_socktype = SOCK_STREAM;
 
 		addrinfo *results = NULL;
@@ -638,6 +750,15 @@ void ATModemDriverTCP::ThreadRun() {
 
 			mSocket = WSASocket(p->ai_family, p->ai_socktype, p->ai_protocol, nullptr, 0, WSA_FLAG_OVERLAPPED);
 			if (mSocket != INVALID_SOCKET) {
+				// Disable Nagle's algorithm before initiating the connection. It fails intermittently if
+				// done while the connect is pending.
+				BOOL nodelay = TRUE;
+				if (setsockopt(mSocket, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof nodelay)) {
+					[[maybe_unused]] int setSockOptErr = WSAGetLastError();
+
+					VDDEBUG("ModemTCP: Unable to disable nagling (%d / %s).\n", setSockOptErr, GetWinsockError(setSockOptErr));
+				}
+
 				if (SOCKET_ERROR != WSAEventSelect(mSocket, mNetworkEvent, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE))
 					cr = connect(mSocket, p->ai_addr, (int)p->ai_addrlen);
 			}
@@ -663,11 +784,6 @@ void ATModemDriverTCP::ThreadRun() {
 		VDDEBUG("ModemTCP: Contacted %s\n", mAddress.c_str());
 	}
 
-	BOOL nodelay = TRUE;
-	if (setsockopt(mSocket, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof nodelay)) {
-		VDDEBUG("ModemTCP: Unable to disable nagling.\n");
-	}
-
 	// make out of band data inline for reliable Telnet -- this avoids the need to try
 	// to compensate for differences in TCB Urgent data handling, as well as annoyances
 	// in OOB and Async interfaces at Winsock level
@@ -676,6 +792,8 @@ void ATModemDriverTCP::ThreadRun() {
 
 	mbTelnetWaitingForEchoResponse = false;
 	mbTelnetWaitingForSGAResponse = false;
+
+	mTelnetSentDoDont.reset();
 
 	mbTelnetSawIncomingCR = false;
 	mbTelnetSawIncomingATASCII = false;
@@ -710,13 +828,13 @@ void ATModemDriverTCP::ThreadRun() {
 					// Ask the client to begin line mode negotiation.
 					mSpecialReplies.push_back(0xFF);	// IAC
 					mSpecialReplies.push_back(0xFB);	// WILL
-					mSpecialReplies.push_back(0x01);	// ECHO
+					mSpecialReplies.push_back(ATNetTelnetOptions::Echo);
 					mSpecialReplies.push_back(0xFF);	// IAC
 					mSpecialReplies.push_back(0xFD);	// DO
-					mSpecialReplies.push_back(0x03);	// SUPPRESS-GO-AHEAD
+					mSpecialReplies.push_back(ATNetTelnetOptions::SuppressGoAhead);
 					mSpecialReplies.push_back(0xFF);	// IAC
 					mSpecialReplies.push_back(0xFD);	// DO
-					mSpecialReplies.push_back(0x22);	// LINEMODE (RFC 1184)
+					mSpecialReplies.push_back(ATNetTelnetOptions::LineMode);
 					mbTelnetWaitingForEchoResponse = true;
 					mbTelnetWaitingForSGAResponse = true;
 
@@ -877,10 +995,10 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 							state = kTS_WaitingForIAC;
 							continue;
 						case 0xFB:	// WILL
-							state = kTS_WaitingToDiscardWillOptionByte;
+							state = kTS_WaitingForWillOptionByte;
 							continue;
 						case 0xFC:	// WONT
-							state = kTS_WaitingToDiscardWontOptionByte;
+							state = kTS_WaitingForWontOptionByte;
 							continue;
 
 						case 0xFD:	// DO
@@ -902,49 +1020,55 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 					break;
 
 				case kTS_WaitingForDoOptionByte:
-					LogF("Received DO %02X (%s)\n", c, GetTelnetOptionName(c));
+					LogF("Received DO %u (%s)\n", c, GetTelnetOptionName(c));
 					switch(c) {
-						case 0x00:	// TRANSMIT-BINARY
-							SendWill(0x00);		// TRANSMIT-BINARY
+						case ATNetTelnetOptions::TransmitBinary:
+							if (mbTelnetLFConversion) {
+								SendWont(ATNetTelnetOptions::TransmitBinary);
+							} else {
+								SendWill(ATNetTelnetOptions::TransmitBinary);
 
-							if (!mbTelnetBinaryModeOutgoing) {
-								mbTelnetBinaryModeOutgoing = true;
-								mbTelnetSawOutgoingCR = false;
+								if (!mbTelnetBinaryModeOutgoing) {
+									mbTelnetBinaryModeOutgoing = true;
+									mbTelnetSawOutgoingCR = false;
 
-								if (!mbTelnetBinaryModeIncoming) {
-									// request that the other side transmit binary
-									SendDo(0x00);		// TRANSMIT-BINARY
+									if (!mbTelnetBinaryModeIncoming) {
+										// request that the other side transmit binary
+										SendDo(ATNetTelnetOptions::TransmitBinary);
 
-									++mTelnetBinaryModeIncomingPending;
+										++mTelnetBinaryModeIncomingPending;
+									}
 								}
 							}
 							break;
 
-						case 0x01:	// ECHO
+						case ATNetTelnetOptions::Echo:
 							if (mbTelnetWaitingForEchoResponse) {
 								mbTelnetWaitingForEchoResponse = false;
 								break;
 							}
 
 							if (mbTelnetListeningMode) {
-								// This is a lie (we don't know what the Atari will do).
-								SendDont(0x01);		// ECHO
+								// This is a lie (we don't know what the Atari will do). But in general,
+								// BBS programs will echo characters except for specific cases like password
+								// entry.
+								SendWill(ATNetTelnetOptions::Echo);
 							} else {
 								// We don't support local echoing.
-								SendWont(0x01);		// ECHO
+								SendWont(ATNetTelnetOptions::Echo);
 							}
 							break;
 
-						case 0x03:	// SUPPRESS-GO-AHEAD
+						case ATNetTelnetOptions::SuppressGoAhead:
 							// We do this.
-							SendWill(0x03);		// SUPPRESS-GO-AHEAD
+							SendWill(ATNetTelnetOptions::SuppressGoAhead);
 							break;
 
-						case 0x18:	// TERMINAL-TYPE (RFC 1091)
+						case ATNetTelnetOptions::TerminalType:	// TERMINAL-TYPE (RFC 1091)
 							if (mbTelnetListeningMode || mTelnetTermType.empty()) {
-								SendWont(0x18);		// TERMINAL-TYPE
+								SendWont(ATNetTelnetOptions::TerminalType);
 							} else {
-								SendWill(0x18);		// TERMINAL-TYPE
+								SendWill(ATNetTelnetOptions::TerminalType);
 							}
 							break;
 
@@ -958,21 +1082,20 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 					continue;
 
 				case kTS_WaitingForDontOptionByte:
-					LogF("Received DONT %02X (%s)\n", c, GetTelnetOptionName(c));
+					LogF("Received DONT %u (%s)\n", c, GetTelnetOptionName(c));
 
 					switch(c) {
-						case 0x00:	// TRANSMIT-BINARY
-							SendWont(0x00);		// TRANSMIT-BINARY
+						case ATNetTelnetOptions::TransmitBinary:
+							SendWont(ATNetTelnetOptions::TransmitBinary);
 							mbTelnetBinaryModeOutgoing = false;
 
 							if (mbTelnetBinaryModeIncoming) {
-								SendDont(0x00);		// TRANSMIT-BINARY
+								SendDont(ATNetTelnetOptions::TransmitBinary);
 
 								++mTelnetBinaryModeIncomingPending;
 							}
 							break;
 
-						case 0x03:	// SUPPRESS-GO-AHEAD
 						default:
 							// Whatever it is, we're already not doing it.
 							SendWont(c);
@@ -981,48 +1104,48 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 					state = kTS_WaitingForIAC;
 					continue;
 
-				case kTS_WaitingToDiscardWillOptionByte:
-					LogF("Received WILL %02X (%s)\n", c, GetTelnetOptionName(c));
+				case kTS_WaitingForWillOptionByte:
+					LogF("Received WILL %u (%s)\n", c, GetTelnetOptionName(c));
 
 					switch(c) {
-						case 0x00:	// TRANSMIT-BINARY
+						case ATNetTelnetOptions::TransmitBinary:
 							if (mTelnetBinaryModeIncomingPending) {
 								--mTelnetBinaryModeIncomingPending;
 
 								mbTelnetBinaryModeIncoming = true;
 								mbTelnetSawIncomingCR = false;
-							} else {
-
 							}
 							break;
 
-						case 0x01:	// ECHO
-							SendDont(0x01);		// ECHO
+						case ATNetTelnetOptions::Echo:
+							if (mbTelnetListeningMode)
+								SendDont(ATNetTelnetOptions::Echo);
 							break;
 
-						case 0x03:	// SUPPRESS-GO-AHEAD
+						case ATNetTelnetOptions::SuppressGoAhead:
 							if (mbTelnetWaitingForSGAResponse) {
 								mbTelnetWaitingForSGAResponse = false;
 								break;
 							}
 
-							SendDo(0x03);		// SUPPRESS-GO-AHEAD
+							SendDo(ATNetTelnetOptions::SuppressGoAhead);
 							break;
 
-						case 0x22:	// LINEMODE
+						case ATNetTelnetOptions::LineMode:
 							if (mbTelnetListeningMode) {
 								// Heeeey... turns out this telnet client supports line mode.
 								// Let's turn it off.
 								mSpecialReplies.push_back(0xFF);	// IAC
 								mSpecialReplies.push_back(0xFA);	// SB
-								mSpecialReplies.push_back(0x22);	// LINEMODE
+								mSpecialReplies.push_back(ATNetTelnetOptions::LineMode);
 								mSpecialReplies.push_back(0x01);	// MODE
 								mSpecialReplies.push_back(0x00);	// 0
 								mSpecialReplies.push_back(0xFF);	// IAC
 								mSpecialReplies.push_back(0xF0);	// SE
 							}
 
-							// fall through
+							SendDont(c);
+							break;
 
 						default:
 							SendDont(c);
@@ -1032,26 +1155,27 @@ void ATModemDriverTCP::OnRead(uint32 bytes) {
 					state = kTS_WaitingForIAC;
 					continue;
 
-				case kTS_WaitingToDiscardWontOptionByte:
-					if (mbTelnetListeningMode) {
-						LogF("Received WONT %02X (%s)\n", c, GetTelnetOptionName(c));
-						switch(c) {
-							case 0x00:	// TRANSMIT-BINARY
+				case kTS_WaitingForWontOptionByte:
+					LogF("Received WONT %u (%s)\n", c, GetTelnetOptionName(c));
+
+					// There is no such thing as a WON'T offer, so if we receive a WON'T,
+					// it has to be in response to a DO or DON'T, and the only thing we
+					// need to do is update local state or send out additional other requests.
+					switch(c) {
+						case ATNetTelnetOptions::TransmitBinary:
+							if (mbTelnetListeningMode) {
 								if (mTelnetBinaryModeIncomingPending) {
 									--mTelnetBinaryModeIncomingPending;
 
 									if (mbTelnetBinaryModeIncoming) {
 										mbTelnetBinaryModeIncoming = false;
 									}
-								} else {
-									SendDont(0x00);		// TRANSMIT-BINARY
 								}
-								break;
+							}
+							break;
 
-							case 0x01:	// ECHO
-								SendDont(0x01);		// ECHO
-								break;
-						}
+						default:
+							break;
 					}
 
 					state = kTS_WaitingForIAC;
@@ -1262,22 +1386,34 @@ void ATModemDriverTCP::FlushSpecialReplies() {
 }
 
 void ATModemDriverTCP::SendDo(uint8 c) {
-	LogF("Sending DO %02X (%s)\n", c, GetTelnetOptionName(c));
+	if (mTelnetSentDoDont[c])
+		return;
+
+	mTelnetSentDoDont[c] = true;
+
+	LogF("Sending  DO %u (%s)\n", c, GetTelnetOptionName(c));
 	SendCommand(0xFD, c);
 }
 
 void ATModemDriverTCP::SendDont(uint8 c) {
-	LogF("Sending DONT %02X (%s)\n", c, GetTelnetOptionName(c));
+	// If we have already sent a request on this particular option, don't send
+	// another one.
+	if (mTelnetSentDoDont[c])
+		return;
+
+	mTelnetSentDoDont[c] = true;
+
+	LogF("Sending  DONT %u (%s)\n", c, GetTelnetOptionName(c));
 	SendCommand(0xFE, c);
 }
 
 void ATModemDriverTCP::SendWill(uint8 c) {
-	LogF("Sending WILL %02X (%s)\n", c, GetTelnetOptionName(c));
+	LogF("Sending  WILL %u (%s)\n", c, GetTelnetOptionName(c));
 	SendCommand(0xFB, c);
 }
 
 void ATModemDriverTCP::SendWont(uint8 c) {
-	LogF("Sending WONT %02X (%s)\n", c, GetTelnetOptionName(c));
+	LogF("Sending  WONT %u (%s)\n", c, GetTelnetOptionName(c));
 
 	SendCommand(0xFC, c);
 }

@@ -19,6 +19,7 @@
 #define f_AT_SIOMANAGER_H
 
 #include <at/atcore/devicesio.h>
+#include <at/atcore/notifylist.h>
 #include <at/atcore/scheduler.h>
 #include <at/ataudio/pokey.h>
 
@@ -45,7 +46,7 @@ struct ATSIORequest {
 	uint8	mAUX[2];
 };
 
-class ATSIOManager final : public IATPokeySIODevice, public IATDeviceSIOManager, public IATSchedulerCallback {
+class ATSIOManager final : public IATPokeySIODevice, public IATDeviceSIOManager {
 	ATSIOManager(const ATSIOManager&) = delete;
 	ATSIOManager& operator=(const ATSIOManager&) = delete;
 public:
@@ -81,7 +82,10 @@ public:
 	void SetReadyState(bool ready);
 
 	void PreLoadState();
+	void LoadState(IATObjectState *obj);
 	void PostLoadState();
+
+	vdrefptr<IATObjectState> SaveState() const;
 
 	void ReinitHooks();
 	void UninitHooks();
@@ -102,35 +106,15 @@ public:
 	virtual void PokeySetBreak(bool enabled) override;
 
 public:		// IATDeviceSIOManager
-	virtual void AddDevice(IATDeviceSIO *dev) override;
-	virtual void RemoveDevice(IATDeviceSIO *dev) override;
-	virtual void BeginCommand() override;
-	virtual void SendData(const void *data, uint32 len, bool addChecksum) override;
-	virtual void SendACK() override;
-	virtual void SendNAK() override;
-	virtual void SendComplete(bool autoDelay = true) override;
-	virtual void SendError(bool autoDelay = true) override;
-	virtual void ReceiveData(uint32 id, uint32 len, bool autoProtocol) override;
-	virtual void SetTransferRate(uint32 cyclesPerBit, uint32 cyclesPerByte) override;
-	virtual void SetSynchronousTransmit(bool enable) override;
-	virtual void Delay(uint32 ticks) override;
-	virtual void InsertFence(uint32 id) override;
-	virtual void FlushQueue() override;
-	virtual void EndCommand() override;
-	virtual void HandleCommand(const void *data, uint32 len, bool succeeded) override;
-	virtual bool IsAccelRequest() const override { return mpAccelRequest != nullptr; }
-	virtual uint32 GetAccelTimeSkew() const override { return mAccelTimeSkew; }
+	virtual vdrefptr<IATDeviceSIOInterface> AddDevice(IATDeviceSIO *dev) override;
+
+	void BeginCommand();
+
 	virtual sint32 GetHighSpeedIndex() const override { return 10; }
 	virtual uint32 GetCyclesPerBitRecv() const override;
 	virtual uint32 GetRecvResetCounter() const override;
 	virtual uint32 GetCyclesPerBitSend() const override;
 	virtual uint32 GetCyclesPerBitBiClock() const override;
-	virtual uint64 GetCommandQueueTime() const override { return mCommandQueueTime; }
-	virtual uint64 GetCommandFrameEndTime() const override { return mCommandFrameEndTime; }
-	virtual uint64 GetCommandDeassertTime() const override { return mCommandDeassertTime; }
-
-	virtual void SaveActiveCommandState(const IATDeviceSIO *device, IATObjectState **state) const;
-	virtual void LoadActiveCommandState(IATDeviceSIO *device, IATObjectState *state);
 
 	virtual void AddRawDevice(IATDeviceRawSIO *dev) override;
 	virtual void RemoveRawDevice(IATDeviceRawSIO *dev) override;
@@ -149,9 +133,6 @@ public:		// IATDeviceSIOManager
 	virtual void SetExternalClock(IATDeviceRawSIO *dev, uint32 initialOffset, uint32 period) override;
 
 public:
-	virtual void OnScheduledEvent(uint32 id) override;
-
-public:
 	enum StepType : uint8 {
 		kStepType_None,
 		kStepType_Delay,
@@ -168,30 +149,30 @@ public:
 		kStepType_AccelSendComplete,
 		kStepType_AccelSendError,
 	};
+	
+	class SIOInterface;
+
+	void RemoveInterface(SIOInterface& iface);
+	void BeginReceive(SIOInterface& iface);
+	void EndReceive(SIOInterface& iface);
+	void BeginSend(SIOInterface& iface);
+	void EndSend(SIOInterface& iface);
 
 private:
-	enum {
-		kEventId_Delay = 1,
-		kEventId_Send
-	};
-
 	class RawDeviceListLock;
 	friend class RawDeviceListLock;
 	friend class ATSaveStateSioCommandStep;
 
-	uint8 OnHookDSKINV(uint16);
 	uint8 OnHookSIOV(uint16);
 
-	void AbortActiveCommand();
-	void ExecuteNextStep();
-	void ShiftTransmitBuffer();
-	void ResetTransfer();
-	void UpdateActiveDeviceDerivedValues();
-	void UpdateTransferRateDerivedValues();
+	void CancelAllCommands();
+	void SetPendingDeviceId(uint8 deviceId);
+	static bool IsDiskDevice(uint8 deviceId);
 	void OnMotorStateChanged(bool asserted);
 	void OnSerialOutputClockChanged();
 	void TraceReceive(uint8 c, uint32 cyclesPerBit, bool postReceive);
 	void UpdatePollState(uint8 cmd, uint8 aux1, uint8 aux2);
+	void ProcessCommandFrame();
 
 	ATCPUEmulator *mpCPU = nullptr;
 	ATCPUEmulatorMemory *mpMemory = nullptr;
@@ -203,29 +184,15 @@ private:
 	int mPIAOutput = 0;
 
 	ATCPUHookNode *mpSIOVHook = nullptr;
-	ATCPUHookNode *mpDSKINVHook = nullptr;
 
-	uint32	mTransferLevel = 0;		// Write pointer for accumulating send data.
-	uint32	mTransferStart = 0;		// Starting offset for current transfer.
-	uint32	mTransferIndex = 0;		// Next byte to send/receive for current transfer.
-	uint32	mTransferEnd = 0;		// Stopping offset for current transfer.
-	uint32	mTransferBurstOffset = 0;
-	uint32	mTransferLastBurstOffset = 0;
-	uint32	mTransferCyclesPerBit = 0;
-	uint32	mTransferCyclesPerBitRecvMin = 0;
-	uint32	mTransferCyclesPerBitRecvMax = 0;
-	uint32	mTransferCyclesPerByte = 0;
-	uint32	mTransferStartTime = 0;
-	bool	mbTransferSend = false;
-	bool	mbTransferError = false;
-	bool	mbTransmitSynchronous = false;
 	bool	mbCommandState = false;
 	bool	mbMotorState = false;
 	bool	mbReadyState = false;
 	uint64	mCommandFrameEndTime = 0;
 	uint64	mCommandDeassertTime = 0;
-	uint64	mCommandQueueTime = 0;
-	uint32	mCommandQueueCyclesPerByte = 0;
+	uint32	mCommandCyclesPerBit = 0;
+	uint8	mCommandBufferIndex = 0;
+	uint8	mCommandBuffer[5] {};
 
 	bool	mbSIOPatchEnabled = false;
 	bool	mbOtherSIOAccelEnabled = false;
@@ -234,15 +201,12 @@ private:
 	bool	mbDiskBurstTransfersEnabled = false;
 	uint8	mDebuggerDeviceId = 0;
 	uint8	mPollCount = 0;
-	uint32	mAccelTimeSkew = 0;
 	uint32	mAccelBufferAddress = 0;
 	const ATDeviceSIORequest *mpAccelRequest = nullptr;
 	uint8	*mpAccelStatus = nullptr;
-	ATEvent *mpDelayEvent = nullptr;
-	ATEvent *mpTransferEvent = nullptr;
-	IATDeviceSIO *mpActiveDevice = nullptr;
-	bool	mbActiveDeviceDisk = false;
-	uint8	mActiveDeviceId = 0;
+	SIOInterface *mpPendingInterface = nullptr;
+	uint8	mPendingDeviceId = 0;
+	bool	mbPendingDeviceDisk = false;
 
 	uint32	mAccessedDisks = 0;
 
@@ -250,7 +214,12 @@ private:
 
 	bool	mbLoadingState = false;
 
-	vdfastvector<IATDeviceSIO *> mSIODevices;
+	ATNotifyList<SIOInterface *> mSIOInterfaces;
+
+	ATNotifyList<SIOInterface *> mActiveCommandInterfaces;
+	ATNotifyList<SIOInterface *> mSendingInterfaces;
+	ATNotifyList<SIOInterface *> mReceivingInterfaces;
+
 	vdfastvector<IATDeviceRawSIO *> mSIORawDevices;
 	vdfastvector<IATDeviceRawSIO *> mSIORawDevicesNew;
 	sint32 mSIORawDevicesBusy = 0;
@@ -283,17 +252,14 @@ private:
 		};
 	};
 
-	Step mCurrentStep = {};
-
-	vdfastdeque<Step> mStepQueue;
-
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelSimple *mpTraceChannelBusCommand = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBusSend = nullptr;
 	ATTraceChannelFormatted *mpTraceChannelBusReceive = nullptr;
 	uint64 mTraceCommandStartTime = 0;
 
-	uint8 mTransferBuffer[kMaxTransferSize] = {};
+	vdfastvector<uint8> mCachedTransferBuffer;
+	vdfastdeque<Step> mCachedStepQueue;
 };
 
 #endif	// f_AT_SIOMANAGER_H

@@ -691,7 +691,7 @@ void ATAccelNORMALIZE(ATCPUEmulator& cpu, ATCPUEmulatorMemory& mem) {
 				fr0.mMantissa[i] = fr0.mMantissa[i+count];
 
 			for(int i=5-count; i<5; ++i)
-				fr0.mMantissa[5-i] = 0;
+				fr0.mMantissa[i] = 0;
 
 			if ((fr0.mSignExp & 0x7f) < 64 - 49 + count)
 				fr0.SetZero();

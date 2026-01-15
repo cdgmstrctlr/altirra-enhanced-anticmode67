@@ -118,6 +118,7 @@ private:
 	bool		mbBreakOnUnsupportedOpcode = false;
 	bool		mbIs65C02 = false;
 	bool		mbHistoryChangePending = false;
+	bool		mbExtraCyclePending = false;
 
 	ATCoProcTraceCache *mpTraceCache = nullptr;
 

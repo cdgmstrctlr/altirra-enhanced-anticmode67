@@ -76,10 +76,18 @@ bool ATCoProc6502::Run(ATScheduler& scheduler) {
 	uint16 tmpaddr;
 	uintptr tmpbase;
 	uint8 tmpval;
+	bool xcycle = mbExtraCyclePending;
+	if (xcycle)
+		mbExtraCyclePending = false;
 
 VDASSERT_CPUEXEC(scheduler.mNextEventCounter >= 0xFF000000);
 VDASSERT_CPUEXEC(scheduler.mStopTime - scheduler.mTimeBase < 0x80000000);
-while(ATSCHEDULER_ADVANCE_STOPCHECK(&scheduler)) {
+for(;;) {
+	if (xcycle)
+		xcycle = false;
+	else if (!ATSCHEDULER_ADVANCE_STOPCHECK(&scheduler))
+		break;
+
 	VDASSERT_CPUEXEC(scheduler.mNextEventCounter >= 0xFF000000);
 	VDASSERT_CPUEXEC(scheduler.mStopTime - scheduler.mTimeBase < 0x80000000);
 	VDASSERT_CPUEXEC(scheduler.mStopTime - (scheduler.mTimeBase + scheduler.mNextEventCounter) < 0x80000000);

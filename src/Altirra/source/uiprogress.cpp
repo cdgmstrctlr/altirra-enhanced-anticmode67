@@ -334,9 +334,9 @@ void ATUIProgressBackgroundTaskDialogW32::SetProgressF(double progress, const wc
 void ATUIProgressBackgroundTaskDialogW32::ThreadRun() {
 	try {
 		mpFn(*this);
-	} catch(const MyUserAbortError&) {
-	} catch(MyError& e) {
-		mPendingError.TransferFrom(e);
+	} catch(VDException& e) {
+		if (e.visible())
+			mPendingError = std::move(e);
 	}
 
 	PostCall([this] { End(1); });

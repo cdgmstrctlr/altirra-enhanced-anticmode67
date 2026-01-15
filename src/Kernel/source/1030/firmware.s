@@ -82,18 +82,22 @@ sio_request:
 		opt		f+
 
 .proc Init
+		;Run ModemLink as "DOS". This is consistent with executing DOS from
+		;basic after booting ModemLink.
 		mwa		#Main dosvec
 
 		;We load up to $3400, but the real ModemLink software only raises
-		;MEMLO to $3200.
+		;MEMLO to $3200. This happens even if ModemLink loads but then a
+		;cartridge runs instead (e.g. BASIC).
 		lda		#<$3200
 		sta		memlo
 		sta		appmhi
 		lda		#>$3200
 		sta		memlo+1
 		sta		appmhi+1
-		clc
-		rts
+
+		;Init the T: handler so it's available in BASIC.
+		jmp		$1D0C
 .endp
 
 .proc Main

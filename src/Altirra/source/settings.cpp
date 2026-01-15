@@ -24,8 +24,10 @@
 #include <vd2/system/math.h>
 #include <vd2/system/registry.h>
 #include <vd2/system/time.h>
+#include <vd2/VDDisplay/displaytypes.h>
 #include <at/ataudio/audiooutput.h>
 #include <at/atcore/media.h>
+#include <at/atcore/enumparseimpl.h>
 #include <at/atio/cassetteimage.h>
 #include <at/atio/image.h>
 #include <at/atui/uimanager.h>
@@ -40,6 +42,7 @@
 #include "ide.h"
 #include "idephysdisk.h"
 #include "inputcontroller.h"
+#include "inputdefs.h"
 #include "inputmanager.h"
 #include "joystick.h"
 #include "settings.h"
@@ -70,6 +73,15 @@ ATNotifyList<const ATSettingsLoadSaveCallback *> g_ATSettingsSaveCallbacks;
 void ATSyncCPUHistoryState();
 void ATUIUpdateSpeedTiming();
 void ATUIResizeDisplay();
+
+///////////////////////////////////////////////////////////////////////////
+
+AT_DEFINE_ENUM_TABLE_BEGIN(VDDScreenMaskType)
+	{ VDDScreenMaskType::None, "none" },
+	{ VDDScreenMaskType::ApertureGrille, "aperture_grille" },
+	{ VDDScreenMaskType::DotTriad, "dot_triad" },
+	{ VDDScreenMaskType::SlotMask, "slot_mask" },
+AT_DEFINE_ENUM_TABLE_END(VDDScreenMaskType, VDDScreenMaskType::None);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -330,7 +342,7 @@ uint32 ATSettingsFindProfileByName(const wchar_t *name) {
 	ATSettingsProfileEnum(profileIds);
 
 	for(uint32 profileId : profileIds) {
-		if (ATSettingsProfileGetName(profileId) == name)
+		if (ATSettingsProfileGetName(profileId).comparei(name) == 0)
 			return profileId;
 	}
 
@@ -513,7 +525,7 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		key.setInt("Scanline intensity", (int)(0.5f + aparams.mScanlineIntensity * 100.0f));
 		key.setBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
 		key.setBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
-		key.setInt("ScreenFX: Bloom V2 radius", (int)(0.5f + aparams.mBloomRadius * 10.0f));
+		key.setInt("ScreenFX: Bloom V2.1 radius", (int)(0.5f + aparams.mBloomRadius * 1000.0f));
 		key.setInt("ScreenFX: Bloom V2 direct intensity", (int)(0.5f + aparams.mBloomDirectIntensity * 100.0f));
 		key.setInt("ScreenFX: Bloom V2 indirect intensity", (int)(0.5f + aparams.mBloomIndirectIntensity * 100.0f));
 		key.setInt("ScreenFX: Distortion X View Angle", (int)(0.5f + aparams.mDistortionViewAngleX));
@@ -528,6 +540,18 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 
 		key.setBool("ScreenFX: Use system SDR intensity", aparams.mbUseSystemSDR);
 		key.setBool("ScreenFX: Use system SDR intensity as HDR", aparams.mbUseSystemSDRAsHDR);
+
+		const VDDScreenMaskParams& smparams = gtia.GetScreenMaskParams();
+
+		key.setString("ScreenFX: Screen mask type", ATEnumToString(smparams.mType));
+
+		s.sprintf("%g", smparams.mSourcePixelsPerDot);
+		key.setString("ScreenFX: Screen mask ccs per dot", s.c_str());
+
+		s.sprintf("%g", smparams.mOpenness);
+		key.setString("ScreenFX: Screen mask openness", s.c_str());
+
+		key.setBool("ScreenFX: Screen mask intensity compensation", smparams.mbScreenMaskIntensityCompensation);
 	} else {
 		g_sim.SetDiskSectorCounterEnabled(key.getBool("Disk: Sector counter enabled", g_sim.IsDiskSectorCounterEnabled()));
 
@@ -541,9 +565,9 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		aparams.mbEnableBloom = key.getBool("ScreenFX: Bloom enable", aparams.mbEnableBloom);
 		aparams.mbBloomScanlineCompensation = key.getBool("ScreenFX: Bloom scanline compensation", aparams.mbBloomScanlineCompensation);
 
-		int br = key.getInt("ScreenFX: Bloom V2 radius", -1);
-		if (br >= 1 && br < 1000)
-			aparams.mBloomRadius = (float)br / 10.0f;
+		int br = key.getInt("ScreenFX: Bloom V2.1 radius", -1);
+		if (br >= 1 && br < 10000)
+			aparams.mBloomRadius = (float)br / 1000.0f;
 		int bdi = key.getInt("ScreenFX: Bloom V2 direct intensity", -1);
 		if (bdi >= 0 && bdi <= 200)
 			aparams.mBloomDirectIntensity = (float)bdi / 100.0f;
@@ -572,6 +596,21 @@ void ATSettingsExchangeView(bool write, VDRegistryKey& key) {
 		aparams.mbUseSystemSDRAsHDR = key.getBool("ScreenFX: Use system SDR intensity as HDR", false);
 
 		gtia.SetArtifactingParams(aparams);
+
+		VDDScreenMaskParams smparams = ATGTIAEmulator::GetDefaultScreenMaskParams();
+
+		key.getString("ScreenFX: Screen mask type", s);
+		smparams.mType = ATParseEnum<VDDScreenMaskType>(s).mValue;
+
+		if (key.getString("ScreenFX: Screen mask ccs per dot", s))
+			smparams.mSourcePixelsPerDot = std::clamp<float>((float)strtod(s.c_str(), nullptr), 0.01f, 10.0f);
+
+		if (key.getString("ScreenFX: Screen mask openness", s))
+			smparams.mOpenness = std::clamp<float>((float)strtod(s.c_str(), nullptr), 0.25f, 1.0f);
+
+		smparams.mbScreenMaskIntensityCompensation = key.getBool("ScreenFX: Screen mask intensity compensation", smparams.mbScreenMaskIntensityCompensation);
+
+		gtia.SetScreenMaskParams(smparams);
 	}
 }
 
@@ -704,6 +743,11 @@ void ATSettingsExchangeInput(bool write, VDRegistryKey& key) {
 		, [](bool enable) {
 			g_sim.GetLightPenPort()->SetImmediateUpdateEnabled(enable);
 		}
+	);
+
+	ATSettingsExchangeBool(write, key, "Input: Pot noise enabled"
+		, [] { return g_sim.GetPotNoiseEnabled(); }
+		, [](bool enable) { g_sim.SetPotNoiseEnabled(enable); }
 	);
 }
 

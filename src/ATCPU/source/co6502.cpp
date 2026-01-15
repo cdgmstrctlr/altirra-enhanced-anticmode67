@@ -433,6 +433,7 @@ bool ATCoProc6502::CheckBreakpoint() {
 	if (mpBreakpointHandler->CheckBreakpoint(mPC)) {
 		mpNextState = &kInitialStateNoBreak;
 		mInsnPC = mPC;
+		mbExtraCyclePending = true;
 		return true;
 	}
 

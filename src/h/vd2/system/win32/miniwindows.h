@@ -64,6 +64,7 @@ typedef VDZLONG_PTR		VDZLRESULT;
 typedef struct HDROP__	*VDZHDROP;
 typedef struct HFONT__	*VDZHFONT;
 typedef struct HACCEL__	*VDZHACCEL;
+typedef struct HBRUSH__	*VDZHBRUSH;
 typedef struct _IMAGELIST	*VDZHIMAGELIST;
 typedef struct tagPAINTSTRUCT	VDZPAINTSTRUCT;
 

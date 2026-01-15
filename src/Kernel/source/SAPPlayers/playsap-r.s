@@ -21,6 +21,7 @@
 		org		$0800
 
 vcountsPerTick	dta		0
+stereo			dta		0
 
 playfield:		;0123456789012345678901234567890123456789
 		dta		"  Name:                                 "
@@ -72,6 +73,11 @@ detdone:
 		lda		#262/2
 is_pal:
 		sta		linecount
+
+		;ensure POKEY inited
+		lda		#3
+		sta		skctl
+		sta		skctl+$10
 
 		;setup missiles
 		mva		#>missiles pmbase
@@ -184,13 +190,18 @@ pmypos:
 
 ;==========================================================================
 musptr		= $80
-musdelay	= $82
 deltamask	= $83
-dmhindex	= $84
 
 tmpptr		= $90
 
-pkshadow	= $e0
+;$C0-DF stereo POKEY context
+alt_context = $c5
+
+;$E0-FF primary POKEY context
+primary_context = $e5
+musdelay	= $e5
+dmhindex	= $e6
+pkshadow	= $e7
 dmhistory	= $f0
 
 missiles	= $0580
@@ -203,21 +214,46 @@ player3		= $0780
 .proc InitMusic
 		mva		#$10 musptr+1
 		mva		#$00 musptr
-		sta		musdelay
-		inc		musdelay
+
 		sta		dmhindex
+		sta		dmhindex-$20
+
 		ldx		#15
 		sta:rpl	dmhistory,x-
+
+		lda		#1
+		sta		musdelay
+		sta		musdelay-$20
 		rts
 .endp
 
 ;==========================================================================
 .proc PlayMusic
+		bit		stereo
+		bpl		update_pokey
+
+		jsr		SwapContexts
+		mva		#$00 pokey_addr
+		jsr		update_pokey
+		jsr		SwapContexts
+		mva		#$10 pokey_addr
+
+update_pokey:
 		dec		musdelay
 		beq		delay_complete
 		rts
 
 delay_complete:
+		;$80-FF		Command, 1-tick delay)
+		;$00-7F NN	Command, NN tick delay
+		;
+		;$00		No-op
+		;$01		Restart
+		;$02		Uncompressed - 9 bytes
+		;$60-7F		Reuse delta mask 1-15 back, LSB = AUDCTL update
+		;$04 MM		Delta update, no AUDCTL update
+		;$05 MM		Delta update, AUDCTL update
+		;
 		jsr		fetch
 		tax
 		bpl		is_delayed
@@ -242,17 +278,11 @@ not_done:
 		;check for uncompressed ($02)
 		dex
 		bne		not_uncompressed
-		;update POKEY state
-		ldx		#0
-play_loop:
-		jsr		fetch
-		sta		$d200,x
-		sta		pkshadow,x
-		inx
-		cpx		#9
-		bne		play_loop
-no_op:
-		rts
+
+		;update full POKEY state
+		lda		#$ff
+		sec
+		bcs		decode_row
 
 not_uncompressed:
 		lsr
@@ -277,18 +307,21 @@ not_remask:
 		jsr		fetch
 		sta		dmhistory,x
 with_dmask:
+		plp
+decode_row:
 		sta		deltamask
 		ldx		#8
-		plp
 delta_loop:
 		bcc		no_delta
 		jsr		fetch
 		sta		$d200,x
+pokey_addr = *-2
 		sta		pkshadow,x
 no_delta:
 		asl		deltamask
 		dex
 		bpl		delta_loop
+no_op:
 		rts
 
 fetch:
@@ -298,4 +331,18 @@ fetch:
 		rts
 .endp
 
+;==========================================================================
+.proc SwapContexts
+		ldx		#[$ff-primary_context]
+swap_loop:
+		lda		primary_context,x
+		ldy		alt_context,x
+		sta		alt_context,x
+		sty		primary_context,x
+		dex
+		bpl		swap_loop
+		rts
+.endp
+
+;==========================================================================
 		run		Main

@@ -195,6 +195,24 @@ public:
 	virtual void DumpStatus(ATConsoleOutput& output) = 0;
 };
 
+struct ATDeviceSystemInfo {
+	// true if computer has joystick ports 3/4
+	bool mbHasPort34 : 1 = false;
+
+	// true if computer produces +12V on SIO port
+	bool mbHasSIO12V : 1 = false;
+
+	// true if computer has 9V AC power input
+	bool mbHas9VACPower : 1 = false;
+};
+
+class IATDeviceSystemInfo {
+public:
+	static inline constexpr auto kTypeID = "IATDeviceSystemInfo"_vdtypeid;
+
+	virtual const ATDeviceSystemInfo& GetSystemInfo() const = 0;
+};
+
 class IATDevice : public IVDRefUnknown {
 public:
 	enum { kTypeID = 'adev' };

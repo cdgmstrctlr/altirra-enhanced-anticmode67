@@ -176,6 +176,7 @@ protected:
 
 	ATDeviceBusSingleChild mSerialBus;
 	ATDeviceBusSingleChild mParallelBus;
+	ATDeviceBusSingleChild mFloppyBus;
 
 	uint8 mRAM[0x10000];
 	uint8 mFirmware[0x10000];

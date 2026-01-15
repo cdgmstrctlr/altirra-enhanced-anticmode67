@@ -24,7 +24,7 @@
 #include "debugger.h"
 #include "uidbgpane.h"
 
-class ATWatchWindow : public ATUIDebuggerPaneWindow, public IATDebuggerClient, public IATUIDebuggerWatchPane
+class ATWatchWindow final : public ATUIDebuggerPaneWindow, public IATDebuggerClient, public IATUIDebuggerWatchPane
 {
 public:
 	ATWatchWindow(uint32 id = kATUIPaneId_WatchN);
@@ -32,17 +32,17 @@ public:
 
 	void *AsInterface(uint32 iid) override;
 
-	void AddWatch(const char *expr);
+	void AddWatch(const char *expr) override;
 
-	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state);
-	void OnDebuggerEvent(ATDebugEvent eventId);
+	void OnDebuggerSystemStateUpdate(const ATDebuggerSystemState& state) override;
+	void OnDebuggerEvent(ATDebugEvent eventId) override;
 
 protected:
 	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
-	bool OnCreate();
-	void OnDestroy();
-	void OnSize();
+	bool OnCreate() override;
+	void OnDestroy() override;
+	void OnSize() override;
 
 	void OnItemLabelChanged(VDUIProxyListView *sender, VDUIProxyListView::LabelChangedEvent *event);
 	LRESULT ListViewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

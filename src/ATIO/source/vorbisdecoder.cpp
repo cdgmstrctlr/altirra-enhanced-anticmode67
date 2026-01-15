@@ -1873,7 +1873,7 @@ void ATVorbisDecoder::DecodeResidue1(ATVorbisBitReader& reader, const ATVorbisCo
 		const float *v = codeBook.DecodeVQ(reader);
 
 		if (reader.CheckEop())
-			return;
+			break;
 
 		for (uint32_t j = 0; j < codeBook.mDimension; ++j)
 			*dst++ += *v++;
@@ -1881,7 +1881,7 @@ void ATVorbisDecoder::DecodeResidue1(ATVorbisBitReader& reader, const ATVorbisCo
 }
 
 template<uint32_t T_Dim, bool T_QuickOnly>
-void ATVorbisDecoder::DecodeResidue1Dim(ATVorbisBitReader& reader0, const ATVorbisCodeBook& codeBook, float *dst0, uint32_t codeCount) {
+inline void ATVorbisDecoder::DecodeResidue1Dim(ATVorbisBitReader& reader0, const ATVorbisCodeBook& codeBook, float *dst0, uint32_t codeCount) {
 	auto reader = reader0;
 
 	float *VDRESTRICT dst = dst0;
@@ -1890,7 +1890,7 @@ void ATVorbisDecoder::DecodeResidue1Dim(ATVorbisBitReader& reader0, const ATVorb
 		const float *VDRESTRICT v = codeBook.DecodeVQDim<T_Dim, T_QuickOnly>(reader);
 
 		if (reader.CheckEop())
-			return;
+			break;
 
 		if constexpr (T_Dim == 2) {
 #if defined(VD_CPU_x86) || defined(VD_CPU_X64)

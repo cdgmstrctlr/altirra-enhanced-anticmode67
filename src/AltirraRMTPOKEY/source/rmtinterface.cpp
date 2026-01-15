@@ -79,7 +79,7 @@ private:
 
 ATRMTPokeyContext::ATRMTPokeyContext() {
 	 mpAudioOutput = ATCreateAudioOutput();
-	 mpAudioOutput->Init(nullptr, nullptr);
+	 mpAudioOutput->Init(mScheduler);
 	 mpAudioOutput->InitNativeAudio();
 	 mpAudioOutput->SetVolume(0.5f);
 

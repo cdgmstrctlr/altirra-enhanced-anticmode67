@@ -40,38 +40,38 @@ namespace nsVDDisplay {
 
 class VDDisplayRendererD3D9 final : public vdrefcounted<IVDDisplayRendererD3D9> {
 public:
-	virtual bool Init(VDD3D9Manager *d3dmgr, IVDVideoDisplayDX9Manager *vidmgr);
-	virtual void Shutdown();
+	bool Init(VDD3D9Manager *d3dmgr, IVDVideoDisplayDX9Manager *vidmgr) override;
+	void Shutdown() override;
 
-	virtual bool Begin();
-	virtual void End();
+	bool Begin() override;
+	void End() override;
 
 public:
-	virtual const VDDisplayRendererCaps& GetCaps();
+	const VDDisplayRendererCaps& GetCaps() override;
 
-	VDDisplayTextRenderer *GetTextRenderer() { return &mTextRenderer; }
+	VDDisplayTextRenderer *GetTextRenderer() override { return &mTextRenderer; }
 
-	virtual void SetColorRGB(uint32 color);
-	virtual void FillRect(sint32 x, sint32 y, sint32 w, sint32 h);
-	virtual void MultiFillRect(const vdrect32 *rects, uint32 n);
+	void SetColorRGB(uint32 color) override;
+	void FillRect(sint32 x, sint32 y, sint32 w, sint32 h) override;
+	void MultiFillRect(const vdrect32 *rects, uint32 n) override;
 
-	virtual void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor);
-	virtual void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor);
+	void AlphaFillRect(sint32 x, sint32 y, sint32 w, sint32 h, uint32 alphaColor) override;
+	void AlphaTriStrip(const vdfloat2 *pts, uint32 numPts, uint32 alphaColor) override;
 	void FillTriStripHDR(const vdfloat2 *pts, const vdfloat4 *colors, uint32 numPts, bool alphaBlend) override {}
 
-	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView);
-	virtual void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h);
-	virtual void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts);
-	virtual void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode);
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView) override;
+	void Blt(sint32 x, sint32 y, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 w, sint32 h) override;
+	void StretchBlt(sint32 dx, sint32 dy, sint32 dw, sint32 dh, VDDisplayImageView& imageView, sint32 sx, sint32 sy, sint32 sw, sint32 sh, const VDDisplayBltOptions& opts) override;
+	void MultiBlt(const VDDisplayBlt *blts, uint32 n, VDDisplayImageView& imageView, BltMode bltMode) override;
 
 	void PolyLine(const vdpoint32 *points, uint32 numLines) override;
 	void PolyLineF(const vdfloat2 *points, uint32 numLines, bool antialiased) override;
 
-	virtual bool PushViewport(const vdrect32& r, sint32 x, sint32 y);
-	virtual void PopViewport();
+	bool PushViewport(const vdrect32& r, sint32 x, sint32 y) override;
+	void PopViewport() override;
 
-	virtual IVDDisplayRenderer *BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache);
-	virtual void EndSubRender();
+	IVDDisplayRenderer *BeginSubRender(const vdrect32& r, VDDisplaySubRenderCache& cache) override;
+	void EndSubRender() override;
 
 public:
 	void UpdateViewport();

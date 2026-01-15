@@ -76,7 +76,7 @@ public:
 
 	void Save(const wchar_t *fn, bool includeHeader);
 
-	void ColdReset();
+	void ColdReset() override;
 
 	void BeginLoadState(ATSaveStateReader& reader);
 	void LoadStatePrivate(ATSaveStateReader& reader);
@@ -186,14 +186,12 @@ protected:
 	template<uint8 T_Mask>
 	static bool WriteByte_CCTL_Williams(void *thisptr0, uint32 address, uint8 value);
 
-	template<uint8 T_Address>
-	static sint32 ReadByte_CCTL_SDX64(void *thisptr0, uint32 address);
-
-	template<uint8 T_Address>
+	template<uint8 T_Address, bool T_PassThrough>
 	static bool WriteByte_CCTL_SDX64(void *thisptr0, uint32 address, uint8 value);
 
-	static sint32 ReadByte_CCTL_SDX128(void *thisptr0, uint32 address);
+	template<bool T_PassThrough>
 	static bool WriteByte_CCTL_SDX128(void *thisptr0, uint32 address, uint8 value);
+
 	static sint32 ReadByte_CCTL_MaxFlash_128K(void *thisptr0, uint32 address);
 	static bool WriteByte_CCTL_MaxFlash_128K(void *thisptr0, uint32 address, uint8 value);
 	static sint32 ReadByte_CCTL_MaxFlash_128K_MyIDE(void *thisptr0, uint32 address);

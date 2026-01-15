@@ -33,6 +33,11 @@ public:
 
 	void SetSystemEnabled(bool enable12, bool enable34);
 	
+public:
+	bool IsPotNoiseEnabled() const override {
+		return mpParent->GetPotNoiseEnabled();
+	}
+
 	void SetEnabled(bool enabled) override;
 
 	void SetDirOutputMask(uint8 mask) override;
@@ -49,6 +54,8 @@ public:
 	uint32 GetCyclesToBeamPosition(int xcyc, int y) const override;
 
 private:
+	void SetPotHiresPosition(bool potB, sint32 hiPos);
+
 	void AttachToPIA();
 	void DetachFromPIA();
 	void UpdatePIAInput();
@@ -77,7 +84,7 @@ private:
 	bool mbTriggerDown = false;
 
 	sint32 mPotInputIndex[2] { -1, -1 };
-	uint32 mPotHiPos[2] { kPotHiPosMax, kPotHiPosMax };
+	uint32 mPotHiPos[2] { kPotUnconnected, kPotUnconnected };
 };
 
 void ATPortManager::ControllerPort::AddRef() {
@@ -195,7 +202,7 @@ void ATPortManager::ControllerPort::SetTriggerDown(bool down) {
 }
 
 void ATPortManager::ControllerPort::ResetPotPosition(bool potB) {
-	SetPotPosition(potB, 228);
+	SetPotHiresPosition(potB, kPotUnconnected);
 }
 
 void ATPortManager::ControllerPort::SetPotPosition(bool potB, sint32 pos) {
@@ -203,9 +210,13 @@ void ATPortManager::ControllerPort::SetPotPosition(bool potB, sint32 pos) {
 }
 
 void ATPortManager::ControllerPort::SetPotHiresPosition(bool potB, sint32 hiPos, bool grounded) {
-	const int potOffset = potB ? 1 : 0;
-
 	hiPos = grounded ? kPotGrounded : std::clamp(hiPos, 1, 228 << 16);
+
+	SetPotHiresPosition(potB, hiPos);
+}
+
+void ATPortManager::ControllerPort::SetPotHiresPosition(bool potB, sint32 hiPos) {
+	const int potOffset = potB ? 1 : 0;
 
 	if (mPotHiPos[potOffset] != hiPos) {
 		mPotHiPos[potOffset] = hiPos;
@@ -321,10 +332,13 @@ void ATPortManager::Init(ATPIAEmulator& pia, ATGTIAEmulator& gtia, ATPokeyEmulat
 	mpLightPen = &lightPen;
 	mpANTIC = &antic;
 
+	static_assert(kPotUnconnected == ATPokeyEmulator::kPotHiPosUnconnected);
+	static_assert(kPotGrounded == ATPokeyEmulator::kPotHiPosGrounded);
+
 	for(int i=0; i<8; ++i) {
-		mPotBasePos[i] = kPotHiPosMax;
-		mPotHiPos[i] = kPotHiPosMax;
-		mpPOKEY->SetPotPos(i, 228);
+		mPotBasePos[i] = kPotUnconnected;
+		mPotHiPos[i] = kPotUnconnected;
+		mpPOKEY->SetPotPosHires(i, ATPokeyEmulator::kPotHiPosUnconnected);
 	}
 }
 
@@ -355,9 +369,7 @@ void ATPortManager::SetTriggerOverride(unsigned index, bool down) {
 	}
 }
 
-void ATPortManager::SetPotOverride(unsigned index, bool pulledUp) {
-	const uint32 pos = pulledUp ? 0 : kPotHiPosMax;
-
+void ATPortManager::SetPotOverride(unsigned index, uint32 pos) {
 	if (mPotBasePos[index] != pos) {
 		mPotBasePos[index] = pos;
 
@@ -445,7 +457,7 @@ void ATPortManager::AdjustTriggerDown(int index, bool down) {
 }
 
 void ATPortManager::AdjustPotPos(unsigned potIndex, sint32& potInputIndex, uint32 hiPos) {
-	if (hiPos >= kPotHiPosMax) {
+	if (hiPos == kPotUnconnected) {
 		if (potInputIndex >= 0) {
 			UnsetPotPos(potIndex, potInputIndex);
 		}
@@ -456,7 +468,7 @@ void ATPortManager::AdjustPotPos(unsigned potIndex, sint32& potInputIndex, uint3
 			auto& freeIndices = mPotHiPosFreeIndices[potIndex];
 			if (freeIndices.empty()) {
 				freeIndices.push_back((uint32)potHiPositions.size());
-				potHiPositions.push_back(kPotHiPosMax);
+				potHiPositions.push_back(kPotUnconnected);
 			}
 
 			potInputIndex = (sint32)freeIndices.back();
@@ -482,7 +494,7 @@ void ATPortManager::UnsetPotPos(unsigned potIndex, sint32& potInputIndex) {
 		freeIndices.insert(it, (uint32)potInputIndex);
 
 		auto& potHiPositions = mPotHiPosArrays[potIndex];
-		potHiPositions[potInputIndex] = kPotHiPosMax;
+		potHiPositions[potInputIndex] = kPotUnconnected;
 
 		while(!freeIndices.empty() && freeIndices.back() == potHiPositions.size()) {
 			freeIndices.pop_back();
@@ -499,6 +511,11 @@ void ATPortManager::UpdatePot(unsigned potIndex) {
 	uint32 lowestHiPos = mPotBasePos[potIndex];
 
 	for(uint32 hiPos : mPotHiPosArrays[potIndex]) {
+		if (hiPos == kPotGrounded) {
+			lowestHiPos = hiPos;
+			break;
+		}
+
 		if (lowestHiPos > hiPos)
 			lowestHiPos = hiPos;
 	}
@@ -506,7 +523,7 @@ void ATPortManager::UpdatePot(unsigned potIndex) {
 	if (mPotHiPos[potIndex] != lowestHiPos) {
 		mPotHiPos[potIndex] = lowestHiPos;
 
-		mpPOKEY->SetPotPosHires(potIndex, (int)lowestHiPos, lowestHiPos >= kPotGrounded);
+		mpPOKEY->SetPotPosHires(potIndex, (int)lowestHiPos);
 	}
 }
 

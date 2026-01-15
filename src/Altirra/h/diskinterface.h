@@ -151,7 +151,7 @@ public:
 	void CheckSectorBreakpoint(uint32 sector);
 
 	void SetShowMotorActive(bool active);
-	void SetShowActivity(bool active, uint32 sector);
+	void SetShowActivity(bool active, uint32 sector, uint32 holdTime = 0);
 	void SetShowLEDReadout(sint32 ledDisplay = -1);
 
 private:
@@ -166,8 +166,9 @@ private:
 	void NotifyStateResume(bool notify);
 	void NotifyStateChange();
 
-	uint32 mIndex;
-	IATUIRenderer *mpUIRenderer;
+	uint32 mIndex = 0;
+	IATUIRenderer *mpUIRenderer = nullptr;
+	uint32 mErrorSourceId = 0;
 
 	bool mbDriveSoundsEnabled = false;
 	bool mbAccurateSectorTiming = false;

@@ -71,12 +71,12 @@ public:
 	void SetInput(int index, uint32 rval) override;
 	void SetInputBits(int index, uint32 rval, uint32 mask);
 
-	uint32 RegisterDynamicInput(bool portb, vdfunction<uint8()> fn);
-	void UnregisterDynamicInput(bool portb, uint32 token);
+	uint32 RegisterDynamicInput(bool portb, vdfunction<uint8()> fn) override;
+	void UnregisterDynamicInput(bool portb, uint32 token) override;
 
 	uint32 GetOutputState() const override { return mOutput; }
 	int AllocOutput(ATPIAOutputFn fn, void *ptr, uint32 changeMask) override;
-	void ModifyOutputMask(int index, uint32 changeMask);
+	void ModifyOutputMask(int index, uint32 changeMask) override;
 	void FreeOutput(int index) override;
 
 	void SetTraceContext(ATTraceContext *context);
@@ -205,7 +205,6 @@ private:
 	vdfastvector<uint32> mDynamicInputTokens[2];
 	uint32 mDynamicTokenCounter = 0;
 
-	uint32 mTraceIRQState = 0;
 	ATTraceContext *mpTraceContext = nullptr;
 	ATTraceChannelFormatted *mpTraceCRA = nullptr;
 	ATTraceChannelFormatted *mpTraceCRB = nullptr;

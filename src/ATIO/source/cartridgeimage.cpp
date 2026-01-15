@@ -233,8 +233,8 @@ public:
 	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override { return mFileSHA256; }
 
 	bool IsDirty() const override { return mbDirty; }
-	void SetClean() { mbDirty = false; }
-	void SetDirty() {
+	void SetClean() override { mbDirty = false; }
+	void SetDirty() override {
 		mbDirty = true;
 		mbCartChecksumValid = false;
 		mFileCRC = {};

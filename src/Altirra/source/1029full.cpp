@@ -155,7 +155,7 @@ void ATDevice1029Full::Init() {
 	spec.mbBit0Top = true;
 	spec.mNumPins = 7;
 
-	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(spec);
+	mpPrinterGraphicalOutput = GetService<IATPrinterOutputManager>()->CreatePrinterGraphicalOutput(g_ATDeviceDefPrinter1029Full.mpName, spec);
 }
 
 void ATDevice1029Full::Shutdown() {
@@ -595,7 +595,7 @@ void ATDevice1029Full::UpdateDotEvent() {
 ATDevice1029Full::DotSignalState ATDevice1029Full::GetDotSignalState() const {
 	// T1 reads the /DOT signal from the dot timing wheel. The basic mechanism
 	// is shared with other printers, and in particular described in the service
-	// manuals for the CBM MPS-801 and Amstrad CMC1, which use a similar
+	// manuals for the CBM MPS-801 and Amstrad DMP1, which use a similar
 	// Seikosha Uni-Hammer mech.
 	//
 	// The mechanism sends a dot clock to the microcontroller so it can time
@@ -604,7 +604,7 @@ ATDevice1029Full::DotSignalState ATDevice1029Full::GetDotSignalState() const {
 	// slightly to counter the head movement during this process. A periodic
 	// pause in the dot clock lets the MCU synchronize to column alignment.
 	//
-	// The 1029's mechanism does differ from the MPS-801 and CMC1s' in a couple
+	// The 1029's mechanism does differ from the MPS-801 and DMP1s' in a couple
 	// of important ways:
 	//
 	// - The DOT signal is inverted. Pulses are active high on the 1029, due

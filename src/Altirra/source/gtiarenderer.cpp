@@ -53,11 +53,11 @@ ATGTIARenderer::ATGTIARenderer()
 	, mRCIndex(0)
 	, mRCCount(0)
 	, mbHiresMode(false)
-	, mMode16XColor(false)
+	, mMode16XColor(false)	// CMC
 	, mbVBlank(true)
 	, mbSECAMMode(false)
 	, mPRIOR(0)
-	, mGRACTL(0)
+	, mGRACTL(0)			// CMC
 	, mpPriTable(NULL)
 	, mpColorTable(NULL)
 {
@@ -81,6 +81,9 @@ void ATGTIARenderer::SetVBlank(bool vblank) {
 }
 
 void ATGTIARenderer::SetCTIAMode() {
+	// scrub mirrored PRIOR
+	mPRIOR &= 0x3F;
+
 	// scrub any register changes
 	for(int i=mRCIndex; i<mRCCount; ++i) {
 		if (mRegisterChanges[i].mReg == 0x1B)
@@ -88,9 +91,11 @@ void ATGTIARenderer::SetCTIAMode() {
 	}
 }
 
+// CMC
 void ATGTIARenderer::ClearMode67ExtraColors() noexcept
 {
 	mMode16XColor = false;	// don't need to have a Set...() version because this is set (and cleared) by ANTIC each scan line
+	// debug analysis output for pixel color tables
 	//FILE* fp = fopen("D:\\pritable.bin", "rb");
 	//uint8* ptr = &mPriorityTables[32][0];
 	//if (fp)
@@ -112,7 +117,7 @@ void ATGTIARenderer::ColdReset() {
 	memset(mColorTable, 0, sizeof mColorTable);
 }
 
-void ATGTIARenderer::BeginScanline(uint8 *dst, const uint8 *mergeBuffer, const uint8 *anticBuffer, bool hires, bool mode16XColor) {	// CMC
+void ATGTIARenderer::BeginScanline(uint8* dst, const uint8* mergeBuffer, const uint8* anticBuffer, bool hires, bool mode16XColor) {	// CMC
 	mpDst = dst;
 	mbHiresMode = hires;
 	mMode16XColor = mode16XColor;		// CMC
@@ -381,7 +386,7 @@ void ATGTIARenderer::ResetState() {
 	mRCCount = 0;
 	mbHiresMode = false;
 	mPRIOR = 0;
-	mGRACTL = 0;
+	mGRACTL = 0;	// CMC
 	mX = 0;
 }
 
@@ -552,7 +557,7 @@ void ATGTIARenderer::UpdateRegisters(const RegisterChange *rc, int count) {
 			if (value & 0xC0)
 				mbHiresMode = false;
 			break;
-		case 0x1D:
+		case 0x1D:		// CMC
 			mGRACTL = value;
 			break;
 		}
@@ -583,67 +588,62 @@ void ATGTIARenderer::RenderLores(int x1, int x2) {
 	int i;
 	switch ((mGRACTL & 0x18) + (1 - (uint8)mMode16XColor))	// try to avoid another branch by adding the !bool to the value - sets bit 0 which will cause the code to fall into the default block
 	{
-		case 0x08:		// add 6 to luma
-			priTable += 32 * 256;
-			for (i = 0; i < w; ++i)
+	case 0x08:		// add 6 to luma
+		priTable += 32 * 256;
+		for (i = 0; i < w; ++i) {
+			const uint8 pixCIdx = priTable[*src];
+			uint8 pixColor = colorTable[pixCIdx & 0xF];
+			if (pixCIdx & 0x20)
 			{
-				const uint8 pixCIdx = priTable[*src];
-				uint8 pixColor = colorTable[pixCIdx & 0xF];
-				if (pixCIdx & 0x20)
-				{
-					pixColor = (pixColor & 0xF0) | ((((pixColor << 4) + 0x60) >> 4) & 0xF);	// add 6 to the luma by working in the upper nybble so the ALU deals w/ any overflow for us
-					// CMC alt idea - add 1 and rotl nybble by 2
-					//const uint8 chroma = pix & 0xF0;  const uint8 rotlbuf = (pix | 1) << 2;  pix = chroma | (rotlbuf & 0xC) | ((rotlbuf >> 4) & 0x3);
-				}
-				dst[0] = dst[1] = pixColor;
-				src++;
-				dst += 2;
+				pixColor = (pixColor & 0xF0) | ((((pixColor << 4) + 0x60) >> 4) & 0xF);	// add 6 to the luma by working in the upper nybble so the ALU deals w/ any overflow for us
+				// CMC alt idea - add 1 and rotl nybble by 2
+				//const uint8 chroma = pix & 0xF0;  const uint8 rotlbuf = (pix | 1) << 2;  pix = chroma | (rotlbuf & 0xC) | ((rotlbuf >> 4) & 0x3);
 			}
-			break;
-		case 0x10:		// add 6 to chroma
-			priTable += 32 * 256;
-			for (i = 0; i < w; ++i)
-			{
-				const uint8 pixCIdx = priTable[*src];
-				uint8 pixColor = colorTable[pixCIdx & 0xF];
-				if (pixCIdx & 0x20)
-					pixColor += 0x60;	// add 6 to chroma values. Don't need to AND because the op stays in the upper nybble
-				dst[0] = dst[1] = pixColor;
-				src++;
-				dst += 2;
-			}
-			break;
-		case 0x18:		// do both
-			priTable += 32 * 256;
-			for (i = 0; i < w; ++i)
-			{
-				const uint8 pixCIdx = priTable[*src];
-				uint8 pixColor = colorTable[pixCIdx & 0xF];
-				if (pixCIdx & 0x20)
-					pixColor = ((pixColor & 0xF0) | ((((pixColor << 4) + 0x60) >> 4) & 0xF)) + 0x60;	// adds 6 to luma, 6 to chroma 
-				dst[0] = dst[1] = pixColor;
-				src++;
-				dst += 2;
-			}
-			break;
-		default:		// do neither (original behavior)
-			const int w4 = w >> 2;
-			for (i = 0; i < w4; ++i)
-			{
-				dst[0] = dst[1] = colorTable[priTable[src[0]]];
-				dst[2] = dst[3] = colorTable[priTable[src[1]]];
-				dst[4] = dst[5] = colorTable[priTable[src[2]]];
-				dst[6] = dst[7] = colorTable[priTable[src[3]]];
-				src += 4;
-				dst += 8;
-			}
-			for (i = w & 3; i; --i)
-			{
-				dst[0] = dst[1] = colorTable[priTable[src[0]]];
-				++src;
-				dst += 2;
-			}
-			break;
+			dst[0] = dst[1] = pixColor;
+			src++;
+			dst += 2;
+		}
+		break;
+	case 0x10:		// add 6 to chroma
+		priTable += 32 * 256;
+		for (i = 0; i < w; ++i) {
+			const uint8 pixCIdx = priTable[*src];
+			uint8 pixColor = colorTable[pixCIdx & 0xF];
+			if (pixCIdx & 0x20)
+				pixColor += 0x60;	// add 6 to chroma values. Don't need to AND because the op stays in the upper nybble
+			dst[0] = dst[1] = pixColor;
+			src++;
+			dst += 2;
+		}
+		break;
+	case 0x18:		// do both
+		priTable += 32 * 256;
+		for (i = 0; i < w; ++i) {
+			const uint8 pixCIdx = priTable[*src];
+			uint8 pixColor = colorTable[pixCIdx & 0xF];
+			if (pixCIdx & 0x20)
+				pixColor = ((pixColor & 0xF0) | ((((pixColor << 4) + 0x60) >> 4) & 0xF)) + 0x60;	// adds 6 to luma, 6 to chroma 
+			dst[0] = dst[1] = pixColor;
+			src++;
+			dst += 2;
+		}
+		break;
+	default:		// do neither (original behavior)
+		const int w4 = w >> 2;
+		for (i = 0; i < w4; ++i) {
+			dst[0] = dst[1] = colorTable[priTable[src[0]]];
+			dst[2] = dst[3] = colorTable[priTable[src[1]]];
+			dst[4] = dst[5] = colorTable[priTable[src[2]]];
+			dst[6] = dst[7] = colorTable[priTable[src[3]]];
+			src += 4;
+			dst += 8;
+		}
+		for (i = w & 3; i; --i) {
+			dst[0] = dst[1] = colorTable[priTable[src[0]]];
+			++src;
+			dst += 2;
+		}
+		break;
 	}
 }
 
@@ -1318,7 +1318,6 @@ void ATGTIARenderer::RenderMode11Fast(int x1, int x2) {
 	}
 }
 
-void ATGTIARenderer::UpdatePriorityTable()
-{
+void ATGTIARenderer::UpdatePriorityTable() {
 	mpPriTable = mPriorityTables[(mPRIOR & 15) + ((mPRIOR & 32) >> 1)];	// CMC
 }

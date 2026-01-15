@@ -19,6 +19,7 @@
 
 #include <at/atnativeui/uipane.h>
 #include <at/atnativeui/uinativewindow.h>
+#include <at/atnativeui/uiproxies.h>
 
 class ATUIPaneWindowBase : public ATUINativeWindow {
 public:
@@ -53,6 +54,9 @@ private:
 	bool mbVisibleCached = false;
 	bool mbDeferredUpdatePending = false;
 	bool mbDeferredUpdatePosted = false;
+
+protected:
+	VDUIProxyMessageDispatcherW32 mMsgDispatcher;
 };
 
 extern template class ATUIPaneWindowT<ATUIPane, ATUIPaneWindowBase>;

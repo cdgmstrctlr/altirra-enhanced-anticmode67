@@ -35,6 +35,7 @@
 
 struct VDException::StringHeader {
 	VDAtomicInt mRefCount;
+	bool mbHidden = false;
 
 	// Following this are:
 	// - wide message
@@ -236,17 +237,30 @@ void VDException::vwsetf(const wchar_t *f, va_list val) {
 }
 
 void VDException::post(HWND hWndParent, const char *title) const noexcept {
-	const char *msg = c_str();
-	if (!msg)
+	if (!visible())
 		return;
 
-	VDPostException(hWndParent, msg, title);
+	VDPostException(hWndParent, c_str(), title);
+}
+
+const char *VDException::c_str() const noexcept {
+	return mpMessage ? mpMessage : "";
+}
+
+const wchar_t *VDException::wc_str() const noexcept {
+	return mpMessageW ? mpMessageW : L"";
+}
+
+void VDException::set_hidden() {
+	mpBuffer->mbHidden = true;
+}
+
+bool VDException::visible() const noexcept {
+	return mpBuffer && !mpBuffer->mbHidden;
 }
 
 const char *VDException::what() const noexcept {
-	const char *str = c_str();
-
-	return str ? str : "<user canceled operation>";
+	return c_str();
 }
 
 char *VDException::Alloc(size_t len) {
@@ -320,8 +334,8 @@ VDAllocationFailedException::VDAllocationFailedException(size_t requestedSize) {
 ////////////////////////////////////////////////////////////////////////////////
 
 VDUserCancelException::VDUserCancelException() {
-	mpMessage = "";
-	mpMessageW = L"";
+	assign("Operation cancelled by user");
+	set_hidden();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

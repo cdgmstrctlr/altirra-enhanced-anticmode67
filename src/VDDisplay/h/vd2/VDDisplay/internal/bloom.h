@@ -36,6 +36,9 @@ struct VDDBloomV2RenderParams {
 	vdfloat2 mPassBlendFactors[6];
 	vdfloat4 mShoulder;
 	vdfloat4 mThresholds;
+
+	float mBaseUVStepScale;
+	vdfloat4 mBaseWeights;
 };
 
 VDDBloomV2RenderParams VDDComputeBloomV2Parameters(const VDDBloomV2ControlParams& controlParams);

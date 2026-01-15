@@ -21,9 +21,9 @@
 #include <stdafx.h>
 #include <at/atcore/sioutils.h>
 
-uint8 ATComputeSIOChecksum(const uint8 *p, int len) {
+uint8 ATComputeSIOChecksum(const uint8 *p, size_t len) {
 	uint32 checksum = 0;
-	for(int i=0; i<len; ++i) {
+	for(size_t i=0; i<len; ++i) {
 		checksum += p[i];
 		checksum += (checksum >> 8);
 		checksum &= 0xff;

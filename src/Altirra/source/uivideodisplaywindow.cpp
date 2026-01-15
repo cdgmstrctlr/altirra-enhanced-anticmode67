@@ -36,6 +36,7 @@
 #include "console.h"
 #include "debugger.h"
 #include "errordecode.h"
+#include "inputdefs.h"
 #include "inputmanager.h"
 #include "oshelper.h"
 #include "simulator.h"
@@ -54,6 +55,7 @@
 #include "uicalibrationscreen.h"
 #include "uidisplayaccessibility.h"
 #include "vbxe.h"
+#include "videowriter.h"
 
 extern ATSimulator g_sim;
 
@@ -82,6 +84,7 @@ bool g_ATUIDrawPadBounds;
 bool g_ATUIDrawPadPointers = true;
 
 ATConfigVarBool g_ATCVUIShowVSyncAdaptiveGraph("ui.show_vsync_adaptive_graph", false);
+ATConfigVarBool g_ATCVRecordingVideoShowMotionVectors("recording.video.show_motion_vectors", false);
 
 ///////////////////////////////////////////////////////////////////////////
 
@@ -846,6 +849,10 @@ vdpoint32 ATUIVideoDisplayWindow::GetNearestBeamPositionForPoint(const vdpoint32
 	MapPixelToBeamPosition(pt.x, pt.y, xc, yc, true);
 
 	return vdpoint32(xc, yc);
+}
+
+void ATUIVideoDisplayWindow::SetVideoWriter(IATVideoWriter *writer) {
+	mpVideoWriter = writer;
 }
 
 void ATUIVideoDisplayWindow::InvalidateTextOutput() {
@@ -2043,6 +2050,63 @@ void ATUIVideoDisplayWindow::Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) 
 				rdr.PolyLineF(sHistory[i], 499, true);
 			}
 			rdr.PopViewport();
+		}
+	}
+
+	if (mpVideoWriter && g_ATCVRecordingVideoShowMotionVectors) {
+		ATVideoRecordingDebugInfo debugInfo;
+
+		if (mpVideoWriter->GetDebugInfo(debugInfo)
+			&& debugInfo.mImageWidth > 0
+			&& debugInfo.mImageHeight > 0
+			&& !debugInfo.mVideoDestRect.empty()
+			&& !mDisplayRect.empty()
+		) {
+			rdr.AlphaFillRect(
+				mDisplayRect.left,
+				mDisplayRect.top,
+				mDisplayRect.width(),
+				mDisplayRect.height(),
+				0xC0000000);
+			
+			rdr.SetColorRGB(0xFFFFFF);
+
+			// Blocks are given in output video coordinates, but our display rect maps to the
+			// video destination rect used by the video recorder. The transform from output
+			// coordinates to viewport coordinates is as follows:
+			//
+			// - Subtract the destination rect origin
+			// - Divide by destination rect width
+			// - Multiply by display rect width
+			// - Add display rect origin
+
+			const float mvScaleX = mDisplayRect.width() / debugInfo.mVideoDestRect.width();
+			const float mvScaleY = mDisplayRect.height() / debugInfo.mVideoDestRect.height();
+			const float mvBlockStepX = (float)debugInfo.mBlockWidth * mvScaleX;
+			const float mvBlockStepY = (float)debugInfo.mBlockHeight * mvScaleY;
+
+			const auto *mv = debugInfo.mMotionVectors.data();
+
+			float y = (float)mDisplayRect.top + 0.5f * mvBlockStepY - debugInfo.mVideoDestRect.top * mvScaleY;
+
+			for(uint32 by = 0; by < debugInfo.mNumBlocksY; ++by) {
+
+				float x = (float)mDisplayRect.left + 0.5f * mvBlockStepX - debugInfo.mVideoDestRect.left * mvScaleX;
+				for(uint32 bx = 0; bx < debugInfo.mNumBlocksX; ++bx) {
+					vdfloat2 pts[2] {
+						vdfloat2 { x, y },
+						vdfloat2 { x + mv->mX * mvScaleX, y + mv->mY * mvScaleY }
+					};
+
+					rdr.PolyLineF(pts, 1, true);
+					rdr.FillRect((sint32)x, (sint32)y, 1, 1);
+
+					++mv;
+					x += mvBlockStepX;
+				}
+
+				y += mvBlockStepY;
+			}
 		}
 	}
 

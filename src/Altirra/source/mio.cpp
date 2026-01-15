@@ -709,7 +709,7 @@ bool ATMIOEmulator::OnWrite(void *thisptr0, uint32 addr, uint8 value) {
 							printer->WriteRaw(&c, 1);
 						else {
 							if (!thisptr->mpPrinterOutput)
-								thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput();
+								thisptr->mpPrinterOutput = thisptr->GetService<IATPrinterOutputManager>()->CreatePrinterOutput(g_ATDeviceDefMIO.mpName);
 
 							thisptr->mpPrinterOutput->WriteRaw(&c, 1);
 						}

@@ -51,22 +51,22 @@ public:
 	ATVeronicaEmulator();
 	~ATVeronicaEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
-
-public:
-	virtual void InitMemMap(ATMemoryManager *memmap);
-	virtual bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Init() override;
+	void Shutdown() override;
+	void WarmReset() override;
+	void ColdReset() override;
 
 public:
-	virtual void InitScheduling(ATScheduler *sch, ATScheduler *slowsch);
+	void InitMemMap(ATMemoryManager *memmap) override;
+	bool GetMappedRange(uint32 index, uint32& lo, uint32& hi) const override;
+
+public:
+	void InitScheduling(ATScheduler *sch, ATScheduler *slowsch) override;
 
 public:
 	void InitCartridge(IATDeviceCartridgePort *port) override;

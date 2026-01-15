@@ -19,9 +19,16 @@
 //	archive for details.
 
 #include <stdafx.h>
+#include <float.h>
+#include <math.h>
+#include <vd2/system/bitmath.h>
+#include <vd2/system/binary.h>
+#include <vd2/system/math.h>
+#include <vd2/system/vdstl_algorithm.h>
 #include <at/atcore/consoleoutput.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/serialization.h>
+#include <at/atcore/sioutils.h>
 #include <at/atcore/snapshotimpl.h>
 #include <at/atcore/wraptime.h>
 #include <at/ataudio/audiofilters.h>
@@ -30,12 +37,6 @@
 #include <at/ataudio/pokeyrenderer.h>
 #include <at/ataudio/pokeytables.h>
 #include <at/ataudio/pokeysavestate.h>
-#include <float.h>
-#include <vd2/system/bitmath.h>
-#include <vd2/system/math.h>
-#include <vd2/system/binary.h>
-
-#include <math.h>
 
 ATLogChannel g_ATLCSIOData(false, false, "SIODATA", "Serial I/O bus data");
 
@@ -164,8 +165,8 @@ void ATPokeyEmulator::Init(IATPokeyEmulatorConnections *mem, ATScheduler *sched,
 	VDASSERT(!mpKeyboardIRQEvent);
 
 	for(int i=0; i<8; ++i) {
-		mPotPositions[i] = 228;
-		mPotHiPositions[i] = 228;
+		mPotHiPositions[i] = kPotHiPosUnconnected;
+		mPotChargeRates[i] = 0;
 	}
 
 	ColdReset();
@@ -256,12 +257,12 @@ void ATPokeyEmulator::ColdReset() {
 	for(auto& v : mPotLatches)
 		v = 0;
 
-	for(auto& v : mPotBasePositions)
+	for(auto& v : mPotChargeLevels)
 		v = 0;
 
 	mPotLastTimeFast = ATSCHEDULER_GETTIME(mpScheduler);
 	mPotLastTimeSlow = mPotLastTimeFast;
-	mbPotScanLastActive = false;
+	mbPotScanActive = false;
 
 	if (mbCommandLineState) {
 		mbCommandLineState = false;
@@ -275,6 +276,10 @@ void ATPokeyEmulator::ColdReset() {
 
 	NegateIrq(false);
 	NotifyForceBreak();
+}
+
+bool ATPokeyEmulator::IsStereoEnabled() const {
+	return mpSlave != nullptr;
 }
 
 void ATPokeyEmulator::SetSlave(ATPokeyEmulator *slave) {
@@ -369,9 +374,39 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 		if (mTraceByteIndex >= 1000 || mTraceDirectionSend) {
 			mTraceByteIndex = 0;
 			mTraceDirectionSend = false;
+			mTraceReceiveState = TraceReceiveState::None;
 		}
 
-		sioDataInfo.sprintf("[%3u] Receive      < $%02X     (@ %u cycles/bit / %.1f baud)", mTraceByteIndex++, c, cyclesPerBit, 7159090.0f / 4.0f / (float)cyclesPerBit);
+		mTraceByteSum += c;
+		
+		const char *extraMsg = "";
+
+		if (mTraceByteIndex == 0) {
+			if ((cyclesPerBit == 93 || cyclesPerBit == 94) && c == 0x41 && mTraceReceiveState == TraceReceiveState::None)
+				mTraceReceiveState = TraceReceiveState::Ack;
+		} else if (mTraceByteIndex == 1) {
+			if ((c == 0x43 || c == 0x45) && mTraceReceiveState == TraceReceiveState::Ack) {
+				mTraceReceiveState = TraceReceiveState::AckCE;
+				mTraceByteSum = 0;
+			}
+		} else if (mTraceByteIndex == 130) {
+			if (mTraceReceiveState == TraceReceiveState::AckCE) {
+				const uint8 checksum = mTraceByteSum != c ? (uint8)((mTraceByteSum - c - 1) % 255 + 1) : (uint8)0;
+
+				if (checksum == c)
+					extraMsg = " (checksum OK)";
+			}
+		}
+
+		sioDataInfo.sprintf("[%3u] Receive      < $%02X     (@ %u cpb / %.1f baud)%s"
+			, mTraceByteIndex
+			, c
+			, cyclesPerBit
+			, 7159090.0f / 4.0f / (float)cyclesPerBit
+			, extraMsg
+		);
+
+		++mTraceByteIndex;
 	}
 
 	// check for attempted read in init mode (partial fix -- audio not emulated)
@@ -412,7 +447,7 @@ void ATPokeyEmulator::ReceiveSIOByte(uint8 c, uint32 cyclesPerBit, bool simulate
 
 	if (forceFramingError) {
 		mSerialInputPendingStatus &= 0x7f;
-		sioDataInfo += " [framing error]\n";
+		sioDataInfo += " [framing error]";
 	}
 
 	// check for attempted read in synchronous mode; note that external clock mode is OK as presumably that
@@ -1131,14 +1166,29 @@ void ATPokeyEmulator::FlushSerialOutput() {
 			mTraceDirectionSend = true;
 		}
 
+		const char *decodedCommand = "";
+
+		if (mbCommandLineState && (cyclesPerBit == 93 || cyclesPerBit == 94) && mTraceByteIndex < 5 && !truncated) {
+			mTraceCommandBuffer[mTraceByteIndex] = c;
+
+			if (mTraceByteIndex == 4) {
+				if (ATComputeSIOChecksum(mTraceCommandBuffer, 4) == c) {
+					decodedCommand = ATDecodeSIOCommand(mTraceCommandBuffer[0], mTraceCommandBuffer[1], &mTraceCommandBuffer[2]);
+				}
+			}
+		}
+
 		g_ATLCSIOData(
-			"[%3u] Send%s  $%02X >         (@ %u cycles/bit / %.1f baud)%s\n",
+			"[%3u] Send%s  $%02X >         (@ %u cpb / %.1f baud)%s%s%s%s\n",
 			mTraceByteIndex++,
 			mbCommandLineState ? "Cmd" : "   ",
 			mSerialOutputShiftRegister,
 			cyclesPerBit,
 			7159090.0f / 4.0f / (float)cyclesPerBit,
-			truncated ? " (TRUNCATED)" : ""
+			truncated ? " (TRUNCATED)" : "",
+			*decodedCommand ? " [" : "",
+			decodedCommand,
+			*decodedCommand ? "]" : ""
 		);
 	}
 
@@ -1195,30 +1245,43 @@ uint32 ATPokeyEmulator::GetSerialBidirectionalClockPeriod() const {
 		return 0;
 }
 
-void ATPokeyEmulator::SetPotPos(unsigned idx, int pos) {
-	SetPotPosHires(idx, pos << 16, false);
-}
+void ATPokeyEmulator::SetPotPosHires(unsigned idx, int hipos0) {
+	uint32 hipos = (uint32)std::max<int>(hipos0, 1);
 
-void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
-	uint8 lopos = (uint8)std::clamp(pos >> 16, 1, 228);
+	const uint8 potBit = 1 << idx;
 
-	// use overflow-safe clamping
-	//
-	// unsafe: uint8 hipos = grounded ? 255 : (uint8)std::clamp((pos * 114) >> 16, 1, 229);
-	uint8 hipos = grounded ? 255 : (uint8)((std::clamp(pos, 575, 131647) * 114) >> 16);
-
-	if (mPotPositions[idx] == lopos && mPotHiPositions[idx] == hipos)
+	if (mPotHiPositions[idx] == hipos)
 		return;
 
 	UpdatePots(0);
 
-	mPotPositions[idx] = lopos;
 	mPotHiPositions[idx] = hipos;
 
-	if (grounded)
-		mPotGroundedMask |= (1 << idx);
-	else
-		mPotGroundedMask &= ~(1 << idx);
+	if (hipos == kPotHiPosGrounded) {
+		mPotGroundedMask |= potBit;
+		mPotChargeRates[idx] = 0;
+		mPotChargeLevels[idx] = 0;
+
+		// If the pot scan is occurring, update ALLPOT to indicate that the
+		// input has dropped below threshold again.
+		if (mbPotScanActive) {
+			mALLPOT |= potBit;
+		}
+	} else {
+		mPotGroundedMask &= ~potBit;
+
+		if (hipos == kPotHiPosUnconnected) {
+			mPotChargeRates[idx] = 0;
+		} else {
+			// Compute charge per cycle. Rescaling the high position by 114/65536 converts
+			// it to a cycle count, which is then divided into the threshold value to
+			// produce a power value in units of charge/cycle.
+
+			static constexpr uint64 kChargePerHiPosPerCycle = ((uint64)kPotChargeThreshold << 16) / 114;
+
+			mPotChargeRates[idx] = (uint32)std::min<uint64>(kPotChargeThreshold, kChargePerHiPosPerCycle / hipos);
+		}
+	}
 
 	if (mbAllowImmediatePotUpdate) {
 		// If this pot line has already latched and it's been less than one full frame since we
@@ -1228,7 +1291,7 @@ void ATPokeyEmulator::SetPotPosHires(unsigned idx, int pos, bool grounded) {
 		if (mpScheduler->GetTick64() - mPotLastScanTime < 37000
 			&& !(mALLPOT & (1 << idx)))
 		{
-			mPotLatches[idx] = std::min<uint8>(229, mSKCTL & 4 ? hipos : lopos);
+			mPotLatches[idx] = (uint8)std::min<uint32>(229, mSKCTL & 4 ? (hipos * 114) >> 16 : hipos >> 16);
 		}
 	}
 }
@@ -2274,7 +2337,7 @@ sint32 ATPokeyEmulator::ReadBackWriteRegister(uint8 reg) const {
 	if (mpSlave && (reg & 0x10))
 		return mpSlave->ReadBackWriteRegister(reg);
 
-	switch (reg) {
+	switch (reg & 0x0F) {
 		case 0x00:	// $D200 AUDF1
 			return mAUDF[0];
 		case 0x01:	// $D201 AUDC1
@@ -2321,7 +2384,8 @@ uint8 ATPokeyEmulator::DebugReadByte(uint8 reg) const {
 		case 0x07:	// $D207 POT7
 			return const_cast<ATPokeyEmulator *>(this)->ReadByte(reg);
 		case 0x08:	// $D208 ALLPOT
-			const_cast<ATPokeyEmulator *>(this)->UpdatePots(0);
+			if (mbPotScanActive)
+				const_cast<ATPokeyEmulator *>(this)->UpdatePots(0);
 			return mALLPOT;
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
@@ -2362,26 +2426,40 @@ uint8 ATPokeyEmulator::ReadByte(uint8 reg) {
 			if (mALLPOT & (1 << reg)) {
 				uint8 count = mPotMasterCounter;
 
-				// If we are in fast pot mode, we need to adjust the value that
-				// comes back. This is because the read occurs at a point where
-				// the count is unstable. The permutation below was determined
-				// on real hardware by reading POT1 at varying cycle offsets.
-				// Note that while all intermediate values read are even, the
-				// final count can be odd, so we must not apply this to latched
-				// values. Latched values can also vary but the mechanism is
-				// TBD.
-				if (mSKCTL & 4) {
-					const uint8 kDeltaVec[16] = { 0, 1, 0, 3, 0, 1, 0, 7, 0, 1, 0, 3, 0, 1, 0, 15 };
-					count ^= kDeltaVec[count & 15];
+				// Reading the count on a POTn register that is receiving updates
+				// can be unstable if it is read on the cycle where the counter
+				// increments. In fast pot mode, this happens on every cycle, and
+				// in slow pot mode, it happens for one cycle every 114 cycles.
+				// The value that is read is the bitwise AND of the pre- and post-
+				// increment values, presumably due to the differing speed of
+				// rising and falling transitions.
+				//
+				// This only affects the updating counters, as a POT register that
+				// has stopped counting can latch an odd value, which is never
+				// seen from a live updating counter.
+
+				if (!(mSKCTL & 4)) {
+					// slow pot scan -- check if 15KHz timer is enabled
+					if (!(mSKCTL & 3)) {
+						// 15KHz clock frozen -- can't increment
+						return count;
+					}
+
+					if ((ATSCHEDULER_GETTIME(mpScheduler) - mLast15KHzTime) % 114 != 113)
+						return count;
 				}
 
-				return count;
+				return count & (count + 1);
 			}
 
 			return mPotLatches[reg];
 
 		case 0x08:	// $D208 ALLPOT
-			UpdatePots(0);
+			// We only need to update the pots if the pot scan is active. Otherwise,
+			// ALLPOT will always be $00 by definition.
+			if (mbPotScanActive)
+				UpdatePots(0);
+
 			return mALLPOT;
 		case 0x09:	// $D209 KBCODE
 			return mKBCODE;
@@ -2802,6 +2880,8 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 						mPoly9Counter = 0;
 						mPoly17Counter = 0;
 						mLastPolyTime = ATSCHEDULER_GETTIME(mpScheduler) + 1;
+
+						mPotLastTimeSlow = mLast15KHzTime;
 					}
 
 					mpRenderer->SetInitMode(newInit);
@@ -2846,6 +2926,11 @@ void ATPokeyEmulator::WriteByte(uint8 reg, uint8 value) {
 				}
 
 				mSKCTL = value;
+
+				// if the pot scan clocking mode was changed during pot scan,
+				// check if the slow time needs to be updated
+				if ((delta & 0x04) && !(value & 0x04))
+					mPotLastTimeSlow = UpdateLast15KHzTime();
 
 				// check for bidirectional clock change
 				if (mbNotifyBiClockChange && (delta & 0x30)) {
@@ -2941,6 +3026,7 @@ void ATPokeyEmulator::SaveState(IATObjectState **pp) {
 	UpdateTimerCounter<1>();
 	UpdateTimerCounter<2>();
 	UpdateTimerCounter<3>();
+	UpdatePots(0);
 
 	vdrefptr<ATSaveStatePokey> obj(new ATSaveStatePokey);
 	vdrefptr<ATSaveStatePokeyInternal> obj2(new ATSaveStatePokeyInternal);
@@ -2957,6 +3043,9 @@ void ATPokeyEmulator::SaveState(IATObjectState **pp) {
 	obj->mSKSTAT = mSKSTAT;
 	obj->mALLPOT = mALLPOT;
 	obj->mKBCODE = mKBCODE;
+
+	for(int i=0; i<8; ++i)
+		obj->mPOT[i] = mPotLatches[i];
 
 	for(int i=0; i<4; ++i)
 		obj2->mTimerCounters[i] = mCounter[i];
@@ -2992,6 +3081,10 @@ void ATPokeyEmulator::SaveState(IATObjectState **pp) {
 	obj2->mbSerClockPhase = mbSerClockPhase;
 
 	obj2->mTraceByteIndex = mTraceByteIndex;
+
+	vdcopy_checked_r(obj2->mPotChargeLevels, mPotChargeLevels);
+	obj2->mPotMasterCounter = mPotMasterCounter;
+	obj2->mbPotScanActive = mbPotScanActive;
 
 	obj2->mRendererState = mpRenderer->SaveState();
 
@@ -3071,6 +3164,14 @@ void ATPokeyEmulator::LoadState(const ATSaveStatePokey& pstate) {
 
 	mTraceByteIndex = 0;
 
+	for(int i=0; i<8; ++i) {
+		mPotLatches[i] = std::min<uint8>(pstate.mPOT[i], 229);
+		mPotChargeLevels[i] = 0;
+	}
+
+	mbPotScanActive = false;
+	mPotMasterCounter = 0;
+
 	if (pstate.mpInternalState) {
 		const ATSaveStatePokeyInternal& pistate = *pstate.mpInternalState;
 
@@ -3110,6 +3211,19 @@ void ATPokeyEmulator::LoadState(const ATSaveStatePokey& pstate) {
 
 		mTraceByteIndex = pistate.mTraceByteIndex;
 
+		for(int i=0; i<8; ++i)
+			mPotChargeLevels[i] = std::min<uint32>(kPotChargeLimit, pistate.mPotChargeLevels[i]);
+
+		mbPotScanActive = pistate.mbPotScanActive;
+
+		if (!mbPotScanActive)
+			mALLPOT = 0;
+
+		// The master counter only counts to 228 for slow pot scan mode at stops at
+		// 229 for fast pot scan mode, but there is a chance that we update to
+		// fast 229 right when the save state occurs.
+		mPotMasterCounter = (uint8)std::min<uint32>(pistate.mPotMasterCounter, 229);
+
 		mpRenderer->LoadState(pistate.mRendererState);
 	} else {
 		mpRenderer->LoadState({});
@@ -3139,9 +3253,11 @@ void ATPokeyEmulator::PostLoadState() {
 	}
 
 	mLastPolyTime = t;
-	mbIrqAsserted = mIRQEN & ~mIRQST;
 
-	if (mbIrqAsserted)
+	bool newIrqAsserted = (mIRQEN & ~mIRQST) != 0;
+	mbIrqAsserted = !newIrqAsserted;
+
+	if (newIrqAsserted)
 		AssertIrq(false);
 	else
 		NegateIrq(false);
@@ -3176,6 +3292,8 @@ void ATPokeyEmulator::GetRegisterState(ATPokeyRegisterState& state) const {
 
 void ATPokeyEmulator::DumpStatus(ATConsoleOutput& out, bool isSlave) {
 	uint32 t = ATSCHEDULER_GETTIME(mpScheduler);
+
+	UpdatePots(0);
 
 	VDStringA s;
 	for(int i=0; i<4; ++i) {
@@ -3286,7 +3404,44 @@ void ATPokeyEmulator::DumpStatus(ATConsoleOutput& out, bool isSlave) {
 
 	out.WriteLine(s.c_str());
 
-	out("ALLPOT: %02X", mALLPOT);	
+	s.sprintf("ALLPOT: %02X", mALLPOT);
+
+	if (mbPotScanActive) {
+		s.append_sprintf(" | pot scan %d/228 (%s)", mPotMasterCounter, mSKCTL & 4 ? "fast" : "slow");
+	} else {
+		if (mSKCTL & 4)
+			s += " | pot scan inactive (dump transistors disabled)";
+		else
+			s += " | pot scan inactive (dump transistors enabled)";
+	}
+
+	out.WriteLine(s.c_str());
+
+	s = "Pot positions: ";
+
+	for(int i=0; i<8; ++i) {
+		const auto hiPos = mPotHiPositions[i];
+
+		if (hiPos == kPotHiPosGrounded)
+			s += " -gnd-";
+		else if (hiPos == kPotHiPosUnconnected)
+			s += "   -  ";
+		else
+			s.append_sprintf(" %5.1f", hiPos / 65536.0f);
+	}
+	
+	out.WriteLine(s.c_str());
+
+	out("Pot capacitors: %5.3f %5.3f %5.3f %5.3f %5.3f %5.3f %5.3f %5.3f"
+		, (float)mPotChargeLevels[0] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[1] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[2] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[3] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[4] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[5] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[6] / (float)kPotChargeThreshold
+		, (float)mPotChargeLevels[7] / (float)kPotChargeThreshold
+	);
 
 	out.WriteLine("");
 	out("Command line: %s", mbCommandLineState ? "asserted" : "negated");
@@ -3684,19 +3839,6 @@ void ATPokeyEmulator::StartPotScan() {
 	// Update the pots now in case we're interrupting a scan.
 	UpdatePots(0);
 
-	// If the previous scan finished and we were in slow mode, then zero
-	// the charge on the caps and reset ALLPOT to below threshold. If we
-	// were in fast mode, then the dumping transistors never came on.
-	if (!(mSKCTL & 4) && !mbPotScanLastActive) {
-		mALLPOT = 0xFF;
-
-		for(auto& v : mPotBasePositions)
-			v = 0;
-	} else {
-		for(int i=0; i<8; ++i)
-			mPotBasePositions[i] = mPotMasterCounter;
-	}
-
 	mPotMasterCounter = 0;
 
 	const uint32 fastTime = ATSCHEDULER_GETTIME(mpScheduler);
@@ -3705,78 +3847,163 @@ void ATPokeyEmulator::StartPotScan() {
 	mPotLastScanTime = mpScheduler->GetTick64();
 	mPotLastTimeFast = fastTime + 2;
 	mPotLastTimeSlow = slowTime;
-	mbPotScanLastActive = true;
+	mbPotScanActive = true;
 
-	// If we're in fast pot mode, any pot lines that have already reached
-	// threshold will stay there unless they are being drained. For these
-	// lines, ALLPOT will indicate that the pot is done, but the POTn
-	// register will not update. The behavior is different if fast pot
-	// mode is activated *after* the pot scan has started, but we aren't
-	// handling that here.
+	// Set initial ALLPOT. ALLPOT has a 1 bit for every input still below threshold.
+	mALLPOT = 0;
 
-	mALLPOT |= mPotGroundedMask;
+	for(int i = 0; i < 8; ++i) {
+		if (mPotChargeLevels[i] < kPotChargeThreshold)
+			mALLPOT |= (1 << i);
+	}
 }
 
 void ATPokeyEmulator::UpdatePots(uint32 timeSkew) {
-	const uint32 fastTime = ATSCHEDULER_GETTIME(mpScheduler) + timeSkew;
-	if (ATWrapTime{fastTime} <= mPotLastTimeFast)		// wrap(fastTime <= mPotLastTimeFast)
+	const uint32 curTime = ATSCHEDULER_GETTIME(mpScheduler);
+	const uint32 fastTime = curTime + timeSkew;
+	if (ATWrapTime{fastTime} <= mPotLastTimeFast)
 		return;
+
+	const uint32 baseTime = mPotLastTimeFast;
+	uint32 cyclesToProcess = fastTime - mPotLastTimeFast;
+	mPotLastTimeFast = fastTime;
 
 	const bool fastPotScan = (mSKCTL & 4) != 0;
 
-	// skip pot scan update if using normal pot scan and 15KHz clock is disabled
-	if (!fastPotScan && !(mSKCTL & 3))
-		return;
+	while(cyclesToProcess) {
+		// Check if we're outside of slow pot scan.
+		if (!mbPotScanActive) {
+			if (fastPotScan) {
+				// Scan is done and fast pot scan is on. Keep charging the capacitors
+				// since dump capacitors are off.
+				for(int i=0; i<8; ++i) {
+					const uint32 startingLevel = mPotChargeLevels[i];
+					const uint32 chargeRate = mPotChargeRates[i];
+					const uint64 chargeDelta = (uint64)chargeRate * cyclesToProcess;
 
-	const uint32 slowTime = UpdateLast15KHzTime();
-	
-	// capture ALLPOT before we clear it for end of scan
-	uint8 activeMask = mALLPOT & ~mPotGroundedMask;
+					mPotChargeLevels[i] = (uint32)std::min<uint64>(startingLevel + chargeDelta, kPotChargeLimit);
+				}
+			} else {
+				// Scan is done and fast pot scan is off. The dump capacitors are
+				// therefore on, so discharge the caps.
+				static const uint32 kMaxDischargeCycles = (kPotChargeLimit - 1) / kPotDischargeRate + 1;
 
-	uint32 count = mPotMasterCounter;
-	uint32 maxCount = fastPotScan ? 229 : 228;
-	uint32 threshold = count;
-	if (mbPotScanLastActive) {
+				if (cyclesToProcess >= kMaxDischargeCycles) {
+					for(auto& v : mPotChargeLevels)
+						v = 0;
+				} else {
+					uint32 dischargeAmount = kPotDischargeRate * cyclesToProcess;
+
+					for(auto& v : mPotChargeLevels)
+						v = std::max<uint32>(v, dischargeAmount) - dischargeAmount;
+				}
+			}
+
+			// Consume all remaining time.
+			break;
+		}
+
+		const bool slowPotScanRunning = (mSKCTL & 3) != 0;
+		const uint32 slowPotScanCycleOffset = baseTime - mPotLastTimeSlow;
+		const uint32 potBaseCounter = mPotMasterCounter;
+
+		// Compute number of cycles to charge. This will be truncated if the pot
+		// scan stops early.
+		uint32 chargeCycles = cyclesToProcess;
+
 		if (fastPotScan) {
-			count += (fastTime - mPotLastTimeFast);
-		} else {				// slow pot scan
-			count += (slowTime - mPotLastTimeSlow) / 114; 
+			// The counter shouldn't count above 229/228 for the mode, but we clamp it
+			// just to be safe with corner cases around save state.
+			uint32 maxFastCycles = mPotMasterCounter < 229 ? 229 - mPotMasterCounter : 0;
+
+			if (chargeCycles >= maxFastCycles) {
+				chargeCycles = maxFastCycles;
+
+				mbPotScanActive = false;
+				mPotMasterCounter = 229;
+			} else {
+				mPotMasterCounter += chargeCycles;
+			}
+		} else if (slowPotScanRunning) {
+			// Slot pot scan with clocks running. Count up to 228 every 114
+			// cycles + 1 cycle, then stop.
+
+			const uint32 latestSlowTick = UpdateLast15KHzTime(curTime);
+			uint32 slowCounts = 0;
+
+			if (latestSlowTick > mPotLastTimeSlow) {
+				slowCounts = (latestSlowTick - mPotLastTimeSlow) / 114;
+				mPotLastTimeSlow = latestSlowTick;
+			}
+
+			const uint32 newRawCounter = mPotMasterCounter + slowCounts;
+
+			if (newRawCounter >= 229 || (newRawCounter == 228 && curTime - latestSlowTick > 0)) {
+				mbPotScanActive = false;
+
+				chargeCycles = slowPotScanCycleOffset + 114 * (228 - mPotMasterCounter) + 1;
+			}
+
+			mPotMasterCounter = (uint8)std::min<uint32>(228, newRawCounter);
+		} else {
+			// Slow pot scan with clocks frozen -- caps will charge and pots
+			// may latch, but the master counter will not count up and the
+			// pot scan will not finish.
 		}
 
-		threshold = count;
-
-		if (count >= maxCount) {
-			count = maxCount;
-			mbPotScanLastActive = false;
-		}
-
-		if (!mbPotScanLastActive) {
-			threshold = ~UINT32_C(0);
-			activeMask = mALLPOT;
-			mALLPOT = 0;
-		}
-	}
-
-	mPotMasterCounter = (uint8)count;
-
-	mPotLastTimeFast = fastTime;
-	mPotLastTimeSlow = slowTime;
-
-	// latch all remaining pot counters that still have not crossed threshold
-	// (there is no explicit latch in the hardware -- just implicit when the
-	// caps have charged above threshold)
-	if (activeMask) {
-		const uint8 (&positions)[8] = fastPotScan ? mPotHiPositions : mPotPositions;
+		// Charge up all caps, and determine which ones have gone above threshold.
 		for(int i=0; i<8; ++i) {
-			if (!(activeMask & (1 << i)))
+			const uint8 potBit = 1 << i;
+
+			// Skip grounded lines, as no charging will occur.
+			if (mPotGroundedMask & potBit)
 				continue;
 
-			if (threshold >= (unsigned)positions[i] + mPotBasePositions[i]) {
-				mALLPOT &= ~(1 << i);
+			// Compute how much further the caps will charge based on the
+			// individual pot line charge rate, up to the limit.
+			const uint32 startingLevel = mPotChargeLevels[i];
+			const uint32 chargeRate = mPotChargeRates[i];
+			const uint64 chargeDelta = (uint64)chargeRate * chargeCycles;
+			const uint32 endingLevel = (uint32)std::min<uint64>(startingLevel + chargeDelta, kPotChargeLimit);
 
-				mPotLatches[i] = std::min<uint8>(maxCount, std::max<uint8>(positions[i], mPotBasePositions[i]) - mPotBasePositions[i]);
+			mPotChargeLevels[i] = endingLevel;
+
+			// If the line is not currently above threshold, check if it has crossed threshold.
+			// We must not run this code if the input line starts above threshold, indicated by
+			// the ALLPOT bit already being cleared. In that case, the POTn register does not
+			// update at all and retains its value from a previous pot scan.
+			if ((mALLPOT & potBit) && endingLevel >= kPotChargeThreshold) {
+				// Clear ALLPOT bit to indicate above threshold / update has stopped.
+				mALLPOT -= potBit;
+
+				// Interpolate to determine relative cycle where threshold was crossed.
+				const uint32 cyclesToThreshold = (kPotChargeThreshold - startingLevel - 1) / chargeRate + 1;
+
+				if (fastPotScan) {
+					// Fast pot scan -- count up 1/cycle.
+					mPotLatches[i] = (uint8)std::min<uint32>(229, potBaseCounter + cyclesToThreshold);
+				} else if (slowPotScanRunning) {
+					// Slow pot scan with normal clock -- count up 1/114 cycles.
+					mPotLatches[i] = (uint8)std::min<uint32>(228, potBaseCounter + (slowPotScanCycleOffset + cyclesToThreshold) / 114);
+				} else {
+					// Slow pot scan with frozen clock -- latch the counter which isn't counting.
+					mPotLatches[i] = potBaseCounter;
+				}
 			}
 		}
+
+		cyclesToProcess -= chargeCycles;
+	}
+
+	// If pot scan has ended, for any counters that were still active, turn
+	// them off and latch the maximum count value.
+	if (!mbPotScanActive && mALLPOT) {
+		for(int i=0; i<8; ++i) {
+			if (mALLPOT & (1 << i))
+				mPotLatches[i] = fastPotScan ? 229 : 228;
+		}
+
+		mALLPOT = 0;
 	}
 }
 

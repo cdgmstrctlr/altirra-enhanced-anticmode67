@@ -30,8 +30,11 @@ void ATConsoleCloseLogFileNT();
 void ATConsoleCloseLogFile();
 
 void ATConsoleWrite(const char *s);
-void ATConsolePrintf(const char *format, ...);
-void ATConsoleTaggedPrintf(const char *format, ...);
+void ATConsolePrintfImpl(const char *format, ...);
+void ATConsoleTaggedPrintfImpl(const char *format, ...);
+
+#define ATConsolePrintf(format, ...) ATConsolePrintfImpl(((void)sizeof printf(format __VA_OPT__(,) __VA_ARGS__), (format)) __VA_OPT__(,) __VA_ARGS__)
+#define ATConsoleTaggedPrintf(format, ...) ATConsoleTaggedPrintfImpl(((void)sizeof printf(format __VA_OPT__(,) __VA_ARGS__), (format)) __VA_OPT__(,) __VA_ARGS__)
 
 ///////////////////////////////////////////////////////////////////////////
 

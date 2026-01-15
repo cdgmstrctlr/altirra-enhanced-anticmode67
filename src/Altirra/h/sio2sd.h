@@ -34,26 +34,26 @@ public:
 	ATSIO2SDEmulator();
 	~ATSIO2SDEmulator();
 
-	void *AsInterface(uint32 iid);
+	void *AsInterface(uint32 iid) override;
 
-	virtual void GetDeviceInfo(ATDeviceInfo& info);
-	virtual void GetSettings(ATPropertySet& settings);
-	virtual bool SetSettings(const ATPropertySet& settings);
-	virtual void Init();
-	virtual void Shutdown();
-	virtual void WarmReset();
-	virtual void ColdReset();
-
-public:
-	virtual void InitIndicators(IATDeviceIndicatorManager *r) override;
+	void GetDeviceInfo(ATDeviceInfo& info) override;
+	void GetSettings(ATPropertySet& settings) override;
+	bool SetSettings(const ATPropertySet& settings) override;
+	void Init() override;
+	void Shutdown() override;
+	void WarmReset() override;
+	void ColdReset() override;
 
 public:
-	virtual void InitSIO(IATDeviceSIOManager *mgr) override;
-	virtual CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
-	virtual void OnSerialAbortCommand() override;
-	virtual void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
-	virtual void OnSerialFence(uint32 id) override;
-	virtual CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
+	void InitIndicators(IATDeviceIndicatorManager *r) override;
+
+public:
+	void InitSIO(IATDeviceSIOManager *mgr) override;
+	CmdResponse OnSerialBeginCommand(const ATDeviceSIOCommand& cmd) override;
+	void OnSerialAbortCommand() override;
+	void OnSerialReceiveComplete(uint32 id, const void *data, uint32 len, bool checksumOK) override;
+	void OnSerialFence(uint32 id) override;
+	CmdResponse OnSerialAccelCommand(const ATDeviceSIORequest& request) override;
 
 protected:
 	CmdResponse DoReadCommand(const void *data, uint32 len);
@@ -61,15 +61,16 @@ protected:
 	CmdResponse DoImpliedCommand();
 	CmdResponse DoNAKCommand();
 
-	IATDeviceSIOManager *mpSIOMgr;
-	IATDeviceIndicatorManager *mpUIRenderer;
+	IATDeviceSIOManager *mpSIOMgr = nullptr;
+	vdrefptr<IATDeviceSIOInterface> mpSIOInterface;
+	IATDeviceIndicatorManager *mpUIRenderer = nullptr;
 
-	uint32 mHighSpeedCPSLo;
-	uint32 mHighSpeedCPSHi;
-	uint8 mHighSpeedIndex;
-	bool mbHighSpeedEnabled;
-	bool mbHighSpeedPhase;
-	ATDeviceSIOCommand mCommand;
+	uint32 mHighSpeedCPSLo = 0;
+	uint32 mHighSpeedCPSHi = 0;
+	uint8 mHighSpeedIndex = 0;
+	bool mbHighSpeedEnabled = false;
+	bool mbHighSpeedPhase = false;
+	ATDeviceSIOCommand mCommand {};
 };
 
 #endif

@@ -92,6 +92,9 @@ public:
 	bool ThreadStart();							// start thread
 	void ThreadWait();							// wait for thread to finish
 
+	// Cancel any synchronous I/O pending for the specific thread.
+	void ThreadCancelSynchronousIo();
+
 	// return true if thread is still running
 	bool isThreadActive();
 
@@ -192,15 +195,6 @@ public:
 // continue, break, or thrown exception exits the block.  However, hardware
 // exceptions (access violations) may not work due to synchronous model
 // exception handling.
-//
-// There are two Visual C++ bugs we need to work around here (both are in VC6 and VC7).
-//
-// 1) Declaring an object with a non-trivial destructor in a switch() condition
-//    causes a C1001 INTERNAL COMPILER ERROR.
-//
-// 2) Using __LINE__ in a macro expanded in a function with Edit and Continue (/ZI)
-//    breaks the preprocessor (KB article Q199057).  Shame, too, because without it
-//    all the autolocks look the same.
 
 #define vdsynchronized2(lock) if(VDCriticalSection::AutoLock vd__lock=(lock))VDNEVERHERE;else
 #define vdsynchronized1(lock) vdsynchronized2(lock)
@@ -275,6 +269,58 @@ public:
 
 private:
 	void *mKernelSema;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDRWLock {
+	VDRWLock(const VDRWLock&) = delete;
+	VDRWLock& operator=(const VDRWLock&) = delete;
+
+public:
+	VDRWLock() = default;
+
+	void LockExclusive() noexcept;
+	void UnlockExclusive() noexcept;
+
+private:
+	friend class VDConditionVariable;
+
+	void *mpSRWLock = nullptr;
+};
+
+///////////////////////////////////////////////////////////////////////////
+
+struct VDRWAutoLockExclusive {
+	VDRWAutoLockExclusive(VDRWLock& rwLock)
+		: mRWLock(rwLock)
+	{
+		mRWLock.LockExclusive();
+	}
+
+	~VDRWAutoLockExclusive() {
+		mRWLock.UnlockExclusive();
+	}
+
+	VDRWLock& mRWLock;
+};
+
+#define vdsyncexclusive(rwlock) if (VDRWAutoLockExclusive autoLock{rwlock}; false); else 
+
+///////////////////////////////////////////////////////////////////////////
+
+class VDConditionVariable {
+	VDConditionVariable(const VDConditionVariable&) = delete;
+	VDConditionVariable& operator=(const VDConditionVariable&) = delete;
+public:
+	VDConditionVariable() = default;
+
+	void Wait(VDRWLock& rwLock) noexcept;
+	void NotifyOne() noexcept;
+	void NotifyAll() noexcept;
+
+private:
+	void *mpCondVar = nullptr;
 };
 
 #endif

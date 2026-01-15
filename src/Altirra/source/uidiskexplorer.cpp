@@ -181,7 +181,7 @@ void ATUIFileViewer::ReloadFile() {
 	rtf.sprintf(R"raw({\rtf\ansi\deff0
 {\fonttbl{\f0\fmodern Source Code Pro Bold;}}
 {\colortbl;\red%u\green%u\blue%u;\red%u\green%u\blue%u;}
-\fs22\cf2 )raw"
+\fs22\cf2 )raw" // CMC
 	, background & 255
 	, (background >> 8) & 255
 	, (background >> 16) & 255
@@ -312,7 +312,7 @@ void ATUIFileViewer::ReloadFile() {
 					0x2594,	// 013 top quarter bar
 					0x2582,	// 014 bottom quarter bar
 					0x2596,	// 015 lower left quadrant
-					
+
 					0x2663,	// 016 club
 					0x250C,	// 017 lower-right elbow
 					0x2500,	// 018 vert. centered horizontal bar
@@ -332,8 +332,7 @@ void ATUIFileViewer::ReloadFile() {
 				};
 
 				rtf.append_sprintf("\\u%u?", kLowTable[c]);
-			}
-			else if (c == 0x60) {
+			} else if (c == 0x60) {
 				rtf += "\\u9830?";	// 096 diamond (0x2666)
 			} else if (c >= 0x7B) {
 				static const uint16 kHighTable[]={
@@ -345,9 +344,8 @@ void ATUIFileViewer::ReloadFile() {
 				};
 				
 				rtf.append_sprintf("\\u%u?", kHighTable[c - 0x7B]);
-			}
-			//else if (c == '{' || c == '}' || c == '\\')			// this doesn't make any sense. '{' == 0x7b and that (and all above) are checked in the above block
-			//	rtf.append_sprintf("\\'%02x", c);
+			} //else if (c == '{' || c == '}' || c == '\\') // this doesn't make any sense. '{' == 0x7b and that (and all above) are checked in the above block
+				//rtf.append_sprintf("\\'%02x", c);
 			else
 				rtf += (char)c;
 
@@ -777,7 +775,7 @@ protected:
 
 	void MountFS(ATDiskInterface *diskInterface, IATDiskImage& image, vdautoptr<IATDiskFS> fs, const wchar_t *fsDescription, bool write, bool autoflush);
 	void ValidateForWrites();
-	void RefreshList();
+	void RefreshList(bool preserveScrollPos);
 	void RefreshListFromPartitions();
 	void RefreshListFromFileSystem();
 	void RefreshFsInfo();
@@ -830,7 +828,7 @@ public:
 
 	void InitFrom(const ATDiskFSEntryInfo& einfo);
 
-	void GetText(int subItem, VDStringW& s) const;
+	void GetText(int subItem, VDStringW& s) const override;
 };
 
 class ATUIDialogDiskExplorer::PartitionListEntry : public ListEntry, public ATPartitionInfo {
@@ -841,7 +839,7 @@ public:
 
 	void InitFrom(const ATPartitionInfo& pi);
 
-	void GetText(int subItem, VDStringW& s) const;
+	void GetText(int subItem, VDStringW& s) const override;
 };
 
 struct ATUIDialogDiskExplorer::FileListEntrySort {
@@ -1020,8 +1018,9 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 			MountFS(mpDiskInterface, *image, std::move(fs), mpImageName, mbWriteEnabled, mbAutoFlush);
 
 			SetFocusToControl(IDC_DISK_CONTENTS);
-		} catch(const MyError& e) {
-			ShowError(e.wc_str(), L"Disk load error");
+		} catch(const VDException& e) {
+			if (e.visible())
+				ShowError(e.wc_str(), L"Disk load error");
 			End(false);
 			return true;
 		}
@@ -1032,7 +1031,7 @@ bool ATUIDialogDiskExplorer::OnLoaded() {
 
 		EnableControl(IDC_BROWSE, false);
 
-		RefreshList();
+		RefreshList(false);
 
 		SetFocusToControl(IDC_DISK_CONTENTS);
 	} else {
@@ -1307,10 +1306,16 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 		mList.GetSelectedIndices(indices);
 
 		if (!indices.empty()) {
-			const int index = indices.front();
-			FileListEntry *fle = GetFileListEntry(index);
 
-			if (fle && !fle->mbIsDirectory) {
+			vdfastvector<const FileListEntry *> exportedEntries;
+			vdvector<vdfastvector<uint8>> exportedData;
+
+			for(int idx : indices) {
+				FileListEntry *fle = GetFileListEntry(idx);
+
+				if (!fle && fle->mbIsDirectory)
+					continue;
+
 				vdfastvector<uint8> buf;
 				mpFS->ReadFile(fle->mFileKey, buf);
 
@@ -1342,11 +1347,56 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 					}
 				}
 
+				exportedEntries.emplace_back(fle);
+				exportedData.emplace_back(std::move(buf));
+			}
+
+
+			if (exportedEntries.size() == 1) {
+				const FileListEntry *fle = exportedEntries.front();
+
 				VDSetLastLoadSaveFileName('dexp', fle->mFileName.c_str());
 				const VDStringW& fn = VDGetSaveFileName('dexp', (VDGUIHandle)mhdlg, text ? L"Export text file" : L"Export binary file", L"All files (*.*)\0*.*\0", nullptr);
 
 				if (!fn.empty()) {
 					VDFile f(fn.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
+
+					const auto& buf = exportedData.front();
+					f.write(buf.data(), (long)buf.size());
+
+					if (fle->mbDateValid)
+						f.setCreationTime(VDDateFromLocalDate(fle->mDate));
+				}
+			} else if (!exportedEntries.empty()) {
+				const VDStringW& path = VDGetDirectory('dex2', (VDGUIHandle)mhdlg, text ? L"Export multiple text files" : L"Export multiple binary files");
+
+				if (path.empty())
+					return true;
+
+				bool pathsExist = false;
+
+				for(const FileListEntry *fle : exportedEntries) {
+					const VDStringW& exportPath = VDMakePath(path.c_str(), fle->mFileName.c_str());
+
+					if (VDDoesPathExist(exportPath.c_str())) {
+						pathsExist = true;
+						break;
+					}
+				}
+
+				if (pathsExist) {
+					if (!Confirm2("DiskExplorerOverwriteFiles", L"Some files already exist in the target folder. Overwrite?", L"Overwriting existing files"))
+						return true;
+				}
+
+				size_t n = exportedEntries.size();
+				for(size_t i = 0; i < n; ++i) {
+					const FileListEntry *fle = exportedEntries[i];
+					const auto& buf = exportedData[i];
+
+					const VDStringW& exportPath = VDMakePath(path.c_str(), fle->mFileName.c_str());
+
+					VDFile f(exportPath.c_str(), nsVDFile::kWrite | nsVDFile::kDenyAll | nsVDFile::kCreateAlways);
 
 					f.write(buf.data(), (long)buf.size());
 
@@ -1355,6 +1405,8 @@ bool ATUIDialogDiskExplorer::OnCommand(uint32 id, uint32 extcode) {
 				}
 			}
 		}
+
+		return true;
 	} else if (id == ID_PARTITION_OPEN) {
 		PartitionListEntry *ple = GetPartitionListEntry(mList.GetSelectedIndex());
 
@@ -1479,15 +1531,18 @@ void ATUIDialogDiskExplorer::OnItemBeginDrag(VDUIProxyListView *sender, int item
 	vdfastvector<int> indices;
 	mList.GetSelectedIndices(indices);
 
-	for(vdfastvector<int>::const_iterator it(indices.begin()), itEnd(indices.end());
-		it != itEnd;
-		++it)
-	{
-		FileListEntry *fle = GetFileListEntry(*it);
+	bool haveFiles = false;
+	for(const int index : indices) {
+		FileListEntry *fle = GetFileListEntry(index);
 
-		if (fle && fle->mFileKey != ATDiskFSKey::None)
+		if (fle && fle->mFileKey != ATDiskFSKey::None && !fle->mbIsDirectory) {
 			dataObject->AddFile(fle->mFileKey, fle->mBytes, fle->mbDateValid ? &fle->mDate : nullptr, fle->mFileName.c_str());
+			haveFiles = true;
+		}
 	}
+
+	if (!haveFiles)
+		return;
 
 	DWORD srcEffects = 0;
 
@@ -1538,26 +1593,40 @@ void ATUIDialogDiskExplorer::OnItemContextMenu(VDUIProxyListView *sender, VDUIPr
 	if (mpFS) {
 		HMENU hmenu = GetSubMenu(mhMenuItemContext, 0);
 
-		const int idx = mList.GetSelectedIndex();
+		vdfastvector<int> selectedIndices;
+		mList.GetSelectedIndices(selectedIndices);
+
+		[[maybe_unused]] bool anyFiles = false;
+		bool anyDirs = false;
+		bool anySpecials = false;
+
+		for(int idx : selectedIndices) {
+			FileListEntry *fle = GetFileListEntry(idx);
+
+			if (fle) {
+				if (fle->mFileKey == ATDiskFSKey::None)
+					anySpecials = true;
+				else if (fle->mbIsDirectory)
+					anyDirs = true;
+				else
+					anyFiles = true;
+			}
+		}
+
+		const bool anyItemsSelected = !anySpecials && !selectedIndices.empty();
+		const bool singleItemSelected = !anySpecials && selectedIndices.size() == 1;
+		const bool singleFileSelected = !anyDirs && !anySpecials && singleItemSelected;
+
 		const bool writable = !mpFS->IsReadOnly();
-		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_VIEW, idx >= 0);
-		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_RENAME, idx >= 0 && writable);
-		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_DELETE, idx >= 0 && writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_VIEW, singleFileSelected);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_RENAME, singleItemSelected && writable);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_DELETE, anyItemsSelected && writable);
 		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_NEWFOLDER, writable);
 		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_IMPORTFILE, writable);
 		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_IMPORTTEXT, writable);
 
-		bool fileSelected = false;
-
-		if (idx >= 0) {
-			FileListEntry *fle = GetFileListEntry(idx);
-
-			if (fle && !fle->mbIsDirectory)
-				fileSelected = true;
-		}
-
-		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTFILE, fileSelected);
-		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTTEXT, fileSelected);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTFILE, !anyDirs && anyItemsSelected);
+		VDEnableMenuItemByCommandW32(hmenu, ID_DISKEXP_EXPORTTEXT, !anyDirs && anyItemsSelected);
 
 		TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN, event.mX, event.mY, 0, mhdlg, NULL);
 	} else if (mpBlockDevice) {
@@ -1646,7 +1715,7 @@ void ATUIDialogDiskExplorer::OnItemDoubleClick(VDUIProxyListView *sender, int it
 				mFileNameView.SetText(mpImageName);
 			}
 
-			RefreshList();
+			RefreshList(false);
 		} else if (PartitionListEntry *ple = vdpoly_cast<PartitionListEntry *>(le)) {
 			OpenPartition(*ple);
 		}
@@ -1693,7 +1762,7 @@ void ATUIDialogDiskExplorer::OnFSModified() {
 	if (mpDiskInterface)
 		mpDiskInterface->OnDiskChanged(true);
 
-	RefreshList();
+	RefreshList(true);
 }
 
 void ATUIDialogDiskExplorer::MountFS(ATDiskInterface *diskInterface, IATDiskImage& image, vdautoptr<IATDiskFS> fs, const wchar_t *fsDescription, bool write, bool autoFlush) {
@@ -1723,7 +1792,7 @@ void ATUIDialogDiskExplorer::MountFS(ATDiskInterface *diskInterface, IATDiskImag
 	}
 
 	// must be after above to show read only state properly in UI
-	RefreshList();
+	RefreshList(false);
 }
 
 void ATUIDialogDiskExplorer::ValidateForWrites() {
@@ -1744,7 +1813,9 @@ void ATUIDialogDiskExplorer::ValidateForWrites() {
 	}
 }
 
-void ATUIDialogDiskExplorer::RefreshList() {
+void ATUIDialogDiskExplorer::RefreshList(bool preserveScrollPos) {
+	int scrollPos = mList.GetVisibleTopIndex();
+
 	mList.SetRedraw(false);
 	mList.Clear();
 
@@ -1754,6 +1825,10 @@ void ATUIDialogDiskExplorer::RefreshList() {
 		RefreshListFromPartitions();
 
 	mList.AutoSizeColumns();
+
+	if (preserveScrollPos)
+		mList.SetVisibleTopIndex(scrollPos);
+
 	mList.SetRedraw(true);
 }
 
@@ -1895,7 +1970,7 @@ void ATUIDialogDiskExplorer::WriteFile(const char *filename, const void *data, u
 								++sectionLen;
 							}
 						} else if (c < 'A' || c > 'Z') {
-							if (mbStrictFilenames || c != '@' && c != '_')
+							if (mbStrictFilenames || (c != '@' && c != '_'))
 								continue;
 						}
 

@@ -85,7 +85,7 @@ public:
 	ATCompatKnownTag GetSelectedTag() const { return mSelectedTag; }
 
 	bool OnLoaded() override;
-	void OnDataExchange(bool write);
+	void OnDataExchange(bool write) override;
 
 private:
 	VDUIProxyListBoxControl mList;
@@ -175,8 +175,6 @@ private:
 
 	ATCompatEDBAlias& mAlias;
 	vdfastvector<ATCompatEDBAliasRule> mRules;
-	const ATCompatEDBSourcedAliasRule *mpAvailRules;
-	const size_t mNumAvailRules;
 
 	vdvector<ATCompatEDBSourcedAliasRule> mCurrentSrcRules;
 };
@@ -184,8 +182,6 @@ private:
 ATUIDialogCompatDBEditAlias::ATUIDialogCompatDBEditAlias(ATCompatEDBAlias& alias, const ATCompatEDBSourcedAliasRule *aliasRules, size_t numAliasRules)
 	: VDDialogFrameW32(IDD_COMPATDB_EDITALIAS)
 	, mAlias(alias)
-	, mpAvailRules(aliasRules)
-	, mNumAvailRules(numAliasRules)
 	, mCurrentSrcRules(aliasRules, aliasRules + numAliasRules)
 {
 	mAddButton.SetOnClicked([this] { OnAdd(); });

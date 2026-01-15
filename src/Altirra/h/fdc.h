@@ -149,7 +149,7 @@ public:
 		// than it should. [PERCOM]
 		Side2ReversedOffByOne,
 
-		// Side 2 is mapped with reversed tracks but forward sectors [1450XLD]
+		// Side 2 is mapped with reversed tracks but forward sectors [1450XLD, SpeedyXF]
 		Side2ReversedTracks,
 
 		// Side 2 is mapped forward in track/sector. [ATR8000]
@@ -170,44 +170,7 @@ public:
 	void OnScheduledEvent(uint32 id) override;
 
 protected:
-	enum State : uint32 {
-		kState_Idle,
-		kState_BeginCommand,
-		kState_DispatchCommand,
-		kState_EndCommand,
-		kState_EndCommand2,
-		kState_Restore,
-		kState_Restore_Step,
-		kState_Seek,
-		kState_Step,
-		kState_StepIn,
-		kState_StepOut,
-		kState_ReadSector,
-		kState_ReadSector_TransferFirstByte,
-		kState_ReadSector_TransferFirstByteNever,
-		kState_ReadSector_TransferByte,
-		kState_ReadSector_TransferComplete,
-		kState_WriteSector,
-		kState_WriteSector_InitialDrq,
-		kState_WriteSector_CheckInitialDrq,
-		kState_WriteSector_TransferByte,
-		kState_WriteSector_TransferComplete,
-		kState_ReadAddress,
-		kState_ReadTrack,
-		kState_ReadTrack_WaitHeadLoad,
-		kState_ReadTrack_WaitIndexPulse,
-		kState_ReadTrack_TransferByte,
-		kState_ReadTrack_Complete,
-		kState_WriteTrack,
-		kState_WriteTrack_WaitHeadLoad,
-		kState_WriteTrack_InitialDrq,
-		kState_WriteTrack_WaitIndexPulse,
-		kState_WriteTrack_TransferByte,
-		kState_WriteTrack_TransferByteAfterCRC,
-		kState_WriteTrack_InitialDrqTimeout,
-		kState_WriteTrack_Complete,
-		kState_ForceInterrupt,
-	};
+	enum State : uint32;
 
 	void UpdateIndexPulse();
 	void AbortCommand();
@@ -215,11 +178,14 @@ protected:
 	void SetTransition(State nextState, uint32 ticks);
 	void UpdateRotationalPosition();
 	void UpdateAutoIndexPulse();
+	void UpdateDiskReady();
 	void SetMotorIdleTimer();
 	void ClearMotorIdleTimer();
 	void UpdateDensity();
+	void UpdateStepTimes();
 	void FinalizeWriteTrack();
 	uint32 GetSelectedVSec(uint32 sector) const;
+	static const char *GetStateName(State);
 
 	struct PSecAddress {
 		uint8 mTrack;
@@ -279,6 +245,7 @@ protected:
 	bool mbTrack0 = false;
 	bool mbSide2 = false;
 	bool mbDiskReady = false;
+	std::optional<bool> mDiskReadyInput;
 	bool mbMFM = false;
 	bool mbDoubleClock = false;
 	std::optional<bool> mbWriteProtectOverride;
@@ -350,6 +317,12 @@ protected:
 	// that fits at the actual clock speed and RPM.
 	static constexpr uint32 kMaxBytesPerTrackMFM = 6512;
 	static constexpr uint32 kWriteTrackBufferSize = kMaxBytesPerTrackMFM * 2 + 1024;	// +1024 in case data sector is incomplete at end
+
+	// We use a somewhat longer hold time for the status indicator than the
+	// regular disk emulator since the FDC command will be shorter than the
+	// total read time, not including checksum and transfer time.
+	// We need about 150ms, so we hold for 10 frames.
+	static constexpr uint32 kActivityHoldTime = 10;
 };
 
 #endif

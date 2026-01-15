@@ -26,6 +26,7 @@
 #include <at/atnativeui/messageloop.h>
 #include <at/atnativeui/theme.h>
 #include <at/atnativeui/uiframe.h>
+#include <at/atcore/configvar.h>
 #include <at/atcore/logging.h>
 #include <at/atcore/media.h>
 #include "console.h"
@@ -45,6 +46,8 @@
 extern vdfunction<bool(bool)> g_pATIdle;
 extern ATSimulator g_sim;
 extern ATLogChannel g_ATLCHostDisp;
+
+ATConfigVarBool g_ATCVDisplayDebugFullscreen("display.debug_fullscreen", false);
 
 void ATUIRegisterDragDropHandler(VDGUIHandle h);
 void ATUIRevokeDragDropHandler(VDGUIHandle h);
@@ -71,7 +74,7 @@ public:
 private:
 	static constexpr UINT kTimerID_VerifyMenu = 100;
 
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 	LRESULT WndProc2(UINT msg, WPARAM wParam, LPARAM lParam);
 
 	void OnCopyData(HWND hwndReply, const COPYDATASTRUCT& cds);
@@ -170,7 +173,7 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 
 		case WM_DESTROY:
 			ATUIUnregisterTopLevelWindow(mhwnd);
-			ATUIDestroyModelessDialogs(mhwnd);
+			ATUIDestroyModelessWindows(mhwnd);
 
 			// We can't use the normal save placement function because the non-fullscreen state
 			// is saved off in the UI layer. This allows the non-fullscreen window size and maximized
@@ -268,9 +271,6 @@ LRESULT ATMainWindow::WndProc2(UINT msg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
-
-		case ATWM_QUERYSYSCHAR:
-			return true;
 
 		case WM_COPYDATA:
 			{
@@ -513,7 +513,7 @@ void ATMainWindow::OnActivateApp(WPARAM wParam) {
 		if (pane)
 			pane->ReleaseMouse();
 
-		if (ATUIGetDisplayFullscreen()) {
+		if (ATUIGetDisplayFullscreen() && !g_ATCVDisplayDebugFullscreen) {
 			g_ATLCHostDisp("Disabling full-screen mode because program was deactivated.\n");
 			ATSetFullscreen(false);
 		}

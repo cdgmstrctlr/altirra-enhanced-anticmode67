@@ -16,6 +16,7 @@
 //	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include <stdafx.h>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/math.h>
 #include <vd2/system/memory.h>
 #include <vd2/system/registry.h>
@@ -1038,7 +1039,7 @@ public:
 
 protected:
 	ATUIWidgetMetrics OnMeasure() override;
-	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 	void PaintSID(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
 	void PaintPOKEY(IVDDisplayRenderer& rdr, VDDisplayTextRenderer& tr, sint32 w, sint32 h);
 
@@ -1414,7 +1415,7 @@ protected:
 	void OnCreate() override;
 	void OnSize() override;
 	ATUIWidgetMetrics OnMeasure() override;
-	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h);
+	void Paint(IVDDisplayRenderer& rdr, sint32 w, sint32 h) override;
 	void AdjustRate(int delta);
 	void UpdateRateLabel();
 	void UpdateSampleCounts(int i);
@@ -1694,82 +1695,86 @@ public:
 	ATUIRenderer();
 	~ATUIRenderer();
 
-	int AddRef() { return vdrefcount::AddRef(); }
-	int Release() { return vdrefcount::Release(); }
+	int AddRef() override { return vdrefcount::AddRef(); }
+	int Release() override { return vdrefcount::Release(); }
 
-	bool IsVisible() const;
-	void SetVisible(bool visible);
+	bool IsVisible() const override;
+	void SetVisible(bool visible) override;
 
-	void SetStatusFlags(uint32 flags) { mStatusFlags |= flags; mStickyStatusFlags |= flags; }
-	void ResetStatusFlags(uint32 flags) { mStatusFlags &= ~flags; }
-	void PulseStatusFlags(uint32 flags) { mStickyStatusFlags |= flags; }
+	void SetStatusFlags(uint32 flags) override;
+	void ResetStatusFlags(uint32 flags, uint32 holdTime) override;
+	void PulseStatusFlags(uint32 flags) override;
 
-	void SetCyclesPerSecond(double rate);
+	void SetCyclesPerSecond(double rate) override;
 
-	void SetStatusCounter(uint32 index, uint32 value);
-	void SetDiskLEDState(uint32 index, sint32 ledDisplay);
-	void SetDiskMotorActivity(uint32 index, bool on);
-	void SetDiskErrorState(uint32 index, bool on);
+	void SetStatusCounter(uint32 index, uint32 value) override;
+	void SetDiskLEDState(uint32 index, sint32 ledDisplay) override;
+	void SetDiskMotorActivity(uint32 index, bool on) override;
+	void SetDiskErrorState(uint32 index, bool on) override;
 
-	void SetHActivity(bool write);
-	void SetPCLinkActivity(bool write);
-	void SetIDEActivity(bool write, uint32 lba);
-	void SetCartridgeActivity(sint32 color1, sint32 color2);
-	void SetFlashWriteActivity();
+	void SetHActivity(bool write) override;
+	void SetPCLinkActivity(bool write) override;
+	void SetIDEActivity(bool write, uint32 lba) override;
+	void SetCartridgeActivity(sint32 color1, sint32 color2) override;
+	void SetFlashWriteActivity() override;
 
-	void SetCassetteIndicatorVisible(bool vis) { mbShowCassetteIndicator = vis; }
-	void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode);
+	void SetCassetteIndicatorVisible(bool vis) override { mbShowCassetteIndicator = vis; }
+	void SetCassettePosition(float pos, float len, bool recordMode, bool fskMode) override;
 
-	void SetRecordingPosition();
-	void SetRecordingPosition(float time, sint64 size);
+	void SetRecordingPosition() override;
+	void SetRecordingPositionPaused() override;
+	void SetRecordingPosition(float time, sint64 size, bool paused) override;
 
-	void SetTracingSize(sint64 size);
+	void SetTracingSize(sint64 size) override;
 
-	void SetModemConnection(const char *str);
+	void SetModemConnection(const char *str) override;
 
 	void SetStatusMessage(const wchar_t *s) override;
-	void ReportError(const wchar_t *s) override;
 
-	void SetLedStatus(uint8 ledMask);
-	void SetHeldButtonStatus(uint8 consolMask);
-	void SetPendingHoldMode(bool enabled);
-	void SetPendingHeldKey(int key);
-	void SetPendingHeldButtons(uint8 consolMask);
+	uint32 AllocateErrorSourceId() override;
+	void ClearErrors(uint32 sourceId) override;
+	void ReportError(uint32 sourceId, const wchar_t *s) override;
 
-	void ClearWatchedValue(int index);
-	void SetWatchedValue(int index, uint32 value, WatchFormat format);
-	void SetAudioStatus(const ATUIAudioStatus *status);
+	void SetLedStatus(uint8 ledMask) override;
+	void SetHeldButtonStatus(uint8 consolMask) override;
+	void SetPendingHoldMode(bool enabled) override;
+	void SetPendingHeldKey(int key) override;
+	void SetPendingHeldButtons(uint8 consolMask) override;
+
+	void ClearWatchedValue(int index) override;
+	void SetWatchedValue(int index, uint32 value, WatchFormat format) override;
+	void SetAudioStatus(const ATUIAudioStatus *status) override;
 	void SetAudioMonitor(bool secondary, ATAudioMonitor *monitor) override;
 	void SetAudioDisplayEnabled(bool secondary, bool enable) override;
 	void SetAudioScopeEnabled(bool enable) override;
-	void SetSlightSID(ATSlightSIDEmulator *emu);
+	void SetSlightSID(ATSlightSIDEmulator *emu) override;
 
 	vdrect32 GetPadArea() const override;
 	void SetPadInputEnabled(bool enable) override;
 
-	void SetFpsIndicator(float fps);
+	void SetFpsIndicator(float fps) override;
 
-	void SetMessage(StatusPriority priority, const wchar_t *msg);
-	void ClearMessage(StatusPriority priority);
+	void SetMessage(StatusPriority priority, const wchar_t *msg) override;
+	void ClearMessage(StatusPriority priority) override;
 
-	void SetHoverTip(int px, int py, const wchar_t *text);
+	void SetHoverTip(int px, int py, const wchar_t *text) override;
 
-	void SetPaused(bool paused);
+	void SetPaused(bool paused) override;
 
-	void SetUIManager(ATUIManager *m);
+	void SetUIManager(ATUIManager *m) override;
 
-	void Relayout(int w, int h);
-	void Update();
+	void Relayout(int w, int h) override;
+	void Update() override;
 
-	sint32 GetIndicatorSafeHeight() const;
+	sint32 GetIndicatorSafeHeight() const override;
 
-	void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
-	void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn);
+	void AddIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) override;
+	void RemoveIndicatorSafeHeightChangedHandler(const vdfunction<void()> *pfn) override;
 
 	void BeginCustomization() override;
 
 public:
-	virtual void TimerCallback();
+	void TimerCallback() override;
 
 protected:
 	void InvalidateLayout();
@@ -1786,14 +1791,19 @@ protected:
 
 	double	mCyclesPerSecond = 1;
 
+	// 0..14 are disk drives, 16 is cassette
+	static constexpr uint32 kValidFlagsMask = 0x17FFF;
 	uint32	mStatusFlags = 0;
-	uint32	mStickyStatusFlags = 0;
+	uint32	mStatusHoldFlags = 0;
+	uint32	mStatusHoldCounters[17] {};
+
 	uint32	mStatusCounter[15] = {};
 	sint32	mStatusLEDs[15] = {};
 	uint32	mDiskMotorFlags = 0;
 	uint32	mDiskErrorFlags = 0;
 	float	mCassettePos = 0;
 	int		mRecordingPos = -1;
+	bool	mbRecordingPaused = false;
 	sint64	mRecordingSize = -1;
 	sint64	mTracingSize = -1;
 	bool	mbShowCassetteIndicator = false;
@@ -1876,11 +1886,13 @@ protected:
 
 	struct ErrorEntry {
 		vdrefptr<ATUILabel> mpLabel;
-		uint32 mExpirationTime;
+		uint32 mExpirationTime = 0;
+		uint32 mSourceId = 0;
 	};
 
 	static constexpr size_t kMaxErrors = 10;
 	vdvector<ErrorEntry> mErrors;
+	uint32 mErrorSourceCounter;
 
 	vdrefptr<ATUILabel> mpHoverTip;
 	int mHoverTipX = 0;
@@ -2083,6 +2095,37 @@ void ATUIRenderer::SetVisible(bool visible) {
 	mpContainer->SetVisible(visible);
 }
 
+void ATUIRenderer::SetStatusFlags(uint32 flags) {
+	mStatusFlags |= flags;
+}
+
+void ATUIRenderer::ResetStatusFlags(uint32 flags, uint32 holdTime) {
+	flags &= kValidFlagsMask;
+
+	if (!flags)
+		return;
+
+	mStatusFlags &= ~flags;
+
+	if (holdTime)
+		mStatusHoldFlags |= flags;
+	else
+		mStatusHoldFlags &= ~flags;
+
+	while(flags) {
+		int idx = VDFindLowestSetBitFast(flags);
+
+		mStatusHoldCounters[idx] = holdTime;
+
+		flags &= (flags - 1);
+	}
+}
+
+void ATUIRenderer::PulseStatusFlags(uint32 flags) {
+	SetStatusFlags(flags);
+	ResetStatusFlags(flags, 1);
+}
+
 void ATUIRenderer::SetCyclesPerSecond(double rate) {
 	mCyclesPerSecond = rate;
 
@@ -2206,7 +2249,41 @@ void ATUIRenderer::SetStatusMessage(const wchar_t *s) {
 	SetMessage(StatusPriority::Status, s);
 }
 
-void ATUIRenderer::ReportError(const wchar_t *s) {
+uint32 ATUIRenderer::AllocateErrorSourceId() {
+	if (!++mErrorSourceCounter)
+		++mErrorSourceCounter;
+
+	return mErrorSourceCounter;
+}
+
+void ATUIRenderer::ClearErrors(uint32 sourceId) {
+	if (!sourceId)
+		return;
+
+	auto it = std::remove_if(
+		mErrors.begin(),
+		mErrors.end(),
+		[sourceId](ErrorEntry& ee) {
+			if (ee.mSourceId != sourceId)
+				return false;
+
+			if (ee.mpLabel) {
+				ee.mpLabel->Destroy();
+				ee.mpLabel = nullptr;
+			}
+
+			return true;
+		}
+	);
+
+	if (it != mErrors.end()) {
+		mErrors.erase(it, mErrors.end());
+
+		RelayoutErrors();
+	}
+}
+
+void ATUIRenderer::ReportError(uint32 sourceId, const wchar_t *s) {
 	if (mErrors.size() >= kMaxErrors) {
 		mErrors.front().mpLabel->Destroy();
 		mErrors.erase(mErrors.begin());
@@ -2225,6 +2302,7 @@ void ATUIRenderer::ReportError(const wchar_t *s) {
 
 	ErrorEntry& ee = mErrors.emplace_back();
 	ee.mpLabel = std::move(label);
+	ee.mSourceId = sourceId;
 
 	const uint32 kErrorTimeout = 8000;
 	ee.mExpirationTime = VDGetCurrentTick() + kErrorTimeout;
@@ -2238,7 +2316,15 @@ void ATUIRenderer::SetRecordingPosition() {
 	mpRecordingLabel->SetVisible(false);
 }
 
-void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
+void ATUIRenderer::SetRecordingPositionPaused() {
+	SetRecordingPosition(
+		mRecordingPos < 0 ? 0 : mRecordingPos,
+		mRecordingSize < 0 ? 0 : mRecordingSize,
+		true
+	);
+}
+
+void ATUIRenderer::SetRecordingPosition(float time, sint64 size, bool paused) {
 	int cpos = VDRoundToInt(time);
 	uint32 csize = (uint32)((size * 10) >> 10);
 	bool usemb = false;
@@ -2250,21 +2336,24 @@ void ATUIRenderer::SetRecordingPosition(float time, sint64 size) {
 		csize -= csize % 10;
 	}
 
-	if (mRecordingPos == cpos && mRecordingSize == csize)
+	if (mRecordingPos == cpos && mRecordingSize == csize && mbRecordingPaused == paused)
 		return;
 
 	mRecordingPos = cpos;
 	mRecordingSize = csize;
+	mbRecordingPaused = paused;
 
 	int secs = cpos % 60;
 	int mins = cpos / 60;
 	int hours = mins / 60;
 	mins %= 60;
 
+	const wchar_t *desc = paused ? L"Paused " : L"R";
+
 	if (usemb)
-		mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%.1fM)", hours, mins, secs, (float)csize / 10240.0f);
+		mpRecordingLabel->SetTextF(L"%ls%02u:%02u:%02u (%.1fM)", desc, hours, mins, secs, (float)csize / 10240.0f);
 	else
-		mpRecordingLabel->SetTextF(L"R%02u:%02u:%02u (%uK)", hours, mins, secs, csize / 10);
+		mpRecordingLabel->SetTextF(L"%ls%02u:%02u:%02u (%uK)", desc, hours, mins, secs, csize / 10);
 
 	mpRecordingLabel->SetVisible(true);
 }
@@ -2712,9 +2801,9 @@ void ATUIRenderer::Update() {
 		SetFlashWriteActivity();
 		SetCassetteIndicatorVisible(true);
 		SetCassettePosition(3600.0f, 3600.0f, true, true);
-		SetRecordingPosition(3600.0f, 0xFFFFFFF);
+		SetRecordingPosition(3600.0f, 0xFFFFFFF, false);
 		SetStatusMessage(L"(Status message)");
-		ReportError(L"(Error message)");
+		ReportError(0, L"(Error message)");
 
 		SetLedStatus(3);
 		SetHeldButtonStatus(7);
@@ -2728,8 +2817,14 @@ void ATUIRenderer::Update() {
 		SetPaused(true);
 	}
 
-	uint32 statusFlags = mStatusFlags | mStickyStatusFlags;
-	mStickyStatusFlags = mStatusFlags;
+	uint32 statusFlags = mStatusFlags | mStatusHoldFlags;
+
+	for(uint32 flags = mStatusHoldFlags; flags; flags &= flags - 1) {
+		int idx = VDFindLowestSetBitFast(flags);
+
+		if (!--mStatusHoldCounters[idx])
+			mStatusHoldFlags &= ~(UINT32_C(1) << idx);
+	}
 
 	int x = 0;
 
@@ -2859,6 +2954,8 @@ void ATUIRenderer::Update() {
 	}
 
 	// tick errors
+	bool errorsChanged = false;
+
 	while(!mErrors.empty()) {
 		ErrorEntry& ee = mErrors.front();
 
@@ -2867,7 +2964,12 @@ void ATUIRenderer::Update() {
 
 		ee.mpLabel->Destroy();
 		mErrors.erase(mErrors.begin());
+
+		errorsChanged = true;
 	}
+
+	if (errorsChanged)
+		RelayoutErrors();
 }
 
 sint32 ATUIRenderer::GetIndicatorSafeHeight() const {

@@ -78,6 +78,16 @@ void ATUINativeWindowProxy::SetEnabled(bool enabled) {
 		EnableWindow(mhwnd, enabled);
 }
 
+bool ATUINativeWindowProxy::IsTabStop() const {
+	return mhwnd && (GetWindowLong(mhwnd, GWL_STYLE) & WS_TABSTOP);
+}
+
+void ATUINativeWindowProxy::SetTabStop(bool enabled) {
+	LONG style = GetWindowLong(mhwnd, GWL_STYLE);
+
+	SetWindowLong(mhwnd, GWL_STYLE, enabled ? style | WS_TABSTOP : style & ~WS_TABSTOP);
+}
+
 uint16 ATUINativeWindowProxy::GetWindowId() const {
 	return mhwnd ? (uint16)GetWindowLongPtr(mhwnd, GWL_ID) : 0;
 }
@@ -164,6 +174,13 @@ void ATUINativeWindowProxy::BringToFront() {
 		return;
 
 	SetWindowPos(mhwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);	
+}
+
+void ATUINativeWindowProxy::InsertBelow(VDZHWND reference) {
+	if (!mhwnd || !reference)
+		return;
+
+	SetWindowPos(mhwnd, reference, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);	
 }
 
 vdrect32 ATUINativeWindowProxy::GetClientArea() const {

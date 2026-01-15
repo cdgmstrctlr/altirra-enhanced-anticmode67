@@ -1125,7 +1125,7 @@
 
     Statically traces program execution and marks labels.
     
-      st [-m] <baseaddr> [<restrictbase> L<restrictlength>]
+      st [-b] [-m] <baseaddr> [<restrictbase> L<restrictlength>]
       
     The st command examines program code and finds all static program traces
     by following absolute JMP/JSR and relative branch instructions. The custom
@@ -1141,6 +1141,11 @@
     given restricted range are followed. This is useful for contraining tracing
     to within a specific module and avoiding bogus tracing into other regions,
     such as RAM where dynamic code is kept.
+
+    If -b is specified, tracing continues through BRK instructions instead of
+    treating them as end of block. This is useful for embedded firmware that
+    uses BRK instructions for commonly used routines. The BRK instruction is
+    considered to be a two-byte instruction.
 
 + stp  Static trace PBI
 
@@ -1482,6 +1487,20 @@
 
     Displays the status of any Z8430 Counter/Timer Circuit (CTC) chips
     in the system.
+
++ .devices     List attached devices
+
+      .devices
+
+    Lists all of the devices attached to the emulated computer in the device
+    tree, along with their internal tag names.
+
++ .device_info Show individual device information
+
+      .device_info <tagname>
+
+    Dumps additional information about an attached device, if supported. The
+    tag name of the device can be obtained from the .devices command.
 
 + .diskdumpsec Dump floppy disk sector data
 
@@ -2349,7 +2368,14 @@
 
       .vbxe_xdlhistory
 
-+ .vectors     Display kernel vectors
++ .vectors     Display system vectors
+
++ .via         Dump 6522 VIA status
+
+      .via
+
+    Displays the status of any 6522 Versatile Input Adapter (VIA) chips
+    in the system, particularly those in the Black Box.
 
 + .warmreset   Warm reset simulation
 

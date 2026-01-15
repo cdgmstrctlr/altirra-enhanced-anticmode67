@@ -58,10 +58,12 @@
     <ClInclude Include="h\1400xl.h" />
     <ClInclude Include="h\1450xld.h" />
     <ClInclude Include="h\820full.h" />
+    <ClInclude Include="h\850full.h" />
     <ClInclude Include="h\audiorawsource.h" />
     <ClInclude Include="h\asyncdownloader.h" />
     <ClInclude Include="h\autosavemanager.h" />
     <ClInclude Include="h\bit3.h" />
+    <ClInclude Include="h\blackboxfloppy.h" />
     <ClInclude Include="h\blockdevdiskadapter.h" />
     <ClInclude Include="h\blockdevvirtfat32.h" />
     <ClInclude Include="h\browser.h" />
@@ -73,6 +75,7 @@
     <ClInclude Include="h\constants.h" />
     <ClInclude Include="h\cputracer.h" />
     <ClInclude Include="h\customdevice.h" />
+    <ClInclude Include="h\customdevicevmtypes.h" />
     <ClInclude Include="h\customdevice_win32.h" />
     <ClInclude Include="h\debuggersettings.h" />
     <ClInclude Include="h\decode_png.h" />
@@ -85,6 +88,7 @@
     <ClInclude Include="h\diskdrivefullbase.h" />
     <ClInclude Include="h\diskdriveindusgt.h" />
     <ClInclude Include="h\diskdrivepercom.h" />
+    <ClInclude Include="h\diskdrivespeedyxf.h" />
     <ClInclude Include="h\diskdrivexf551.h" />
     <ClInclude Include="h\diskinterface.h" />
     <ClInclude Include="h\diskprofile.h" />
@@ -92,8 +96,11 @@
     <ClInclude Include="h\diskvirtimagebase.h" />
     <ClInclude Include="h\errordecode.h" />
     <ClInclude Include="h\fdc.h" />
-    <ClInclude Include="h\inputtypes.h" />
+    <ClInclude Include="h\inputdefs.h" />
+    <ClInclude Include="h\inputmap.h" />
     <ClInclude Include="h\mediamanager.h" />
+    <ClInclude Include="h\multiplexer.h" />
+    <ClInclude Include="h\ostracing.h" />
     <ClInclude Include="h\palettegenerator.h" />
     <ClInclude Include="h\palettesolver.h" />
     <ClInclude Include="h\pbidisk.h" />
@@ -125,6 +132,7 @@
     <ClCompile Include="source\1400xl.cpp" />
     <ClCompile Include="source\1450xld.cpp" />
     <ClCompile Include="source\820full.cpp" />
+    <ClCompile Include="source\850full.cpp" />
     <ClCompile Include="source\about.cpp" />
     <ClCompile Include="source\allocator.cpp" />
     <ClCompile Include="source\antic.cpp" />
@@ -144,6 +152,7 @@
     <ClCompile Include="source\artifacting_ntsc_sse2_intrin.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="source\artifacting_pal_neon.cpp" />
     <ClCompile Include="source\artifacting_pal_scalar.cpp" />
     <ClCompile Include="source\artifacting_pal_sse2.cpp">
       <ExcludedFromBuild Condition="'$(Platform)'=='ARM64'">true</ExcludedFromBuild>
@@ -158,6 +167,7 @@
     <ClCompile Include="source\audiomonitor.cpp" />
     <ClCompile Include="source\audiorawsource.cpp" />
     <ClCompile Include="source\audiosampleplayer.cpp" />
+    <ClCompile Include="source\audiostocksamples.cpp" />
     <ClCompile Include="source\audiowriter.cpp" />
     <ClCompile Include="source\autosavemanager.cpp" />
     <ClCompile Include="source\aviwriter.cpp" />
@@ -165,6 +175,7 @@
     <ClCompile Include="source\bit3.cpp" />
     <ClCompile Include="source\bkptmanager.cpp" />
     <ClCompile Include="source\blackbox.cpp" />
+    <ClCompile Include="source\blackboxfloppy.cpp" />
     <ClCompile Include="source\blockdevdiskadapter.cpp" />
     <ClCompile Include="source\blockdevvirtfat32.cpp" />
     <ClCompile Include="source\browser.cpp" />
@@ -202,6 +213,7 @@
     <ClCompile Include="source\cputracer.cpp" />
     <ClCompile Include="source\cs8900a.cpp" />
     <ClCompile Include="source\customdevice.cpp" />
+    <ClCompile Include="source\customdevicevmtypes.cpp" />
     <ClCompile Include="source\customdevice_win32.cpp" />
     <ClCompile Include="source\debugdisplay.cpp" />
     <ClCompile Include="source\debugger.cpp" />
@@ -229,6 +241,7 @@
     <ClCompile Include="source\diskdrivefullbase.cpp" />
     <ClCompile Include="source\diskdriveindusgt.cpp" />
     <ClCompile Include="source\diskdrivepercom.cpp" />
+    <ClCompile Include="source\diskdrivespeedyxf.cpp" />
     <ClCompile Include="source\diskdrivexf551.cpp" />
     <ClCompile Include="source\diskinterface.cpp" />
     <ClCompile Include="source\diskprofile.cpp" />
@@ -259,7 +272,9 @@
     <ClCompile Include="source\iderawimage.cpp" />
     <ClCompile Include="source\idevhdimage.cpp" />
     <ClCompile Include="source\inputcontroller.cpp" />
+    <ClCompile Include="source\inputdefs.cpp" />
     <ClCompile Include="source\inputmanager.cpp" />
+    <ClCompile Include="source\inputmap.cpp" />
     <ClCompile Include="source\irqcontroller.cpp" />
     <ClCompile Include="source\joystick.cpp" />
     <ClCompile Include="source\kmkjzide.cpp" />
@@ -273,9 +288,11 @@
     <ClCompile Include="source\modem.cpp" />
     <ClCompile Include="source\modemtcp.cpp" />
     <ClCompile Include="source\mpp1000e.cpp" />
+    <ClCompile Include="source\multiplexer.cpp" />
     <ClCompile Include="source\myide.cpp" />
     <ClCompile Include="source\options.cpp" />
     <ClCompile Include="source\oshelper.cpp" />
+    <ClCompile Include="source\ostracing.cpp" />
     <ClCompile Include="source\palettegenerator.cpp" />
     <ClCompile Include="source\palettesolver.cpp" />
     <ClCompile Include="source\pbi.cpp" />
@@ -283,6 +300,7 @@
     <ClCompile Include="source\pclink.cpp" />
     <ClCompile Include="source\pclink_win32.cpp" />
     <ClCompile Include="source\pia.cpp" />
+    <ClCompile Include="source\pipeserial_win32.cpp" />
     <ClCompile Include="source\pocketmodem.cpp" />
     <ClCompile Include="source\pokeysavecompat.cpp" />
     <ClCompile Include="source\pokeytrace.cpp" />
@@ -320,12 +338,14 @@
     <ClCompile Include="source\sx212.cpp" />
     <ClCompile Include="source\textdom.cpp" />
     <ClCompile Include="source\texteditor.cpp" />
+    <ClCompile Include="source\thepill.cpp" />
     <ClCompile Include="source\trace.cpp" />
     <ClCompile Include="source\tracecpu.cpp" />
     <ClCompile Include="source\tracefileencoding.cpp" />
     <ClCompile Include="source\tracefileformat.cpp" />
     <ClCompile Include="source\traceimporta800.cpp" />
     <ClCompile Include="source\traceio.cpp" />
+    <ClCompile Include="source\tracenative.cpp" />
     <ClCompile Include="source\tracetape.cpp" />
     <ClCompile Include="source\tracevideo.cpp" />
     <ClCompile Include="source\ui.cpp" />
@@ -344,11 +364,13 @@
     <ClCompile Include="source\uicompatdb.cpp" />
     <ClCompile Include="source\uiconf850.cpp" />
     <ClCompile Include="source\uiconfblackbox.cpp" />
+    <ClCompile Include="source\uiconfdev1020.cpp" />
     <ClCompile Include="source\uiconfdev1400xl.cpp" />
     <ClCompile Include="source\uiconfdev815.cpp" />
     <ClCompile Include="source\uiconfdevamdc.cpp" />
     <ClCompile Include="source\uiconfdev1030.cpp" />
     <ClCompile Include="source\uiconfdevatr8000.cpp" />
+    <ClCompile Include="source\uiconfdevblackboxfloppy.cpp" />
     <ClCompile Include="source\uiconfdevcomputereyes.cpp" />
     <ClCompile Include="source\uiconfdevcorvus.cpp" />
     <ClCompile Include="source\uiconfdevcovox.cpp" />
@@ -357,9 +379,11 @@
     <ClCompile Include="source\uiconfdevhappy810.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide.cpp" />
     <ClCompile Include="source\uiconfdevkmkjzide2.cpp" />
+    <ClCompile Include="source\uiconfdevmultiplexer.cpp" />
     <ClCompile Include="source\uiconfdevnetserial.cpp" />
     <ClCompile Include="source\uiconfdevparfilewriter.cpp" />
     <ClCompile Include="source\uiconfdevpercom.cpp" />
+    <ClCompile Include="source\uiconfdevpipeserial.cpp" />
     <ClCompile Include="source\uiconfdevpocketmodem.cpp" />
     <ClCompile Include="source\uiconfdevprinter.cpp" />
     <ClCompile Include="source\uiconfdevside3.cpp" />
@@ -432,7 +456,6 @@
     <ClCompile Include="source\uimessagebox.cpp" />
     <ClCompile Include="source\uimrulist.cpp" />
     <ClCompile Include="source\uionscreenkeyboard.cpp" />
-    <ClCompile Include="source\uioptions.cpp" />
     <ClCompile Include="source\uipclink.cpp" />
     <ClCompile Include="source\uiphysdisk.cpp" />
     <ClCompile Include="source\uiportmenus.cpp" />
@@ -450,6 +473,7 @@
     <ClCompile Include="source\uiupdatecheck.cpp" />
     <ClCompile Include="source\uiverifier.cpp" />
     <ClCompile Include="source\uivideodisplaywindow.cpp" />
+    <ClCompile Include="source\uifullscreenmode.cpp" />
     <ClCompile Include="source\uivideooutputmenu.cpp" />
     <ClCompile Include="source\uivideorecording.cpp" />
     <ClCompile Include="source\ultimate1mb.cpp" />
@@ -460,6 +484,8 @@
     <ClCompile Include="source\vbxestate.cpp" />
     <ClCompile Include="source\verifier.cpp" />
     <ClCompile Include="source\veronica.cpp" />
+    <ClCompile Include="source\vgmplayer.cpp" />
+    <ClCompile Include="source\vgmwriter.cpp" />
     <ClCompile Include="source\videostillimage.cpp" />
     <ClCompile Include="source\videomanager.cpp" />
     <ClCompile Include="source\videowriter.cpp" />
@@ -543,11 +569,13 @@
     <ClInclude Include="h\scsidisk.h" />
     <ClInclude Include="h\sdrive.h" />
     <ClInclude Include="h\startuplogger.h" />
+    <ClInclude Include="h\thepill.h" />
     <ClInclude Include="h\trace.h" />
     <ClInclude Include="h\tracecpu.h" />
     <ClInclude Include="h\tracefileencoding.h" />
     <ClInclude Include="h\tracefileformat.h" />
     <ClInclude Include="h\traceio.h" />
+    <ClInclude Include="h\tracenative.h" />
     <ClInclude Include="h\tracetape.h" />
     <ClInclude Include="h\tracevideo.h" />
     <ClInclude Include="h\uiaccessors.h" />
@@ -579,6 +607,7 @@
     <ClInclude Include="h\uifilefilters.h" />
     <ClInclude Include="h\uifirmwaremenu.h" />
     <ClInclude Include="h\uifrontend.h" />
+    <ClInclude Include="h\uifullscreenmode.h" />
     <ClInclude Include="h\uihistoryview.h" />
     <ClInclude Include="h\uipageddialog.h" />
     <ClInclude Include="h\uisavestate.h" />
@@ -588,6 +617,8 @@
     <ClInclude Include="h\updatefeed.h" />
     <ClInclude Include="h\vbxestate.h" />
     <ClInclude Include="h\veronica.h" />
+    <ClInclude Include="h\vgmplayer.h" />
+    <ClInclude Include="h\vgmwriter.h" />
     <ClInclude Include="h\videomanager.h" />
     <ClInclude Include="h\videostillimage.h" />
     <ClInclude Include="h\warpos.h" />
@@ -656,6 +687,10 @@
     <PackResource Include="..\..\obj\Release\Kernel\pbidisk.bin">
       <FileType>Document</FileType>
       <SymbolName>g_ATPBIDiskFirmware</SymbolName>
+    </PackResource>
+    <PackResource Include="..\..\obj\Release\Kernel\playvgm.xex">
+      <FileType>Document</FileType>
+      <SymbolName>g_ATVgmPlayer</SymbolName>
     </PackResource>
     <None Include="..\..\obj\Release\Kernel\rapidflash.lzrom" />
     <None Include="..\..\out\release\1030firmware.bin" />
@@ -828,6 +863,8 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <Image Include="firmware.png" />
+    <Image Include="res\firmware.png" />
     <Image Include="res\profilerToolbar.png" />
     <Image Include="res\traceViewerToolbar.png" />
     <Image Include="res\warning.png" />

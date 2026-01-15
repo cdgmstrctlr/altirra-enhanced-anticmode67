@@ -305,11 +305,13 @@ void ATVorbisRenderFloorLine_SSE2(uint32_t x, uint32_t y, uint32_t x1, uint32_t 
 #endif
 
 #if defined(VD_CPU_ARM64)
-void ATVorbisRenderFloorLine_NEON(uint32_t x, uint32_t y, uint32_t x1, uint32_t y1, float *dst, uint32_t limit) {
+void ATVorbisRenderFloorLine_NEON(uint32_t x, uint32_t y, uint32_t x1, uint32_t y1, float *dst0, uint32_t limit) {
 	// The floor curve may extend beyond the length of the residue vector, so we must
 	// clip it on the right.
 	if (x >= limit)
 		return;
+
+	float* VDRESTRICT dst = dst0;
 
 	const int32_t dy = y1 - y;
 	const int32_t adx = x1 - x;
@@ -381,19 +383,38 @@ void ATVorbisRenderFloorLine_NEON(uint32_t x, uint32_t y, uint32_t x1, uint32_t 
 		int16x8_t vyclamp = vmovq_n_s16(0x80FF - 0x10000);
 
 		// do 8x
+		uintptr invDbTab = (uintptr)g_ATVorbisInverseDbTable - 0x8000*sizeof(float);
+
 		while(n >= 8) {
 			n -= 8;
 
 			// extract 4 values
 			uint16x8_t vyc = vreinterpretq_u16_s16(vminq_s16(vy, vyclamp));
-			dst[0] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 0) - 0x8000];
-			dst[1] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 1) - 0x8000];
-			dst[2] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 2) - 0x8000];
-			dst[3] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 3) - 0x8000];
-			dst[4] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 4) - 0x8000];
-			dst[5] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 5) - 0x8000];
-			dst[6] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 6) - 0x8000];
-			dst[7] *= g_ATVorbisInverseDbTable[vgetq_lane_u16(vyc, 7) - 0x8000];
+
+			const float* VDRESTRICT fl0 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 0)*4);
+			const float* VDRESTRICT fl1 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 1)*4);
+			const float* VDRESTRICT fl2 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 2)*4);
+			const float* VDRESTRICT fl3 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 3)*4);
+			const float* VDRESTRICT fl4 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 4)*4);
+			const float* VDRESTRICT fl5 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 5)*4);
+			const float* VDRESTRICT fl6 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 6)*4);
+			const float* VDRESTRICT fl7 = (const float*)(invDbTab + (size_t)vgetq_lane_u16(vyc, 7)*4);
+
+			float32x4_t fa;
+			fa = vld1q_dup_f32(fl0);
+			fa = vld1q_lane_f32(fl1, fa, 1);
+			fa = vld1q_lane_f32(fl2, fa, 2);
+			fa = vld1q_lane_f32(fl3, fa, 3);
+
+			float32x4_t fb;
+			fb = vld1q_dup_f32(fl4);
+			fb = vld1q_lane_f32(fl5, fb, 1);
+			fb = vld1q_lane_f32(fl6, fb, 2);
+			fb = vld1q_lane_f32(fl7, fb, 3);
+
+			vst1q_f32(dst, vmulq_f32(fa, vld1q_f32(dst)));
+			vst1q_f32(dst + 4, vmulq_f32(fb, vld1q_f32(dst + 4)));
+
 			dst += 8;
 
 			// advance all four accumulators

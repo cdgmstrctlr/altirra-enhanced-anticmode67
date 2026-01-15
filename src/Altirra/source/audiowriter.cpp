@@ -165,9 +165,8 @@ void ATAudioWriter::CheckExceptions() {
 		return;
 
 	if (!mError.empty()) {
-		MyError e;
+		VDException e(std::move(mError));
 
-		e.TransferFrom(mError);
 		throw e;
 	}
 }
@@ -240,9 +239,9 @@ void ATAudioWriter::WriteRawAudio(const float *left, const float *right, uint32 
 		}
 
 		if (mpUIRenderer)
-			mpUIRenderer->SetRecordingPosition((float)mTotalInputSamples * mInvSampleRate, mFile.tell());
+			mpUIRenderer->SetRecordingPosition((float)mTotalInputSamples * mInvSampleRate, mFile.tell(), false);
 	} catch(MyError& e) {
-		mError.TransferFrom(e);
+		mError = std::move(e);
 		mbErrorState = true;
 	}
 }

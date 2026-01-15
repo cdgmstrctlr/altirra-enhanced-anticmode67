@@ -2273,7 +2273,7 @@ void ATELFSymbolReader::Read(ATSymbolStore& symstore, IVDRandomAccessStream& str
 			uint32 address = 0;
 			uint32 file = 1;
 			uint32 line = 1;
-			uint32 column = 0;
+			[[maybe_unused]] uint32 column = 0;		// Decoded, but not used yet (internal symbol info lacks column).
 			uint32 opIndex = 0;
 
 			uint32 pendingAddress = 0;

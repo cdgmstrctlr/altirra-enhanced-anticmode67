@@ -33,6 +33,11 @@ public:
 	virtual ATCPUBeamPosition DecodeBeamPosition(uint32 cycle) = 0;
 	virtual bool IsInterruptPositionVBI(uint32 cycle) = 0;
 	virtual bool UpdatePreviewNode(ATCPUHistoryEntry& he) = 0;
+
+	// If true, this history model can revise the last history node in order
+	// to update the effective address.
+	virtual bool ShouldRefreshPrevNode() const { return false; }
+
 	virtual uint32 ReadInsns(const ATCPUHistoryEntry **ppInsns, uint32 startIndex, uint32 n) = 0;
 	virtual void OnEsc() = 0;
 	virtual void OnInsnSelected(uint32 index) = 0;

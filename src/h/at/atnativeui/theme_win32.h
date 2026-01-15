@@ -26,11 +26,15 @@ struct ATUIThemeColorsW32 {
 	COLORREF mContentBgCRef;
 	COLORREF mContentFgCRef;
 	COLORREF mDisabledFgCRef;
+	COLORREF mComboBoxBgCRef;
+	COLORREF mComboBoxBorderCRef;
 	HBRUSH mStaticBgBrush;
 	HBRUSH mStaticFgBrush;
 	HBRUSH mContentBgBrush;
 	HBRUSH mContentFgBrush;
 	HBRUSH mDisabledFgBrush;
+	HBRUSH mComboBoxBgBrush;
+	HBRUSH mComboBoxBorderBrush;
 };
 
 const ATUIThemeColorsW32& ATUIGetThemeColorsW32();

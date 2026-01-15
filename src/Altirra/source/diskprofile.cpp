@@ -278,6 +278,14 @@ constexpr void ATDiskProfile::Init(ATDiskEmulationMode mode) {
 			mbBufferSector1 = true;
 			break;
 
+		case kATDiskEmulationMode_IndusGT:
+			mbSupportCommandTruncation = true;
+			break;
+
+		case kATDiskEmulationMode_XF551:
+			mbRequireCommandDeassertCheck = true;
+			break;
+
 		default:
 			break;
 	}

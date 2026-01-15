@@ -844,6 +844,9 @@ void ATDiskFSDOS2::ReadFile(ATDiskFSKey key, vdfastvector<uint8>& dst) {
 	const uint8 fileId = (uint8)((uint32)key & 63);
 	const DirEnt& de = mDirectory[fileId];
 
+	if (mbMyDOS && (de.mFlags & DirEnt::kFlagSubDir))
+		throw ATDiskFSException(kATDiskFSError_NotAFile);
+
 	uint32 sector = de.mFirstSector;
 
 	std::fill(mTempSectorMap.begin(), mTempSectorMap.end(), 0);

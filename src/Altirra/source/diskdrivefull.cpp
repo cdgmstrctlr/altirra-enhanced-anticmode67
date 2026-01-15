@@ -1009,13 +1009,9 @@ void ATDeviceDiskDriveFull::Init() {
 		mRIOT.SetInputA(0x40, 0x40);
 	}
 
-	// In general, Atari-compatible disk drives use FDCs that spec timings in their datasheets
-	// for 2MHz, but run them at 1MHz in 8" mode. Therefore, we push in a period factor of 2x
-	// to scale all of the timings appropriately.
-	mFDC.Init(&mDriveScheduler, 288.0f, mb1050 ? 2.0f : 1.0f, mb1050 || mDeviceType == kDeviceType_810Turbo ? ATFDCEmulator::kType_2793 : ATFDCEmulator::kType_1771);
+	mFDC.Init(&mDriveScheduler, 288.0f, 1.0f, mb1050 || mDeviceType == kDeviceType_810Turbo ? ATFDCEmulator::kType_2793 : ATFDCEmulator::kType_1771);
 
 	if (mb1050) {
-		mFDC.SetDoubleClock(true);
 		mFDC.SetOnIndexChange(
 			[this](bool index) {
 				mRIOT.SetInputA(0x60, index ? 0x60 : 0);

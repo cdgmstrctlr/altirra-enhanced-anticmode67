@@ -44,10 +44,10 @@ public:
 	TextEditor();
 	~TextEditor();
 
-	int AddRef() { return ATUINativeWindow::AddRef(); }
-	int Release() { return ATUINativeWindow::Release(); }
+	int AddRef() override { return ATUINativeWindow::AddRef(); }
+	int Release() override { return ATUINativeWindow::Release(); }
 
-	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id);
+	VDGUIHandle Create(uint32 exStyle, uint32 style, int x, int y, int cx, int cy, VDGUIHandle parent, int id) override;
 
 	void	SetCallback(IVDTextEditorCallback *pCB) override;
 	void	SetColorizer(IVDTextEditorColorizer *pColorizer) override;
@@ -104,11 +104,11 @@ public:
 	void	InsertAt(int para, int offset, const wchar_t *s) override;
 	void	RemoveAt(int para1, int offset1, int para2, int offset2) override;
 
-	void	Load(IVDStream& stream);
-	void	Save(IVDTextEditorStreamOut& streamout);
+	void	Load(IVDStream& stream) override;
+	void	Save(IVDTextEditorStreamOut& streamout) override;
 
 private:
-	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam);
+	LRESULT WndProc(UINT msg, WPARAM wParam, LPARAM lParam) override;
 
 	void OnCreate();
 	void OnDestroy();

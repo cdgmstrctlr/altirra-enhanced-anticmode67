@@ -75,8 +75,8 @@ public:
 	double GetCurrentRunTimeSeconds() const override;
 	uint32 GetCurrentColdStartId() const override;
 
-	bool GetRewindEnabled() const;
-	void SetRewindEnabled(bool enable);
+	bool GetRewindEnabled() const override;
+	void SetRewindEnabled(bool enable) override;
 
 	void Rewind() override;
 	void GetRewindStates(vdvector<vdrefptr<IATAutoSaveView>>& stateViews) override;

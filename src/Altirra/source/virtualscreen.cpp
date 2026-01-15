@@ -30,8 +30,8 @@ public:
 	ATVirtualScreenHandler(ATCPUEmulatorMemory& mem);
 	~ATVirtualScreenHandler();
 
-	void GetScreen(uint32& width, uint32& height, const uint8 *&screen) const;
-	bool GetCursorInfo(uint32& x, uint32& y) const;
+	void GetScreen(uint32& width, uint32& height, const uint8 *&screen) const override;
+	bool GetCursorInfo(uint32& x, uint32& y) const override;
 
 	void SetReadyCallback(const vdfunction<void()>& fn) override;
 	bool IsReadyForInput() const override;
@@ -46,13 +46,13 @@ public:
 	void ReadScreenAsInput() override;
 	void PushLine(const char *line) override;
 
-	bool IsPassThroughEnabled() const { return mbPassThrough; }
-	bool IsRawInputActive() const { return !mbWaitingForInput || !mbLineInputEnabled; }
-	void SetShiftControlLockState(bool shift, bool ctrl);
-	bool GetShiftLockState() const;
-	bool GetControlLockState() const;
+	bool IsPassThroughEnabled() const override { return mbPassThrough; }
+	bool IsRawInputActive() const override { return !mbWaitingForInput || !mbLineInputEnabled; }
+	void SetShiftControlLockState(bool shift, bool ctrl) override;
+	bool GetShiftLockState() const override;
+	bool GetControlLockState() const override;
 
-	bool CheckForBell() {
+	bool CheckForBell() override {
 		bool pending = mbBellPending;
 		mbBellPending = false;
 		return pending;
@@ -1026,8 +1026,12 @@ void ATVirtualScreenHandler::PutChar(uint8 c, bool updateCursor) {
 					uint8 outgoingChar = line[mLeftMargin];
 
 					uint8 deleteX = (i == 1) ? mX : mLeftMargin;
-					if (mRightMargin > deleteX)
-						memmove(line + deleteX, line + deleteX + 1, mRightMargin - deleteX);
+					if (mRightMargin >= deleteX) {
+						if (mRightMargin > deleteX)
+							memmove(line + deleteX, line + deleteX + 1, mRightMargin - deleteX);
+
+						line[mRightMargin] = incomingChar;
+					}
 
 					incomingChar = outgoingChar;
 				}

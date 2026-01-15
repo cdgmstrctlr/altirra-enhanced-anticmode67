@@ -27,6 +27,7 @@
     <ClCompile Include="source\accessibility_win32.cpp" />
     <ClCompile Include="source\canvas_win32.cpp" />
     <ClCompile Include="source\controlstyles.cpp" />
+    <ClCompile Include="source\debug_win32.cpp" />
     <ClCompile Include="source\dialog.cpp" />
     <ClCompile Include="source\dragdrop.cpp" />
     <ClCompile Include="source\genericdialog.cpp" />
@@ -50,6 +51,7 @@
     <ClInclude Include="..\h\at\atnativeui\accessibility_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\canvas_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\controlstyles.h" />
+    <ClInclude Include="..\h\at\atnativeui\debug_win32.h" />
     <ClInclude Include="..\h\at\atnativeui\dragdrop.h" />
     <ClInclude Include="..\h\at\atnativeui\genericdialog.h" />
     <ClInclude Include="..\h\at\atnativeui\hotkeyscandialog.h" />

@@ -106,6 +106,22 @@ public:
 	}
 };
 
+template<typename T, ATSerializationStaticName T_Name, typename T_Base>
+class ATDerivedSnapExchangeObject : public T_Base {
+public:
+	const ATSerializationTypeDef& GetSerializationType() const override {
+		return g_ATSerializationAutoRegister<T, T_Name>.GetTypeDef();
+	}
+
+	void Deserialize(ATDeserializer& reader) override {
+		static_cast<T *>(this)->Exchange(reader);
+	}
+
+	void Serialize(ATSerializer& writer) const override {
+		const_cast<T *>(static_cast<const T *>(this))->Exchange(writer);
+	}
+};
+
 // Common snappable type for a plain unstructured memory buffer.
 class ATSaveStateMemoryBuffer final : public ATSnapObject<ATSaveStateMemoryBuffer, "ATSaveStateMemoryBuffer"> {
 public:

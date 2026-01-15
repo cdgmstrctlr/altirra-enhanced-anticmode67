@@ -16,6 +16,7 @@
 
 #include <stdafx.h>
 #include <bit>
+#include <vd2/system/bitmath.h>
 #include <vd2/system/cpuaccel.h>
 #include <at/atcore/savestate.h>
 #include <at/atcore/snapshotimpl.h>
@@ -67,6 +68,21 @@ ATSavedTraceCodecSparse::ATSavedTraceCodecSparse() {
 				shuffleMask[j] = 0x80;
 		}
 	}
+
+	for(int i=0; i<256; ++i) {
+		uint32 mask = i;
+
+		auto& shuffleMask = mPackLeftTab[i];
+		int dstIdx = 0;
+
+		for(int j=0; j<8; ++j) {
+			if (mask & (1 << j))
+				shuffleMask[dstIdx++] = j;
+		}
+
+		while(dstIdx < 8)
+			shuffleMask[dstIdx++] = 0x80;
+	}
 #endif
 }
 
@@ -79,43 +95,148 @@ void ATSavedTraceCodecSparse::Encode(ATSaveStateMemoryBuffer& dst, const uint8 *
 	if (rowSize > 32)
 		throw MyError("Cannot encode trace stripe: unsupported row geometry.");
 
-	vdfastvector<uint8> codecData;
-	uint8 codecbuf[36] {};
+	VDDEBUG2("Encoding %u rows\n", rowCount);
+
+	size_t minSize = rowSize * rowCount + 32;
+	vdfastvector<uint8> codecData(minSize);
+
+	size_t outputSize = 0;
 				
 #ifdef AT_PROFILE_TRACE_CODEC_STATISTICS
 	uint32 stat[32] {};
+#elif defined(VD_CPU_ARM64)
+
+	if (rowSize == 24) {
+		static const uint8 kBitMask[] { 1, 2, 4, 8, 16, 32, 64, 128 };
+		uint8x8_t vbitmask = vld1_u8(kBitMask);
+		uint8 *dst = codecData.data();
+
+		for(uint32 i = 0; i < rowCount; ++i) {
+			const uint8 *VDRESTRICT rowSrc = &src[i * rowSize];
+
+			uint8x8_t v0 = vld1_u8(rowSrc +  0);
+			uint8x8_t v1 = vld1_u8(rowSrc +  8);
+			uint8x8_t v2 = vld1_u8(rowSrc + 16);
+
+			uint8x8_t byteMask0 = vceqz_u8(v0);
+			uint8x8_t byteMask1 = vceqz_u8(v1);
+			uint8x8_t byteMask2 = vceqz_u8(v2);
+
+			uint8 mask0 = vaddv_u8(vbic_u8(vbitmask, byteMask0));
+			uint8 mask1 = vaddv_u8(vbic_u8(vbitmask, byteMask1));
+			uint8 mask2 = vaddv_u8(vbic_u8(vbitmask, byteMask2));
+
+			sint8 inc0 = vaddv_s8(vreinterpret_s8_u8(byteMask0));
+			sint8 inc1 = vaddv_s8(vreinterpret_s8_u8(byteMask1));
+			sint8 inc2 = vaddv_s8(vreinterpret_s8_u8(byteMask2));
+
+			uint8x8_t vpack0 = vtbl1_u8(v0, vld1_u8(mPackLeftTab[mask0]));
+			uint8x8_t vpack1 = vtbl1_u8(v1, vld1_u8(mPackLeftTab[mask1]));
+			uint8x8_t vpack2 = vtbl1_u8(v2, vld1_u8(mPackLeftTab[mask2]));
+
+			uint32 mask = mask0 + ((uint32)mask1 << 8) + ((uint32)mask2 << 16);
+
+			VDWriteUnalignedLEU32(dst, mask);
+			dst += 3 + 24;
+
+			vst1_u8(dst - 24, vpack0);
+			dst += inc0;
+
+			vst1_u8(dst - 16, vpack1);
+			dst += inc1;
+
+			vst1_u8(dst - 8, vpack2);
+			dst += inc2;
+		}
+
+		outputSize = dst - codecData.data();
+
+		goto post_encode;
+	}
+
+#elif defined(VD_CPU_X86) || defined(VD_CPU_X64)
+
+	if (VDCheckAllExtensionsEnabled(VDCPUF_SUPPORTS_POPCNT | CPUF_SUPPORTS_SSSE3)) {
+		if (rowSize == 24) {
+			[=, this, &codecData, &outputSize] VD_CPU_TARGET_LAMBDA("ssse3, popcnt") {
+				uint8 *dst = codecData.data();
+				__m128i vzero = _mm_setzero_si128();
+
+				for(uint32 i = 0; i < rowCount; ++i) {
+					const uint8 *VDRESTRICT rowSrc = &src[i * rowSize];
+
+					__m128i v0 = _mm_loadl_epi64((const __m128i *)(rowSrc + 0));
+					__m128i v1 = _mm_loadl_epi64((const __m128i *)(rowSrc + 8));
+					__m128i v2 = _mm_loadl_epi64((const __m128i *)(rowSrc + 16));
+					__m128i byteMask0 = _mm_cmpeq_epi8(v0, vzero);
+					__m128i byteMask1 = _mm_cmpeq_epi8(v1, vzero);
+					__m128i byteMask2 = _mm_cmpeq_epi8(v2, vzero);
+
+					uint8 mask0 = ~_mm_movemask_epi8(byteMask0);
+					uint8 mask1 = ~_mm_movemask_epi8(byteMask1);
+					uint8 mask2 = ~_mm_movemask_epi8(byteMask2);
+
+					dst[0] = mask0;
+					dst[1] = mask1;
+					dst[2] = mask2;
+					dst += 3;
+
+					_mm_storel_epi64((__m128i *)dst, _mm_shuffle_epi8(v0, _mm_loadl_epi64((const __m128i *)&mPackLeftTab[mask0])));
+					dst += _mm_popcnt_u32(mask0);
+
+					_mm_storel_epi64((__m128i *)dst, _mm_shuffle_epi8(v1, _mm_loadl_epi64((const __m128i *)&mPackLeftTab[mask1])));
+					dst += _mm_popcnt_u32(mask1);
+
+					_mm_storel_epi64((__m128i *)dst, _mm_shuffle_epi8(v2, _mm_loadl_epi64((const __m128i *)&mPackLeftTab[mask2])));
+					dst += _mm_popcnt_u32(mask2);
+				}
+
+				outputSize = dst - codecData.data();
+			}();
+
+			goto post_encode;
+		}
+	}
+
 #endif
 
-	for(uint32 i = 0; i < rowCount; ++i) {
-		const uint8 *VDRESTRICT rowSrc = &src[i * rowSize];
+	{
+		uint8 *dst = codecData.data();
+		size_t maskLen = (rowSize + 7) >> 3;
 
-		uint32 mask = 0;
-		uint8 *dst = codecbuf + 4;
+		for(uint32 i = 0; i < rowCount; ++i) {
+			const uint8 *VDRESTRICT rowSrc = &src[i * rowSize];
 
-		for(uint32 j=0; j<rowSize; ++j) {
-			if (rowSrc[j]) {
-				*dst++ = rowSrc[j];
-				mask |= (1 << j);
+			uint32 mask = 0;
+			uint8 *maskPtr = dst;
+			dst += maskLen;
+
+			for(uint32 j=0; j<rowSize; ++j) {
+				if (rowSrc[j]) {
+					*dst++ = rowSrc[j];
+					mask |= (1 << j);
 #ifdef AT_PROFILE_TRACE_CODEC_STATISTICS
-				++stat[j];
+					++stat[j];
 #endif
+				}
+			}
+
+			if (rowSize <= 8) {
+				*maskPtr = (uint8)mask;
+			} else if (rowSize <= 16) {
+				VDWriteUnalignedLEU16(maskPtr, (uint16)mask);
+			} else if (rowSize <= 24) {
+				VDWriteUnalignedLEU16(maskPtr, (uint16)mask);
+				maskPtr[2] = (uint8)(mask >> 16);
+			} else {
+				VDWriteUnalignedLEU32(maskPtr, mask);
 			}
 		}
 
-		if (rowSize <= 8) {
-			codecbuf[3] = (uint8)mask;
-			codecData.insert(codecData.end(), codecbuf+3, dst);
-		} else if (rowSize <= 16) {
-			VDWriteUnalignedLEU16(codecbuf+2, (uint16)mask);
-			codecData.insert(codecData.end(), codecbuf+2, dst);
-		} else if (rowSize <= 24) {
-			VDWriteUnalignedLEU32(codecbuf, mask << 8);
-			codecData.insert(codecData.end(), codecbuf+1, dst);
-		} else {
-			VDWriteUnalignedLEU32(codecbuf, mask);
-			codecData.insert(codecData.end(), codecbuf, dst);
-		}
+		outputSize = dst - codecData.data();
 	}
+
+post_encode:
 
 #ifdef AT_PROFILE_TRACE_CODEC_STATISTICS
 	int stat2[32];
@@ -134,7 +255,7 @@ void ATSavedTraceCodecSparse::Encode(ATSaveStateMemoryBuffer& dst, const uint8 *
 	);
 #endif
 
-	dst.GetWriteBuffer().assign(codecData.begin(), codecData.end());
+	dst.GetWriteBuffer().assign(codecData.data(), codecData.data() + outputSize);
 }
 
 void ATSavedTraceCodecSparse::Decode(const ATSaveStateMemoryBuffer& buf, uint8 *dst, uint32 rowSize, size_t rowCount) const {
@@ -302,6 +423,7 @@ void ATSavedTraceCodecSparse::Decode_NEON(const ATSaveStateMemoryBuffer& buf, ui
 	const auto& readBuffer = buf.GetReadBuffer();
 	const uint8 *src = readBuffer.data();
 	const uint8 *srcEnd = src + readBuffer.size();
+	VDDEBUG2("Decoding %u rows\n", rowCount);
 	for(uint32 row = 0; row < rowCount; ++row) {
 		uint8 *VDRESTRICT decodeDst = &dst[rowSize*row];
 		const uint8 *VDRESTRICT decodeSrc = src;

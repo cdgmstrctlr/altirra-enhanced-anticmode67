@@ -35,6 +35,8 @@ namespace {
 		{ &ATUIThemeColors::mDisabledFg,	&ATUIThemeColorsW32::mDisabledFgBrush,	&ATUIThemeColorsW32::mDisabledFgCRef },
 		{ &ATUIThemeColors::mContentFg,		&ATUIThemeColorsW32::mContentFgBrush,	&ATUIThemeColorsW32::mContentFgCRef },
 		{ &ATUIThemeColors::mContentBg,		&ATUIThemeColorsW32::mContentBgBrush,	&ATUIThemeColorsW32::mContentBgCRef },
+		{ &ATUIThemeColors::mComboBoxBg,	&ATUIThemeColorsW32::mComboBoxBgBrush,	&ATUIThemeColorsW32::mComboBoxBgCRef },
+		{ &ATUIThemeColors::mComboBoxBorder,	&ATUIThemeColorsW32::mComboBoxBorderBrush,	&ATUIThemeColorsW32::mComboBoxBorderCRef },
 	};
 
 	void ATUIUpdateDarkThemeColors() {
@@ -98,6 +100,8 @@ void ATUIUpdateThemeColors() {
 	tc.mActiveCaption2		= VDSwizzleU32(GetSysColor(COLOR_GRADIENTACTIVECAPTION)) >> 8;
 	tc.mInactiveCaption1	= VDSwizzleU32(GetSysColor(COLOR_INACTIVECAPTION)) >> 8;
 	tc.mInactiveCaption2	= VDSwizzleU32(GetSysColor(COLOR_GRADIENTINACTIVECAPTION)) >> 8;
+	tc.mListViewHeaderDivider = 0x808080;
+	tc.mComboBoxBorder = 0x606060;
 
 	if (g_ATUIDarkThemeEnabled) {
 		auto darken = [](uint32 c, float lumaFactor, float chromaFactor) {
@@ -147,6 +151,10 @@ void ATUIUpdateThemeColors() {
 
 		tc.mFocusedBg		= 0x505050;
 		tc.mFocusedRect		= 0x808080;
+
+		tc.mListViewHeaderBg = tc.mStaticBg;
+		tc.mListViewHeaderFg = tc.mStaticFg;
+		tc.mComboBoxBg = tc.mContentBg;
 	} else {
 		tc.mActiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_CAPTIONTEXT)) >> 8;
 		tc.mInactiveCaptionText	= VDSwizzleU32(GetSysColor(COLOR_INACTIVECAPTIONTEXT)) >> 8;
@@ -190,6 +198,10 @@ void ATUIUpdateThemeColors() {
 		tc.mButtonFg = VDSwizzleU32(GetSysColor(COLOR_BTNTEXT)) >> 8;
 
 		tc.mFocusedBg = tc.mHighlightedBg;
+
+		tc.mListViewHeaderBg = tc.mButtonBg;
+		tc.mListViewHeaderFg = tc.mButtonFg;
+		tc.mComboBoxBg = tc.mContentBg;
 	}
 	
 	tc.mButtonPushedBg	= (tc.mStaticFg | tc.mButtonBg) - (((tc.mStaticFg ^ tc.mButtonBg) & 0xfefefe) >> 1);

@@ -84,15 +84,12 @@ private:
 	uint16		mU = 0;
 	uint32		mData = 0;	
 	uint16		mAddr = 0;
-	uint16		mAddr2 = 0;
-	uint8		mAddrBank = 0;
 	uint16		mPC = 0;
 	uint16		mInsnPC = 0;
 	sint32		mCyclesLeft = 0;
 	uint32		mCyclesBase = 0;
 	const uint8	*mpNextState = nullptr;
 	const uint8	*mpSavedState = nullptr;
-	const uint16 *mpDecodePtrs = nullptr;
 
 	bool		mbIntAttention = false;
 	bool		mbIrqAsserted = false;

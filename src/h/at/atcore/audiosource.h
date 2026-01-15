@@ -53,11 +53,9 @@
 // pass filter at about 15KHz.
 //
 
-enum {
-	kATCyclesPerSyncSample = 28
-};
+static constexpr int kATCyclesPerSyncSample = 28;
 
-struct ATSyncAudioMixInfo {
+struct ATAudioAsyncMixInfo {
 	// Start time in machine cycles (NOT samples). This time is guaranteed
 	// to be monotonic but not necessarily continuous -- the mixer is
 	// allowed to drop samples. This is considered a glitch and sources
@@ -95,16 +93,18 @@ struct ATSyncAudioMixInfo {
 	float *mpLeft;
 	float *mpRight;
 
+	// Mix levels (see ATAudioMix). Audio sources are expected to always
+	// use a mix level from this table, Other if nothing else.
+	const float *mpMixLevels;
+};
+
+struct ATSyncAudioMixInfo : public ATAudioAsyncMixInfo {
 	// DC mix levels. Any DC that needs to be added to the left or right
 	// channels can be added to these values instead; this is equivalent
 	// to and faster than adding the value to each entry in the mixing
 	// buffer. mDCRight is active only if mpRight is also active.
 	float *mpDCLeft;
 	float *mpDCRight;
-
-	// Mix levels (see ATAudioMix). Audio sources are expected to always
-	// use a mix level from this table, Other if nothing else.
-	const float *mpMixLevels;
 };
 
 class IATSyncAudioSource {
@@ -124,6 +124,12 @@ public:
 
 	// Mix audio into the mixbus.
 	virtual void WriteAudio(const ATSyncAudioMixInfo& mixInfo) = 0;
+};
+
+class IATAudioAsyncSource {
+public:
+	virtual bool RequiresStereoMixingNow() const = 0;
+	virtual bool WriteAsyncAudio(const ATAudioAsyncMixInfo& mixInfo) = 0;
 };
 
 #endif

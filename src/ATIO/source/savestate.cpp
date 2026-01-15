@@ -29,11 +29,11 @@ class ATSaveStateImage2 final : public vdrefcounted<IATSaveStateImage2> {
 public:
 	ATSaveStateImage2(IATSerializable *rootObj);
 
-	void *AsInterface(uint32 id);
+	void *AsInterface(uint32 id) override;
 
 	ATImageType GetImageType() const override { return kATImageType_SaveState2; }
-	std::optional<uint32> GetImageFileCRC() const { return {}; }
-	std::optional<ATChecksumSHA256> GetImageFileSHA256() const { return {}; }
+	std::optional<uint32> GetImageFileCRC() const override { return {}; }
+	std::optional<ATChecksumSHA256> GetImageFileSHA256() const override { return {}; }
 
 	const IATSerializable *GetRoot() const override { return mpRoot; }
 

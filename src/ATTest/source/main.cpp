@@ -62,7 +62,9 @@ void ATTestHelp() {
 #if defined(VD_CPU_X86) || defined(VD_CPU_X64)
 	wprintf(L"        Tiers: sse2, sse3, ssse3, sse4.1, sse4.2, avx, avx2\n");
 #endif
+	wprintf(L"    /loop           Loop tests endlessly\n");
 	wprintf(L"    /v              Enable verbose test output\n");
+	wprintf(L"    /wait           Wait for input before exiting\n");
 	wprintf(L"\n");
 
 	wprintf(L"Available tests:\n");
@@ -140,6 +142,8 @@ int ATTestMain(int argc, wchar_t **argv) {
 	bool useBigCores = false;
 	bool useLittleCores = false;
 	bool testAllCpuExts = false;
+	bool waitBeforeExit = false;
+	bool loop = false;
 	uint32 selectedExts = 0;
 
 	if (argc <= 1) {
@@ -262,6 +266,16 @@ int ATTestMain(int argc, wchar_t **argv) {
 				continue;
 			}
 
+			if (test == L"/wait") {
+				waitBeforeExit = true;
+				continue;
+			}
+
+			if (test == L"/loop") {
+				loop = true;
+				continue;
+			}
+
 			if (test[0] == L'/') {
 				wprintf(L"Unknown switch: %ls\n", argv[i]);
 				exit(5);
@@ -331,7 +345,7 @@ next:
 							ULONG maxStructSize = infoSize - 8;
 							if (info->Type == CpuSetInformation) {
 								if (maxStructSize >= sizeof(info->CpuSet)) {
-									printf("    ID %08X | Group %04X | LPI %02X | CoreIndex %02X | LLCI %02X | Numa %02X | EfficiencyClass %02X\n"
+									printf("    ID %08lX | Group %04X | LPI %02X | CoreIndex %02X | LLCI %02X | Numa %02X | EfficiencyClass %02X\n"
 										, info->CpuSet.Id
 										, info->CpuSet.Group
 										, info->CpuSet.LogicalProcessorIndex
@@ -385,7 +399,7 @@ next:
 
 	if (selectedExts) {
 		if ((selectedExts & exts) != selectedExts) {
-			printf("Error: Cannot run tests with selected CPU extensions due to missing CPU extension: %08X\n", selectedExts & ~exts);
+			printf("Error: Cannot run tests with selected CPU extensions due to missing CPU extension: %08lX\n", selectedExts & ~exts);
 			return 10;
 		}
 
@@ -398,22 +412,34 @@ next:
 		if (testAllCpuExts)
 			wprintf(L"\n=== Setting CPU extensions: %08X ===\n\n", exts);
 
-		for(const SelectedTest& selTest : selectedTests) {
+		do {
+			for(const SelectedTest& selTest : selectedTests) {
 
-			wprintf(L"Running test: %hs\n", selTest.testInfo->mpName);
+				wprintf(L"Running test: %hs\n", selTest.testInfo->mpName);
 
-			try {
-				ATTestSetArguments(selTest.mArgs.c_str());
-				if (selTest.testInfo->mpTestFn())
-					throw ATTestAssertionException("Test returned non-zero code");
-			} catch(const ATTestAssertionException& e) {
-				wprintf(L"    TEST FAILED: %ls\n", e.wc_str());
-				++failedTests;
-			} catch(const VDException& e) {
-				wprintf(L"    TEST FAILED: Uncaught exception: %ls\n", e.wc_str());
-				++failedTests;
+				[&] {
+					__try {
+						[&] {
+							try {
+								ATTestSetArguments(selTest.mArgs.c_str());
+
+								if (selTest.testInfo->mpTestFn())
+									throw ATTestAssertionException("Test returned non-zero code");
+							} catch(const ATTestAssertionException& e) {
+								wprintf(L"    TEST FAILED: %ls\n", e.wc_str());
+								++failedTests;
+							} catch(const VDException& e) {
+								wprintf(L"    TEST FAILED: Uncaught exception: %ls\n", e.wc_str());
+								++failedTests;
+							}
+						}();
+					} __except(1) {
+						printf("FATAL ERROR: Structured exception %08lX occurred.\n", GetExceptionCode());
+						_exit(10);
+					}
+				}();
 			}
-		}
+		} while(loop);
 
 		if (!exts || !testAllCpuExts)
 			break;
@@ -422,6 +448,11 @@ next:
 	}
 
 	printf("Tests complete. Failures: %u\n", failedTests);
+
+	if (waitBeforeExit) {
+		puts("Press Enter to exit.");
+		getchar();
+	}
 
 	return failedTests;
 }

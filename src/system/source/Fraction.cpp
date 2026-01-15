@@ -263,7 +263,7 @@ bool VDFraction::Parse(const char *s) {
 	uint64 x = 0;
 	uint64 y = 1;
 
-	while(c = *s) {
+	while((c = *s)) {
 		uint32 offset = (uint32)c - '0';
 
 		if (offset >= 10)
@@ -281,7 +281,7 @@ bool VDFraction::Parse(const char *s) {
 	if (c == '.') {
 		++s;
 
-		while(c = *s) {
+		while((c = *s)) {
 			uint32 offset = (uint32)c - '0';
 
 			if (offset >= 10)

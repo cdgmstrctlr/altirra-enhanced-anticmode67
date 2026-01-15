@@ -212,8 +212,10 @@ void ATFilterNormalizeKernel(float *v, size_t n, float scale) {
 		v[i] *= scale;
 }
 
-template<bool T_Interp, bool T_DoubleToStereo>
-uint64 ATFilterResampleMono16_Scalar(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+template<bool T_Interp, bool T_DoubleToStereo, bool T_AddAux>
+uint64 ATFilterResampleMono16_Scalar(sint16 *d, const float *s, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc) {
+	static_assert(T_DoubleToStereo || !T_AddAux);
+
 	do {
 		const float *s2 = s + (accum >> 32);
 		const float *f = g_ATAudioResamplingKernel1.kernel[(uint32)accum >> 27];
@@ -247,7 +249,13 @@ uint64 ATFilterResampleMono16_Scalar(sint16 *d, const float *s, uint32 count, ui
 		accum += inc;
 
 		if (T_DoubleToStereo) {
-			d[0] = d[1] = VDClampedRoundFixedToInt16Fast(v);
+			if constexpr (T_AddAux) {
+				d[0] = VDClampedRoundFixedToInt16Fast(v + *auxLeft++);
+				d[1] = VDClampedRoundFixedToInt16Fast(v + *auxRight++);
+			} else {
+				d[0] = d[1] = VDClampedRoundFixedToInt16Fast(v);
+			}
+
 			d += 2;
 		} else
 			*d++ = VDClampedRoundFixedToInt16Fast(v);
@@ -257,8 +265,12 @@ uint64 ATFilterResampleMono16_Scalar(sint16 *d, const float *s, uint32 count, ui
 }
 
 #if VD_CPU_X86 || VD_CPU_X64
-template<bool T_Interp, bool T_DoubleToStereo>
-uint64 ATFilterResampleMonoToStereo16_SSE2(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+template<bool T_Interp, bool T_DoubleToStereo, bool T_AddAux>
+uint64 ATFilterResampleMonoToStereo16_SSE2(sint16 *d0, const float *s, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc) {
+	static_assert(T_DoubleToStereo || !T_AddAux);
+
+	sint16 *VDRESTRICT d = d0;
+
 	do {
 		const float *s2 = s + (accum >> 32);
 		const float *f = g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
@@ -284,6 +296,16 @@ uint64 ATFilterResampleMonoToStereo16_SSE2(sint16 *d, const float *s, uint32 cou
 		__m128 y3 = _mm_add_ps(y2, _mm_movehl_ps(y2, y2));
 		__m128 y4 = _mm_add_ps(y3, _mm_shuffle_ps(y3, y3, 0b00010001));
 
+		if constexpr (T_AddAux) {
+			__m128 auxL = _mm_load_ss(auxLeft++);
+			__m128 auxR = _mm_load_ss(auxRight++);
+
+			auxL = _mm_mul_ss(auxL, _mm_set_ss(32767.0f));
+			auxR = _mm_mul_ss(auxR, _mm_set_ss(32767.0f));
+
+			y4 = _mm_add_ps(y4, _mm_unpacklo_ps(auxL, auxR));
+		}
+
 		__m128i z0 = _mm_cvtps_epi32(y4);
 		__m128i z1 = _mm_packs_epi32(z0, z0);
 
@@ -299,8 +321,14 @@ uint64 ATFilterResampleMonoToStereo16_SSE2(sint16 *d, const float *s, uint32 cou
 #endif
 
 #if VD_CPU_ARM64
-template<bool T_Interp, bool T_DoubleToStereo>
-uint64 ATFilterResampleMonoToStereo16_NEON(sint16 *d, const float *s, uint32 count, uint64 accum, sint64 inc) {
+template<bool T_Interp, bool T_DoubleToStereo, bool T_AddAux>
+uint64 ATFilterResampleMonoToStereo16_NEON(sint16 *d0, const float *s, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc) {
+	static_assert(T_DoubleToStereo || !T_AddAux);
+
+	sint16 *VDRESTRICT d = d0;
+
+	[[maybe_unused]] float32x2_t auxScale = vdup_n_f32(32767.0f);
+
 	do {
 		const float *s2 = s + (accum >> 32);
 		const float *VDRESTRICT f = g_ATAudioResamplingKernel2.kernel[(uint32)accum >> 27];
@@ -324,6 +352,10 @@ uint64 ATFilterResampleMonoToStereo16_NEON(sint16 *d, const float *s, uint32 cou
 		float32x4_t y1 = vfmaq_f32(y0, c.val[1], x.val[1]);
 		float32x2_t y2 = vmov_n_f32(vaddvq_f32(y1));
 
+		if constexpr (T_AddAux) {
+			y2 = vmla_f32(y2, vset_lane_f32(*auxRight++, vdup_n_f32(*auxLeft++), 1), auxScale);
+		}
+
 		int32x2_t z0 = vcvtn_s32_f32(y2);
 		int16x4_t z1 = vqmovn_s32(vcombine_s32(z0, z0));
 
@@ -343,22 +375,22 @@ uint64 ATFilterResampleMono16(sint16 *d, const float *s, uint32 count, uint64 ac
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
 		if (interp)
-			return ATFilterResampleMonoToStereo16_SSE2<true, false>(d, s, count, accum, inc);
+			return ATFilterResampleMonoToStereo16_SSE2<true, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 		else
-			return ATFilterResampleMonoToStereo16_SSE2<false, false>(d, s, count, accum, inc);
+			return ATFilterResampleMonoToStereo16_SSE2<false, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 	}
 #endif
 
 #if VD_CPU_ARM64
 	if (interp)
-		return ATFilterResampleMonoToStereo16_NEON<true, false>(d, s, count, accum, inc);
+		return ATFilterResampleMonoToStereo16_NEON<true, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 	else
-		return ATFilterResampleMonoToStereo16_NEON<false, false>(d, s, count, accum, inc);
+		return ATFilterResampleMonoToStereo16_NEON<false, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 #else
 	if (interp)
-		return ATFilterResampleMono16_Scalar<true, false>(d, s, count, accum, inc);
+		return ATFilterResampleMono16_Scalar<true, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 	else
-		return ATFilterResampleMono16_Scalar<false, false>(d, s, count, accum, inc);
+		return ATFilterResampleMono16_Scalar<false, false, false>(d, s, nullptr, nullptr, count, accum, inc);
 #endif
 }
 
@@ -366,27 +398,50 @@ uint64 ATFilterResampleMonoToStereo16(sint16 *d, const float *s, uint32 count, u
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
 		if (interp)
-			return ATFilterResampleMonoToStereo16_SSE2<true, true>(d, s, count, accum, inc);
+			return ATFilterResampleMonoToStereo16_SSE2<true, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 		else
-			return ATFilterResampleMonoToStereo16_SSE2<false, true>(d, s, count, accum, inc);
+			return ATFilterResampleMonoToStereo16_SSE2<false, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 	}
 #endif
 
 #if VD_CPU_ARM64
 	if (interp)
-		return ATFilterResampleMonoToStereo16_NEON<true, true>(d, s, count, accum, inc);
+		return ATFilterResampleMonoToStereo16_NEON<true, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 	else
-		return ATFilterResampleMonoToStereo16_NEON<false, true>(d, s, count, accum, inc);
+		return ATFilterResampleMonoToStereo16_NEON<false, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 #else
 	if (interp)
-		return ATFilterResampleMono16_Scalar<true, true>(d, s, count, accum, inc);
+		return ATFilterResampleMono16_Scalar<true, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 	else
-		return ATFilterResampleMono16_Scalar<false, true>(d, s, count, accum, inc);
+		return ATFilterResampleMono16_Scalar<false, true, false>(d, s, nullptr, nullptr, count, accum, inc);
 #endif
 }
 
-template<bool T_Interp>
-uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+uint64 ATFilterResampleMonoToStereoAdd16(sint16 *d, const float *s, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc, bool interp) {
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled) {
+		if (interp)
+			return ATFilterResampleMonoToStereo16_SSE2<true, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+		else
+			return ATFilterResampleMonoToStereo16_SSE2<false, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+	}
+#endif
+
+#if VD_CPU_ARM64
+	if (interp)
+		return ATFilterResampleMonoToStereo16_NEON<true, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+	else
+		return ATFilterResampleMonoToStereo16_NEON<false, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+#else
+	if (interp)
+		return ATFilterResampleMono16_Scalar<true, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+	else
+		return ATFilterResampleMono16_Scalar<false, true, true>(d, s, auxLeft, auxRight, count, accum, inc);
+#endif
+}
+
+template<bool T_Interp, bool T_AddAux>
+static uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const float *s2, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc) {
 	do {
 		const float *VDRESTRICT r1 = s1 + (accum >> 32);
 		const float *VDRESTRICT r2 = s2 + (accum >> 32);
@@ -435,6 +490,11 @@ uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const floa
 				+ r2[6]*f6
 				+ r2[7]*f7;
 
+		if constexpr (T_AddAux) {
+			a += *auxLeft++;
+			b += *auxRight++;
+		}
+
 		d[0] = VDClampedRoundFixedToInt16Fast(a);
 		d[1] = VDClampedRoundFixedToInt16Fast(b);
 		d += 2;
@@ -444,8 +504,8 @@ uint64 ATFilterResampleStereo16_Reference(sint16 *d, const float *s1, const floa
 }
 
 #if VD_CPU_X86 || VD_CPU_X64
-template<bool T_Interp>
-uint64 ATFilterResampleStereo16_SSE2(sint16 *d0, const float *s1, const float *s2, uint32 count, uint64 accum, sint64 inc) {
+template<bool T_Interp, bool T_AddAux>
+uint64 ATFilterResampleStereo16_SSE2(sint16 *d0, const float *s1, const float *s2, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc) {
 	sint16 *VDRESTRICT d = d0;
 	do {
 		const float *VDRESTRICT r1 = s1 + (accum >> 32);
@@ -466,8 +526,13 @@ uint64 ATFilterResampleStereo16_SSE2(sint16 *d0, const float *s1, const float *s
 
 		accum += inc;
 
-		const __m128 l = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r1[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r1[4]), f1));
-		const __m128 r = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r2[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r2[4]), f1));
+		__m128 l = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r1[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r1[4]), f1));
+		__m128 r = _mm_add_ps(_mm_mul_ps(_mm_loadu_ps(&r2[0]), f0), _mm_mul_ps(_mm_loadu_ps(&r2[4]), f1));
+
+		if constexpr (T_AddAux) {
+			l = _mm_add_ss(l, _mm_load_ss(auxLeft++));
+			r = _mm_add_ss(r, _mm_load_ss(auxRight++));
+		}
 
 		// fold horizontally -> llrr
 		const __m128 lr1 = _mm_add_ps(_mm_shuffle_ps(l, r, 0b01'00'01'00), _mm_shuffle_ps(l, r, 0b11'10'11'10));
@@ -491,16 +556,32 @@ uint64 ATFilterResampleStereo16(sint16 *d, const float *s1, const float *s2, uin
 #if VD_CPU_X86 || VD_CPU_X64
 	if (SSE2_enabled) {
 		if (interp)
-			return ATFilterResampleStereo16_SSE2<true>(d, s1, s2, count, accum, inc);
+			return ATFilterResampleStereo16_SSE2<true, false>(d, s1, s2, nullptr, nullptr, count, accum, inc);
 		else
-			return ATFilterResampleStereo16_SSE2<false>(d, s1, s2, count, accum, inc);
+			return ATFilterResampleStereo16_SSE2<false, false>(d, s1, s2, nullptr, nullptr, count, accum, inc);
 	}
 #endif
 
 	if (interp)
-		return ATFilterResampleStereo16_Reference<true>(d, s1, s2, count, accum, inc);
+		return ATFilterResampleStereo16_Reference<true, false>(d, s1, s2, nullptr, nullptr, count, accum, inc);
 	else
-		return ATFilterResampleStereo16_Reference<false>(d, s1, s2, count, accum, inc);
+		return ATFilterResampleStereo16_Reference<false, false>(d, s1, s2, nullptr, nullptr, count, accum, inc);
+}
+
+uint64 ATFilterResampleStereoAdd16(sint16 *d, const float *s1, const float *s2, const float *auxLeft, const float *auxRight, uint32 count, uint64 accum, sint64 inc, bool interp) {
+#if VD_CPU_X86 || VD_CPU_X64
+	if (SSE2_enabled) {
+		if (interp)
+			return ATFilterResampleStereo16_SSE2<true, true>(d, s1, s2, auxLeft, auxRight, count, accum, inc);
+		else
+			return ATFilterResampleStereo16_SSE2<false, true>(d, s1, s2, auxLeft, auxRight, count, accum, inc);
+	}
+#endif
+
+	if (interp)
+		return ATFilterResampleStereo16_Reference<true, true>(d, s1, s2, auxLeft, auxRight, count, accum, inc);
+	else
+		return ATFilterResampleStereo16_Reference<false, true>(d, s1, s2, auxLeft, auxRight, count, accum, inc);
 }
 
 ///////////////////////////////////////////////////////////////////////////

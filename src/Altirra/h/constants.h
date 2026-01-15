@@ -54,11 +54,13 @@ enum ATHardwareMode : uint32 {
 AT_DECLARE_ENUM_TABLE(ATHardwareMode);
 
 struct ATHardwareModeTraits {
-	bool mbRunsXLOS : 1;
-	bool mbHasPort34 : 1;
-	bool mbFloatingDataBus : 1;
-	bool mbInternalBASIC : 1;
-	bool mbSupportsPBI : 1;
+	bool mbRunsXLOS : 1;			// computer uses XL/XE class OS
+	bool mbHasPort34 : 1;			// joystick ports 3/4 present
+	bool mbFloatingDataBus : 1;		// data bus is floating instead of pulled up
+	bool mbInternalBASIC : 1;		// computer has internal BASIC (PB1 controlled)
+	bool mbSupportsPBI : 1;			// PBI/ECI port present
+	bool mbHasSIO12V : 1;			// +12V on SIO port connected
+	bool mbHas9VACPower : 1;		// computer uses 9VAC power input
 };
 
 extern const ATHardwareModeTraits kATHardwareModeTraits[];

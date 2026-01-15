@@ -26,6 +26,7 @@
 class IVDTextEditor;
 class ATPrinterGraphicalOutput;
 class ATPrinterOutput;
+class ATPrinterOutputBase;
 class ATPrinterOutputManager;
 class ATUIPrinterGraphicalOutputWindow;
 
@@ -43,10 +44,19 @@ protected:
 	void OnFontsUpdated() override;
 	void OnSetFocus() override;
 
+	void OnToolbarItemClicked(uint32 id);
+
+	void Clear();
+	void ResetView();
+
 	void OnAddedOutput(ATPrinterOutput& output);
 	void OnRemovingOutput(ATPrinterOutput& output);
 	void OnAddedGraphicalOutput(ATPrinterGraphicalOutput& output);
 	void OnRemovingGraphicalOutput(ATPrinterGraphicalOutput& output);
+
+	void AddOutput(ATPrinterOutputBase& output);
+	void RemoveOutput(ATPrinterOutputBase& output);
+	void UpdateToolbarForOutput();
 
 	void AttachToAnyOutput();
 
@@ -57,24 +67,40 @@ protected:
 	void AttachToGraphicsOutput(ATPrinterGraphicalOutput& output);
 	void DetachFromGraphicsOutput();
 
-	vdrefptr<IVDTextEditor> mpTextEditor;
-	HWND	mhwndTextEditor;
+	struct PrinterOutputSort;
 
-	uint32		mLineBufIdx;
-	wchar_t		mLineBuf[133];
+	enum : uint32 {
+		kControlId_TextEditor = 100,
+		kControlId_Toolbar,
+		kControlId_Output,
+		kControlId_Clear,
+		kControlId_ResetView
+	};
+
+	vdrefptr<IVDTextEditor> mpTextEditor;
+	HWND	mhwndTextEditor = nullptr;
+	HWND	mhwndToolbar = nullptr;
+
+	uint32		mLineBufIdx = 0;
+	wchar_t		mLineBuf[133] {};
 
 	size_t mLastTextOffset = 0;
 
 	ATPrinterOutput *mpTextOutput = nullptr;
 	ATPrinterGraphicalOutput *mpGraphicsOutput = nullptr;
-
+	
 	vdrefptr<ATUIPrinterGraphicalOutputWindow> mpGraphicWindow;
 	vdrefptr<ATPrinterOutputManager> mpOutputMgr;
+
+	vdvector<ATPrinterOutputBase *> mPrinterOutputs;
 
 	vdfunction<void(ATPrinterOutput&)> mAddedOutputFn;
 	vdfunction<void(ATPrinterOutput&)> mRemovingOutputFn;
 	vdfunction<void(ATPrinterGraphicalOutput&)> mAddedGraphicalOutputFn;
 	vdfunction<void(ATPrinterGraphicalOutput&)> mRemovingGraphicalOutputFn;
+
+	VDUIProxyToolbarControl mToolbar;
+	VDUIProxyMessageDispatcherW32 mDispatcher;
 };
 
 #endif

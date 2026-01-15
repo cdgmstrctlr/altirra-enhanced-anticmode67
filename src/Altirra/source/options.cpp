@@ -23,9 +23,8 @@
 
 uint32 g_ATOptionsSaveSuspended;
 
-ATOptions::ATOptions()
-	: mbDirty(false)
-	, mbDisplayD3D9(true)
+ATOptionsData::ATOptionsData()
+	: mbDisplayD3D9(true)
 	, mbDisplay3D(true)
 	, mbDisplay16Bit(false)
 	, mbDisplayAccelScreenFX(true)
@@ -117,6 +116,7 @@ void ATOptionsExchange(VDRegistryKey& key, bool write, ATOptions& opts) {
 	ATOptionsExchange(key, write, "Display: Borderless mode", opts.mbFullScreenBorderless);
 	ATOptionsExchange(key, write, "Flash: SIC! cartridge flash mode", opts.mSICFlashChip);
 	ATOptionsExchange(key, write, "Flash: Ultimate1MB flash mode", opts.mU1MBFlashChip);
+	ATOptionsExchange(key, write, "Flash: Maxflash 1Mb flash mode", opts.mMaxflash1MbFlashChip);
 	ATOptionsExchange(key, write, "Flash: Maxflash 8Mb flash mode", opts.mMaxflash8MbFlashChip);
 	ATOptionsExchange(key, write, "UI: Theme scale factor", opts.mThemeScale);
 	ATOptionsExchange(key, write, "UI: Use dark theme", opts.mbDarkTheme);
